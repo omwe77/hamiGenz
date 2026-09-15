@@ -21,6 +21,7 @@ wheels/
 *.spec
 
 # Virtual environments
+.venv/
 venv/
 ENV/
 env/
@@ -38,10 +39,17 @@ env/
 Thumbs.db
 
 # Data and uploads (NEVER commit user documents)
-data/
-!data/.gitkeep
+data/uploads/
+data/vectors/
+*.faiss
+*_meta.json
+registry.json
+*.db
+*.sqlite
+*.sqlite3
 
 # Environment variables
+backend/.env
 .env
 .env.local
 .env.*.local
