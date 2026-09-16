@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## hamiGenZ Frontend
+
+Next.js 16 + React 19 web interface for hamiGenZ — Nepal's AI document understanding platform.
+
 ## Getting Started
 
 First, run the development server:
