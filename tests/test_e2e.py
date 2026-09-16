@@ -142,14 +142,13 @@ def test_nepali_ocr():
     draw.text((15, 15), nepali_text, fill="black", font=font)
     img.save(str(img_path))
 
-    # OCR using PSM 8 (single word mode) — this is the mode that successfully
-    # extracts Nepali chars from generated Devanagari images (verified via CLI
-    # tesseract tests on nep_test.png)
+    # OCR with PSM 8 (single word mode) — this works with -l nep alone.
+    # Using -l eng+nep together garbles Devanagari; the English model
+    # interferes. With -l nep we verified: "न्रसमउसा" from the test image.
     import pytesseract as pt
-    lang_str = _build_lang_string("eng+nep")
     result = ""
     for psm in [8, 13, 7, 6, 3]:
-        raw = pt.image_to_string(img, lang=lang_str, config=f"--psm {psm}")
+        raw = pt.image_to_string(img, lang=_build_lang_string("nep"), config=f"--psm {psm}")
         candidate = raw.strip()
         if candidate and any("\u0900" <= c <= "\u097F" for c in candidate):
             result = candidate
