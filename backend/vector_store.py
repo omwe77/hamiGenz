@@ -149,7 +149,7 @@ class VectorStore:
         return results
 
     def search_all(self, query_embedding: np.ndarray,
-                   top_k: int = 5, min_score: float = 0.15) -> list[dict]:
+                   top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """
         Search across all documents.
         Returns merged results with doc_id.
@@ -257,7 +257,7 @@ class Pipeline:
         }
 
     def query(self, doc_id: str | None, question: str,
-              top_k: int = 5, min_score: float = 0.15) -> list[dict]:
+              top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """Retrieve relevant chunks for a question."""
         query_emb = self.embedder.embed_text(question)
 
