@@ -8,7 +8,7 @@ export default function Home() {
 
   useEffect(() => {
     import("animejs").then((mod) => {
-      (window as any).anime = mod;
+      (window as any).anime = mod.animate;
       setAnimeReady(true);
     });
   }, []);
