@@ -2,6 +2,7 @@
 hamigenz backend — Phase 1 MVP
 Document Understanding Pipeline
 """
+
 import os
 import re
 import uuid
@@ -13,6 +14,52 @@ import pdfplumber
 import fitz  # PyMuPDF
 from PIL import Image
 import pytesseract
+
+
+# ─── Tesseract configuration ──────────────────────────────────────
+# Absolute path to tesseract binary (Windows install default)
+TESSERACT_BIN = os.getenv(
+    "TESSERACT_BIN",
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+)
+# Project-local tessdata directory (contains nep.traineddata, eng.traineddata, osd.traineddata)
+PROJECT_TESSDATA = Path(__file__).parent.parent / "data" / "tessdata"
+
+# Apply configuration once at import time
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_BIN
+if PROJECT_TESSDATA.exists():
+    os.environ["TESSDATA_PREFIX"] = str(PROJECT_TESSDATA)
+
+# Available languages (resolved once at import)
+_TESS_LANGUAGES: Optional[list[str]] = None
+
+
+def get_available_languages() -> list[str]:
+    """Return list of tesseract languages available in TESSDATA_PREFIX."""
+    global _TESS_LANGUAGES
+    if _TESS_LANGUAGES is None:
+        try:
+            _TESS_LANGUAGES = pytesseract.get_languages()
+        except Exception:
+            _TESS_LANGUAGES = []
+    return _TESS_LANGUAGES
+
+
+def _build_lang_string(requested: str = "eng+nep") -> str:
+    """Build a lang string that only includes actually-available languages.
+
+    requested: e.g. "eng+nep" or "eng"
+    Returns a lang string safe to pass to image_to_string.
+    """
+    requested_set = set(requested.split("+"))
+    available = set(get_available_languages())
+    usable = requested_set & available
+    if not usable:
+        # Fall back to any available language
+        usable = available
+    if not usable:
+        return "eng"  # absolute fallback
+    return "+".join(sorted(usable))
 
 
 class DocumentProcessor:
@@ -49,37 +96,42 @@ class DocumentProcessor:
         """Try text extraction first, fall back to OCR per page if needed."""
         pages = []
         doc = fitz.open(filepath)
-        needs_ocr = False
 
-        # First pass: try text extraction
         for i, page in enumerate(doc):
             text = page.get_text().strip()
-            if text:
-                pages.append({
-                    "page_num": i + 1,
-                    "text": text,
-                    "source_type": "text",
-                    "has_images": len(page.get_images()) > 0,
-                })
-            else:
-                needs_ocr = True
-                pages.append({
-                    "page_num": i + 1,
-                    "text": "",
-                    "source_type": "empty",
-                    "has_images": len(page.get_images()) > 0,
-                })
+            images = page.get_images()
+            has_images = len(images) > 0
 
-        # Second pass: OCR empty pages or pages with images but no text
-        if needs_ocr:
-            for p in pages:
-                if p["source_type"] in ("empty",) or (
-                    p["source_type"] == "text" and len(p["text"]) < 50 and p["has_images"]
-                ):
-                    ocr_text = self._ocr_page_fitx(filepath, p["page_num"])
-                    if ocr_text:
-                        p["text"] = ocr_text
-                        p["source_type"] = "ocr"
+            # Heuristic: estimate if page is likely scanned (image-based)
+            # A page is "likely scanned" when:
+            #   - It has raster images AND very little extractable text, OR
+            #   - It has zero extractable text
+            char_count = len(text)
+            img_area = sum(
+                (img[2] or 0) * (img[3] or 0) for img in images
+            )  # width * height from PyMuPDF image xrefs
+
+            likely_scanned = (
+                (char_count == 0)
+                or (char_count < 80 and has_images and img_area > 50000)
+                or (char_count < 30)
+            )
+
+            pages.append({
+                "page_num": i + 1,
+                "text": text,
+                "source_type": "text" if text and not likely_scanned else "empty",
+                "has_images": has_images,
+                "img_area": img_area,
+            })
+
+        # Second pass: OCR pages marked as likely scanned
+        for p in pages:
+            if p["source_type"] == "empty":
+                ocr_text = self._ocr_page_fitx(filepath, p["page_num"])
+                if ocr_text and len(ocr_text.strip()) > len(p["text"].strip()):
+                    p["text"] = ocr_text
+                    p["source_type"] = "ocr"
 
         doc.close()
         return pages
@@ -94,7 +146,9 @@ class DocumentProcessor:
             pix = page.get_pixmap(matrix=mat)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             doc.close()
-            text = pytesseract.image_to_string(img, lang="eng+nep")
+            text = pytesseract.image_to_string(
+                img, lang=_build_lang_string("eng+nep")
+            )
             return text.strip()
         except Exception as e:
             print(f"OCR failed for page {page_num}: {e}")
@@ -103,7 +157,9 @@ class DocumentProcessor:
     def _extract_image(self, filepath: str) -> list[dict]:
         """OCR a single image file."""
         img = Image.open(filepath)
-        text = pytesseract.image_to_string(img, lang="eng+nep")
+        text = pytesseract.image_to_string(
+            img, lang=_build_lang_string("eng+nep")
+        )
         return [{"page_num": 1, "text": text.strip(), "source_type": "ocr"}]
 
     @staticmethod

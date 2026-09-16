@@ -32,7 +32,7 @@ class OllamaService:
             print(f"[OllamaService] Cannot reach Ollama at {self.base_url}: {e}")
 
     def generate(self, prompt: str, stream: bool = False,
-                 options: dict | None = None) -> str:
+                 options: dict | None = None, timeout: int = 120) -> str:
         """
         Generate a response from the LLM.
         Returns full response text.
