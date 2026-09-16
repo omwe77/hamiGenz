@@ -68,6 +68,54 @@ def _build_lang_string(requested: str = "eng+nep") -> str:
     return "+".join(sorted(usable))
 
 
+def _best_ocr_lang(img) -> str:
+    """Choose the best OCR result by trying multiple configs.
+
+    For Devanagari-heavy pages, Nepali-only model usually beats
+    eng+nep combined (English model garbles Devanagari). We try
+    nep, eng+nep, and eng, then pick the one yielding most
+    Nepali characters (better Devanagari = better for Nepali docs).
+    """
+    nep_range = (0x0900, 0x097F)
+
+    def cnt(text: str) -> int:
+        return sum(1 for c in text if nep_range[0] <= ord(c) <= nep_range[1])
+
+    available = set(get_available_languages())
+    results: list[tuple[str, int, str]] = []
+
+    # Nepali-only (best for Devanagari)
+    if "nep" in available:
+        try:
+            t = pytesseract.image_to_string(img, lang="nep", config="--psm 6")
+            results.append(("nep", cnt(t), t))
+        except Exception:
+            pass
+
+    # Eng+nep (mixed content)
+    if "eng" in available and "nep" in available:
+        try:
+            t = pytesseract.image_to_string(img, lang="eng+nep", config="--psm 6")
+            results.append(("eng+nep", cnt(t), t))
+        except Exception:
+            pass
+
+    # Eng only (pure English fallback)
+    if "eng" in available:
+        try:
+            t = pytesseract.image_to_string(img, lang="eng", config="--psm 6")
+            results.append(("eng", cnt(t), t))
+        except Exception:
+            pass
+
+    if not results:
+        return ""
+
+    # Pick the config that recognised the most Nepali characters
+    best = max(results, key=lambda x: x[1])
+    return best[2].strip()
+
+
 class DocumentProcessor:
     """Extract text from PDFs and images with page-level tracking."""
 
@@ -143,7 +191,11 @@ class DocumentProcessor:
         return pages
 
     def _ocr_page_fitx(self, filepath: str, page_num: int) -> str:
-        """OCR a single PDF page using PyMuPDF rendering + Tesseract."""
+        """OCR a single PDF page using PyMuPDF rendering + Tesseract.
+
+        Tries multiple OCR configurations and picks the best result
+        (most Nepali characters = better Devanagari recognition).
+        """
         try:
             doc = fitz.open(filepath)
             page = doc[page_num - 1]
@@ -152,21 +204,18 @@ class DocumentProcessor:
             pix = page.get_pixmap(matrix=mat)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             doc.close()
-            text = pytesseract.image_to_string(
-                img, lang=_build_lang_string("eng+nep")
-            )
-            return text.strip()
+
+            result = _best_ocr_lang(img)
+            return result if result else ""
         except Exception as e:
             print(f"OCR failed for page {page_num}: {e}")
             return ""
 
     def _extract_image(self, filepath: str) -> list[dict]:
-        """OCR a single image file."""
+        """OCR a single image file, trying multiple configs."""
         img = Image.open(filepath)
-        text = pytesseract.image_to_string(
-            img, lang=_build_lang_string("eng+nep")
-        )
-        return [{"page_num": 1, "text": text.strip(), "source_type": "ocr"}]
+        result = _best_ocr_lang(img)
+        return [{"page_num": 1, "text": result if result else "", "source_type": "ocr"}]
 
     @staticmethod
     def clean_text(text: str) -> str:
