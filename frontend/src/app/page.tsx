@@ -17,138 +17,197 @@ export default function Home() {
     if (!animeReady) return;
 
     const animeFn = (window as any).anime;
-    if (!animeFn) return;
+    if (!animeFn || typeof animeFn !== "function") return;
+
+    // Track running animations for cleanup (ref — no dependency loop)
+    const running = Array<ReturnType<typeof import("animejs").animate>>();
+
+    function play(a: ReturnType<typeof import("animejs").animate>) {
+      running.push(a);
+      return a;
+    }
+
+    function cancelAll() {
+      for (const a of running) {
+        try { a.cancel(); } catch (_) { /* already-ended instances are safe */ }
+      }
+      running.length = 0;
+    }
+
+    // Stagger delay callback (v4 accepts (el, i) => number)
+    const stagger = (base: number) => (el: HTMLElement, i: number) => i * base;
 
     const heroTitle = document.getElementById("hero-title");
     const heroSub = document.getElementById("hero-sub");
     const heroCtas = document.getElementById("hero-ctas");
     const finalCta = document.getElementById("final-cta");
 
+    // ── Hero title + subtitle: fade in + rise ─────────────────────
     if (heroTitle && heroSub) {
-      animeFn({
-        targets: [heroTitle, heroSub],
-        opacity: [0, 1],
-        translateY: [30, 0],
-        duration: 800,
-        easing: "easeOutCubic",
-        delay: (el: any, i: number) => i * 120,
-      });
+      play(
+        animeFn([heroTitle, heroSub], {
+          opacity: [0, 1],
+          translateY: [30, 0],
+          duration: 800,
+          easing: "outCubic", // v4 builtin (was "easeOutCubic" in v3)
+          delay: stagger(120),
+        })
+      );
     }
 
+    // ── Hero CTAs: fade + scale ────────────────────────────────────
     if (heroCtas) {
-      animeFn({
-        targets: heroCtas,
-        opacity: [0, 1],
-        scale: [0.92, 1],
-        duration: 600,
-        easing: "easeOutCubic",
-        delay: 500,
-      });
+      play(
+        animeFn([heroCtas], {
+          opacity: [0, 1],
+          scale: [0.92, 1],
+          duration: 600,
+          easing: "outCubic",
+          delay: 500,
+        })
+      );
     }
 
-    /* ── Scroll-driven story (Intersection Observer) ─── */
-    const steps = document.querySelectorAll("[data-scroll-step]");
+    // Final CTA
+    if (finalCta) {
+      play(
+        animeFn([finalCta], {
+          opacity: [0, 1],
+          scale: [0.97, 1],
+          translateY: [20, 0],
+          duration: 800,
+          easing: "outCubic",
+        })
+      );
+    }
+
+    // ── Scroll-driven story (Intersection Observer) ────────────────
+    const steps = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-scroll-step]")
+    );
     const scanline = document.getElementById("scanline");
 
-    if (!steps.length) return;
+    if (!steps.length) {
+      cancelAll();
+      return;
+    }
 
-    const stepRefs = Array.from(steps).map((el) => el as HTMLElement);
     const stepObs = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const el = entry.target as HTMLElement;
-            const step = parseInt(el.dataset.scrollStep || "0");
-            const delay = step * 180;
+          if (!entry.isIntersecting) return;
 
-            // Animate each step in when it enters viewport
-            animeFn({
-              targets: el,
+          const el = entry.target as HTMLElement;
+          const step = parseInt(el.dataset.scrollStep || "0", 10);
+          const delay = step * 180;
+
+          // Animate step in when it enters viewport
+          play(
+            animeFn([el], {
               opacity: [0, 1],
               translateY: [30, 0],
               scale: [0.97, 1],
               duration: 700,
-              delay: delay,
-              easing: "easeOutCubic",
-              children: true,
-            });
+              delay,
+              easing: "outCubic",
+            })
+          );
 
-            // Special: scanline movement
-            if (el.id === "doc-card" && scanline) {
-              animeFn({
-                targets: scanline,
+          // Scanline sweep on document card
+          if (el.id === "doc-card" && scanline) {
+            play(
+              animeFn([scanline], {
                 translateY: [-20, 400],
                 opacity: [0, 1, 0],
                 duration: 2200,
                 delay: 300,
                 easing: "linear",
-                loop: false,
-              });
-            }
+              })
+            );
+          }
 
-            // Extracted box items stagger
-            if (el.id === "extracted-box") {
-              const items = el.querySelectorAll("[data-extract-item]");
-              animeFn({
-                targets: items,
-                opacity: [0, 1],
-                translateY: [16, 0],
-                scale: [0.94, 1],
-                duration: 500,
-                delay: (el2: any, i: number) => i * 100,
-                easing: "easeOutCubic",
-              });
+          // Extracted-box items: stagger
+          if (el.id === "extracted-box") {
+            const items = Array.from(
+              el.querySelectorAll<HTMLElement>("[data-extract-item]")
+            );
+            if (items.length) {
+              play(
+                animeFn(items, {
+                  opacity: [0, 1],
+                  translateY: [16, 0],
+                  scale: [0.94, 1],
+                  duration: 500,
+                  delay: stagger(100),
+                  easing: "outCubic",
+                })
+              );
             }
+          }
 
-            // Simple explanation items stagger
-            if (el.id === "simple-box") {
-              const items = el.querySelectorAll("[data-simple-item]");
-              animeFn({
-                targets: items,
-                opacity: [0, 1],
-                translateY: [16, 0],
-                scale: [0.94, 1],
-                duration: 500,
-                delay: (el2: any, i: number) => i * 120,
-                easing: "easeOutCubic",
-              });
+          // Simple-explanation items: stagger
+          if (el.id === "simple-box") {
+            const items = Array.from(
+              el.querySelectorAll<HTMLElement>("[data-simple-item]")
+            );
+            if (items.length) {
+              play(
+                animeFn(items, {
+                  opacity: [0, 1],
+                  translateY: [16, 0],
+                  scale: [0.94, 1],
+                  duration: 500,
+                  delay: stagger(120),
+                  easing: "outCubic",
+                })
+              );
             }
+          }
 
-            // Evidence items stagger
-            if (el.id === "evidence-box") {
-              const items = el.querySelectorAll("[data-evidence-item]");
-              animeFn({
-                targets: items,
-                opacity: [0, 1],
-                translateX: [-12, 0],
-                duration: 500,
-                delay: (el2: any, i: number) => i * 130,
-                easing: "easeOutCubic",
-              });
+          // Evidence items: stagger (translateX)
+          if (el.id === "evidence-box") {
+            const items = Array.from(
+              el.querySelectorAll<HTMLElement>("[data-evidence-item]")
+            );
+            if (items.length) {
+              play(
+                animeFn(items, {
+                  opacity: [0, 1],
+                  translateX: [-12, 0],
+                  duration: 500,
+                  delay: stagger(130),
+                  easing: "outCubic",
+                })
+              );
             }
+          }
 
-            // Final CTA
-            if (el.id === "final-cta") {
-              animeFn({
-                targets: el,
+          // Final CTA inside scroll story
+          if (el.id === "final-cta") {
+            play(
+              animeFn([el], {
                 opacity: [0, 1],
                 scale: [0.97, 1],
                 translateY: [20, 0],
                 duration: 800,
-                easing: "easeOutCubic",
-              });
-            }
-
-            stepObs.unobserve(el);
+                easing: "outCubic",
+              })
+            );
           }
+
+          stepObs.unobserve(el);
         });
       },
       { threshold: 0.25, rootMargin: "0px 0px -40px 0px" }
     );
 
-    stepRefs.forEach((el) => stepObs.observe(el));
+    steps.forEach((el) => stepObs.observe(el));
 
-    return () => stepObs.disconnect();
+    // Cleanup on unmount (also covers React dev-mode remounts)
+    return () => {
+      stepObs.disconnect();
+      cancelAll();
+    };
   }, [animeReady]);
 
   return (
