@@ -190,6 +190,24 @@ class DocumentProcessor:
         doc.close()
         return pages
 
+    def render_page_image(self, filepath: str, page_num: int) -> bytes | None:
+        """
+        Render a single PDF page to PNG bytes for the document viewer.
+        Returns None if the page cannot be rendered.
+        """
+        try:
+            doc = fitz.open(filepath)
+            page = doc[page_num - 1]
+            mat = fitz.Matrix(200/72, 200/72)  # 200 DPI for viewer display
+            pix = page.get_pixmap(matrix=mat)
+            img_bytes = pix.tobytes("png")
+            doc.close()
+            return img_bytes
+        except Exception as e:
+            print(f"render_page_image failed for {filepath} page {page_num}: {e}")
+            return None
+
+
     def _ocr_page_fitx(self, filepath: str, page_num: int) -> str:
         """OCR a single PDF page using PyMuPDF rendering + Tesseract.
 

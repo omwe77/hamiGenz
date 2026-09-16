@@ -122,6 +122,52 @@ class UploadResponse(BaseModel):
     message: str
 
 
+class ExplainRequest(BaseModel):
+    text: str
+    doc_id: Optional[str] = None
+    explanation_level: str = "simple"  # original, simple, very_simple
+    target_language: str = "auto"  # auto, nepali, english, romanized_nepali
+    question: Optional[str] = None  # optional context question
+
+
+class ExplainResponse(BaseModel):
+    explanation: dict
+    citations: list[dict]
+    grounding: dict | None
+    provenance: str  # document, general_ai, mixed
+    language_used: str
+    processing_time_ms: Optional[int] = None
+
+
+class ViewerPage(BaseModel):
+    page_num: int
+    text: str
+    has_image: bool
+    image_url: Optional[str] = None
+    word_count: int
+
+
+class SearchMatch(BaseModel):
+    page: int
+    text: str
+    highlight_start: int
+    highlight_end: int
+    matched_term: str
+
+
+class ViewerResponse(BaseModel):
+    doc_id: str
+    filename: str
+    page_count: int
+    pages: list[ViewerPage]
+
+
+class SearchResponse(BaseModel):
+    doc_id: str
+    query: str
+    matches: list[SearchMatch]
+
+
 # ─── Helper: session isolation ───────────────────────────────────
 def _get_session_id(request) -> str:
     """Extract or generate session ID from request header."""
@@ -301,6 +347,254 @@ Respond with the answer directly.
     formatted["processing_time_ms"] = elapsed
 
     return AskResponse(**formatted)
+
+
+# ─── /explain: direct text explanation with level control ──────────
+
+@app.post("/explain", response_model=ExplainResponse)
+async def explain_text(req: ExplainRequest):
+    """
+    Explain difficult text in simple language.
+    Works with or without a document.
+    explanation_level: "original" | "simple" | "very_simple"
+    """
+    import time
+    start = time.time()
+
+    detector = LanguageDetector()
+    detected_lang = detector.detect(req.text)
+
+    # Determine response language
+    if req.target_language == "auto":
+        response_lang = detected_lang
+    else:
+        response_lang = req.target_language
+
+    # Determine provenance
+    has_doc = bool(req.doc_id)
+    provenance = "general_ai"
+    if has_doc:
+        provenance = "document"
+
+    llm = app.state.ollama
+    explainer = app.state.explainer
+
+    # If doc_id provided, retrieve evidence from that document
+    if has_doc:
+        pipeline = app.state.pipeline
+        evidence = pipeline.query(req.doc_id, req.text, top_k=5)
+
+        if evidence:
+            # Document-grounded explanation
+            context = "\n\n".join(
+                f"[Page {e['page_num']}] {e['text'][:500]}" for e in evidence[:5]
+            )
+
+            if req.question:
+                full_question = f"{req.question} (Context: {req.text})"
+            else:
+                full_question = f"Explain this text in simple language: {req.text}"
+
+            raw_answer = llm.generate(
+                f"""You are hamiGenZ, helping a user understand difficult information in simple language.
+
+The user wants to understand this text:
+{req.text}
+
+Relevant document content (with page numbers):
+{context}
+
+QUESTION: {full_question}
+
+INSTRUCTIONS:
+1. Explain the meaning of the text in simple, clear language.
+2. Preserve the original meaning exactly -- simplify the language, not the facts.
+3. Explain any technical, legal, or official terms in plain language.
+4. Include page references where relevant, like (Page 3).
+5. If information is not in the document, say so.
+6. Do NOT invent facts. Do not guess fees, deadlines, or legal requirements.
+7. Structure the answer: what it is, what it means, what to do.
+
+Respond with the answer directly."""
+            )
+
+            grounding = app.state.validator.validate(full_question, raw_answer, evidence)
+            formatted = explainer.format_answer(
+                question=full_question,
+                raw_answer=raw_answer,
+                evidence_chunks=evidence,
+                grounding_report=grounding,
+                lang=response_lang,
+                explanation_level=req.explanation_level,
+            )
+            elapsed = int((time.time() - start) * 1000)
+            formatted["processing_time_ms"] = elapsed
+            return ExplainResponse(
+                explanation=formatted,
+                citations=formatted["citations"],
+                grounding=grounding,
+                provenance="document",
+                language_used=response_lang,
+                processing_time_ms=elapsed,
+            )
+        else:
+            # Document not found or no evidence — fall through to general_ai
+            pass
+
+    # General AI explanation (no document, or document had no evidence)
+    full_question = req.question or f"Explain this text in simple language: {req.text}"
+
+    general_prompt = f"""You are hamiGenZ, explaining difficult information in simple, clear language for ordinary people in Nepal.
+
+EXPLANATION LEVEL: {req.explanation_level}
+(The level guidance tells you exactly how to handle this level)
+
+The text to explain:
+{req.text}
+
+QUESTION: {full_question}
+
+INSTRUCTIONS:
+1. Explain the meaning in simple, clear language.
+2. Preserve the original meaning exactly -- simplify the language, not the facts.
+3. Explain any technical, legal, or official terms in plain language.
+4. If the text is in Nepali, respond in Nepali. If English, respond in English.
+5. Do NOT invent facts.
+6. Structure the answer: what it is, what it means, what to do.
+
+Respond with the answer directly.
+"""
+    raw_answer = llm.generate(general_prompt)
+
+    # For general AI, no evidence -> no grounding
+    formatted = explainer.format_answer(
+        question=full_question,
+        raw_answer=raw_answer,
+        evidence_chunks=[],
+        grounding_report=None,
+        lang=response_lang,
+        explanation_level=req.explanation_level,
+    )
+    elapsed = int((time.time() - start) * 1000)
+    formatted["processing_time_ms"] = elapsed
+
+    return ExplainResponse(
+        explanation=formatted,
+        citations=[],
+        grounding=None,
+        provenance="general_ai",
+        language_used=response_lang,
+        processing_time_ms=elapsed,
+    )
+
+
+# ─── /documents/{doc_id}/viewer: per-page extracted text ──────────
+
+@app.get("/documents/{doc_id}/viewer", response_model=ViewerResponse)
+async def get_document_viewer(doc_id: str):
+    """
+    Return per-page extracted text and metadata for a document viewer.
+    """
+    metadata = app.state.metadata
+    doc = metadata.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id} not found")
+
+    processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+    pages = processor.extract_text(doc["filepath"])
+
+    viewer_pages = []
+    for p in pages:
+        has_image = bool(p.get("has_images", False))
+        image_url = None
+        if has_image and p.get("img_ref"):
+            image_url = f"/documents/{doc_id}/page/{p['page_num']}/image"
+
+        viewer_pages.append(ViewerPage(
+            page_num=p["page_num"],
+            text=p["text"],
+            has_image=has_image,
+            image_url=image_url,
+            word_count=len(p["text"].split()),
+        ))
+
+    return ViewerResponse(
+        doc_id=doc_id,
+        filename=doc["filename"],
+        page_count=len(viewer_pages),
+        pages=viewer_pages,
+    )
+
+
+# ─── /documents/{doc_id}/page/{page_num}/image: page image ────────
+
+@app.get("/documents/{doc_id}/page/{page_num}/image")
+async def get_page_image(doc_id: str, page_num: int):
+    """
+    Return the rendered image for a specific page (for scanned/image pages).
+    """
+    metadata = app.state.metadata
+    doc = metadata.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id} not found")
+
+    processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+    img_bytes = processor.render_page_image(doc["filepath"], page_num)
+
+    if not img_bytes:
+        raise HTTPException(404, f"Page {page_num} image not available")
+
+    from fastapi.responses import Response
+    return Response(content=img_bytes, media_type="image/png")
+
+
+# ─── /documents/{doc_id}/search-text: search extracted text ───────
+
+@app.post("/documents/{doc_id}/search-text", response_model=SearchResponse)
+async def search_document_text(doc_id: str, query: str = Query(..., min_length=1)):
+    """
+    Search extracted text across pages. Returns matches with page + context + highlight offsets.
+    """
+    metadata = app.state.metadata
+    doc = metadata.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id} not found")
+
+    processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+    pages = processor.extract_text(doc["filepath"])
+
+    query_lower = query.lower()
+    matches = []
+    for p in pages:
+        page_text = p["text"]
+        page_lower = page_text.lower()
+        idx = 0
+        while True:
+            idx = page_lower.find(query_lower, idx)
+            if idx == -1:
+                break
+            # Context window: 200 chars before + match + 200 after
+            start = max(0, idx - 200)
+            end = min(len(page_text), idx + len(query) + 200)
+            context = page_text[start:end]
+            # highlight offsets relative to `context`
+            h_start = idx - start
+            h_end = h_start + len(query)
+
+            matches.append(SearchMatch(
+                page=p["page_num"],
+                text=context,
+                highlight_start=h_start,
+                highlight_end=h_end,
+                matched_term=query,
+            ))
+            idx += len(query)  # move past this match
+
+    return SearchResponse(
+        doc_id=doc_id,
+        query=query,
+        matches=matches,
+    )
 
 
 @app.get("/documents", response_model=list[DocumentInfo])

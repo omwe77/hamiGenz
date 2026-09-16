@@ -193,10 +193,12 @@ class ExplanationEngine:
     def format_answer(self, question: str, raw_answer: str,
                       evidence_chunks: list[dict],
                       grounding_report: dict | None = None,
-                      lang: str = "nepali") -> dict:
+                      lang: str = "nepali",
+                      explanation_level: str = "simple") -> dict:
         """
         Format a final user-facing answer.
         Returns structured response with sections.
+        explanation_level: "original" | "simple" | "very_simple"
         """
         evidence_text = self._format_evidence(evidence_chunks)
         grounding_note = ""
@@ -210,8 +212,46 @@ class ExplanationEngine:
             elif confidence == "MEDIUM":
                 grounding_note = "ℹ️ This answer is partially based on the document; some details may need verification."
 
+        level_guidance = {
+            "original": """
+The user wants to understand the ORIGINAL meaning of the text/document.
+- Preserve the original wording where it matters.
+- Explain what the formal/technical language actually means without changing the facts.
+- Do NOT simplify into everyday language unless explaining a specific term.
+- Keep the register close to the original -- the user wants to understand the original, not get a casual rewrite.
+- If the text is in legal/official language, explain what each important part means in clear terms, still faithful to the original.
+- Distinguish: (a) literal meaning, (b) what it implies, (c) what the person needs to know.
+""",
+            "simple": """
+The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning.
+- Rewrite the idea in clear, natural, everyday Nepali (or English, depending on lang).
+- Preserve the exact meaning and intent -- do not change facts, requirements, deadlines, fees, or eligibility.
+- Explain technical, legal, or official terms in plain language.
+- Use normal sentence length. Avoid unnecessarily fancy words.
+- The goal is: someone who can read but does not fully understand the original should come away understanding it.
+- Do NOT treat this as a word-for-word translation. Focus on meaning.
+""",
+            "very_simple": """
+The user wants a VERY SIMPLE explanation -- the easiest possible understanding without losing the facts.
+- Use short, clear sentences.
+- Use the simplest everyday words that still preserve the exact meaning.
+- Explain every important term inline, in one short clause.
+- If a concept is complicated, break it into the smallest clear steps.
+- Keep all facts, requirements, deadlines, fees, eligibility, and action items accurate -- simplify the language, not the facts.
+- This is for someone who struggles with formal or technical language.
+- Do NOT invent or omit anything important.
+""",
+        }.get(explanation_level, ""
+            "The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning."
+            "Rewrite the idea in clear, natural, everyday language."
+            "Preserve the exact meaning and intent -- do not change facts."
+            "Explain technical or official terms in plain language.")
+
         prompt = f"""You are hamiGenZ, a helpful assistant that explains documents and official information
 in simple, clear language for ordinary people in Nepal.
+
+EXPLANATION LEVEL: {explanation_level}
+(level_guidance below tells you exactly how to handle this level)
 
 QUESTION (may be in Nepali, English, or Romanized Nepali): {question}
 
@@ -222,6 +262,9 @@ RAW ANSWER FROM AI: {raw_answer}
 
 GROUNDING NOTE: {grounding_note}
 
+LEVEL GUIDANCE:
+{level_guidance}
+
 INSTRUCTIONS:
 1. Write a clear, helpful answer in {lang}.
 2. Structure it around:
@@ -231,13 +274,13 @@ INSTRUCTIONS:
    - Important dates / fees / requirements (if extractable)
    - Who does this apply to? (if relevant)
    - Source/citation (page numbers or document reference)
-
-3. Use simple language. Explain any technical or legal terms.
+3. Follow the EXPLANATION LEVEL guidance above exactly.
 4. If the document is a form, and the question is about how to fill it,
    explain what goes in each field. Mark any example as "SAMPLE — FOR EXPLANATION ONLY — NOT FOR SUBMISSION".
 5. If you do not have enough information to answer, say so clearly.
 6. Include page citations where relevant, like (Page 3).
 7. Do NOT invent fees, deadlines, penalties, or legal requirements. If not in evidence, say you could not verify.
+8. Preserve the ORIGINAL MEANING at every level. Simplification changes the language, not the facts.
 
 OUTPUT: Write the answer directly. Do not include any preamble.
 """
@@ -250,6 +293,7 @@ OUTPUT: Write the answer directly. Do not include any preamble.
             "grounding": grounding_report,
             "grounding_note": grounding_note,
             "language": lang,
+            "explanation_level": explanation_level,
             "evidence_pages": list(set(
                 c.get("page_num") for c in evidence_chunks if c.get("page_num")
             )),
