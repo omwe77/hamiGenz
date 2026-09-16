@@ -48,17 +48,23 @@ def get_available_languages() -> list[str]:
 def _build_lang_string(requested: str = "eng+nep") -> str:
     """Build a lang string that only includes actually-available languages.
 
-    requested: e.g. "eng+nep" or "eng"
-    Returns a lang string safe to pass to image_to_string.
+    Since Devanagari text is best OCR'd with the Nepali model alone
+    (the English model interferes and produces garbage), prefer 'nep'
+    when it's available, even if 'eng+nep' was requested.
     """
     requested_set = set(requested.split("+"))
     available = set(get_available_languages())
+
+    # If Nepali is available, prefer it for any request that includes it
+    # (Devanagari OCR works best with the Nepali-trained model alone)
+    if "nep" in available and "nep" in requested_set:
+        return "nep"
+
     usable = requested_set & available
     if not usable:
-        # Fall back to any available language
         usable = available
     if not usable:
-        return "eng"  # absolute fallback
+        return "eng"
     return "+".join(sorted(usable))
 
 
