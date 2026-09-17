@@ -377,41 +377,111 @@ class ExplanationEngine:
                 grounding_note = "ℹ️ This answer is partially based on the document; some details may need verification."
 
         level_guidance = {
-            "original": """
-The user wants to understand the ORIGINAL meaning of the text/document.
-- Preserve the original wording where it matters.
-- Explain what the formal/technical language actually means without changing the facts.
-- Do NOT simplify into everyday language unless explaining a specific term.
-- Keep the register close to the original -- the user wants to understand the original, not get a casual rewrite.
-- If the text is in legal/official language, explain what each important part means in clear terms, still faithful to the original.
-- Distinguish: (a) literal meaning, (b) what it implies, (c) what the person needs to know.
-""",
-            "simple": """
-The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning.
-- Rewrite the idea in clear, natural, everyday Nepali (or English, depending on lang).
-- Preserve the exact meaning and intent -- do not change facts, requirements, deadlines, fees, or eligibility.
-- Explain technical, legal, or official terms in plain language.
-- Use normal sentence length. Avoid unnecessarily fancy words.
-- The goal is: someone who can read but does not fully understand the original should come away understanding it.
-- Do NOT treat this as a word-for-word translation. Focus on meaning.
-""",
-            "very_simple": """
-The user wants a VERY SIMPLE explanation -- the easiest possible understanding without losing the facts.
-- Use short, clear sentences.
-- Use the simplest everyday words that still preserve the exact meaning.
-- Explain every important term inline, in one short clause.
-- If a concept is complicated, break it into the smallest clear steps.
-- Keep all facts, requirements, deadlines, fees, eligibility, and action items accurate -- simplify the language, not the facts.
-- This is for someone who struggles with formal or technical language.
-- Do NOT invent or omit anything important.
-""",
-        }.get(explanation_level, ""
-            "The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning."
-            "Rewrite the idea in clear, natural, everyday language."
-            "Preserve the exact meaning and intent -- do not change facts."
-            "Explain technical or official terms in plain language.")
+            "original": """\
+The user chose ORIGINAL-level explanation.
+This means: preserve the original wording and register as much as possible,
+and explain what the formal/official/technical language actually means WITHOUT
+turning it into casual everyday language.
 
-        prompt = f"""You are hamiGenZ, a helpful assistant that explains documents and official information
+- Keep quotes or close paraphrases of important original phrases where they
+  matter, then explain what each one means in clear terms.
+- Do NOT rewrite the whole thing into everyday language. The tone should stay
+  close to the original -- formal stays formal, legal stays legal -- but with
+  clear explanations of what each important part means.
+- Distinguish three things for each important passage:
+  (a) what it literally says,
+  (b) what it implies in practice, and
+  (c) what the person needs to know or do about it.
+- This is NOT a translation. If the original is in Nepali, the explanation is
+  also in Nepali but at the same formal level -- you are explaining the meaning,
+  not simplifying the language.
+- Never lose a fact, requirement, deadline, fee, or eligibility detail while
+  explaining. Clarify the language, not the facts.
+""",
+            "simple": """\
+The user chose SIMPLE-level explanation.
+This means: rewrite the idea in clear, natural, everyday language that preserves
+the EXACT meaning and intent -- no facts changed, no requirements invented, no
+deadlines or fees guessed.
+
+- If the original is in Nepali and the user's language is Nepali, explain in
+  natural everyday Nepali. If the original is in English, explain in clear
+  everyday English. Match the user's language, not the original's register.
+- This is meaning-preserving simplification, NOT a word-for-word translation.
+  Translate the idea, not each sentence. A translation copies the words; an
+  explanation makes the meaning clear. Focus on meaning.
+- Explain technical, legal, or official terms in plain language the first time
+  they appear, but keep the overall flow natural.
+- Use normal sentence length. Avoid unnecessarily fancy words, but do not make
+  it sound childish.
+- Keep all facts, requirements, deadlines, fees, eligibility, and action items
+  exactly as they are -- you are simplifying how they are said, not what they
+  mean.
+- The goal: someone who can read but does not fully understand the original
+  should come away understanding it correctly.
+""",
+            "very_simple": """\
+The user chose VERY SIMPLE-level explanation.
+This means: the easiest possible understanding without losing any facts.
+
+- Use short sentences. Each sentence should carry one clear idea.
+- Use the simplest everyday words that still preserve the exact meaning.
+- Explain every important term the first time it appears, in a short clause
+  right after the term -- for example: "citizenship (your official membership
+  in the country)".
+- If a concept is complicated, break it into the smallest clear steps, one step
+  per line or bullet where possible.
+- Keep ALL facts, requirements, deadlines, fees, eligibility, and action items
+  exactly accurate. Simplify the language, not the facts. Never invent or omit
+  anything important.
+- This level is for someone who struggles with formal, technical, or official
+  language. Write as if explaining to a friend who is smart but has never seen
+  this kind of document before.
+- This is still meaning-preserving simplification, not translation. You are
+  making the meaning easy to grasp, not copying the original wording.
+""",
+        }.get(explanation_level, """\
+The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning.
+Rewrite the idea in clear, natural, everyday language.
+Preserve the exact meaning and intent -- do not change facts.
+Explain technical or official terms in plain language.
+Do NOT treat this as a word-for-word translation. Focus on meaning.
+""")
+
+        if explanation_level == "original":
+            # ORIGINAL level: preserve the raw answer's wording/structure as much as
+            # possible. We still run it through the LLM once to ensure it's polished and
+            # that any truly opaque terms get a brief inline explanation, but we do NOT
+            # restructure or simplify the language. The user asked to understand the
+            # original, not get a rewrite.
+            prompt = f"""You are hamiGenZ. The user asked for an ORIGINAL-level explanation.
+
+QUESTION: {question}
+
+RAW ANSWER (preserve this wording and register as much as possible):
+{raw_answer}
+
+GROUNDING NOTE:
+{grounding_note}
+
+INSTRUCTIONS:
+1. Preserve the wording, structure, and register of the RAW ANSWER as much as possible.
+2. Only make small clarifications where a term is genuinely opaque — add a short inline
+   explanation in parentheses and keep the original phrase.
+3. Do NOT rewrite the answer into a simpler or more casual register.
+4. Do NOT restructure the answer.
+5. The final answer must be in {lang}.
+6. Ensure the answer is clear and readable, but stays faithful to the original tone.
+7. If the document is a form and the question is about how to fill it,
+   explain what goes in each field. Mark any example as "SAMPLE — FOR EXPLANATION ONLY — NOT FOR SUBMISSION".
+8. Do NOT invent fees, deadlines, penalties, or legal requirements.
+9. Include page citations where relevant, like (Page 3).
+
+OUTPUT: Write the final answer directly. Do not include any preamble.
+"""
+            answer = self.llm.generate(prompt)
+        else:
+            prompt = f"""You are hamiGenZ, a helpful assistant that explains documents and official information
 in simple, clear language for ordinary people in Nepal.
 
 EXPLANATION LEVEL: {explanation_level}
@@ -422,23 +492,27 @@ QUESTION (may be in Nepali, English, or Romanized Nepali): {question}
 DOCUMENT CONTENT (relevant excerpts with page numbers):
 {evidence_text}
 
-RAW ANSWER FROM AI: {raw_answer}
+RAW ANSWER FROM AI:
+{raw_answer}
 
-GROUNDING NOTE: {grounding_note}
+GROUNDING NOTE:
+{grounding_note}
 
 LEVEL GUIDANCE:
 {level_guidance}
 
+TARGET LANGUAGE: {lang}
+
 INSTRUCTIONS:
-1. Write a clear, helpful answer in {lang}.
-2. Structure it around:
+1. Rewrite the answer into the final response, following the EXPLANATION LEVEL guidance exactly.
+2. The answer must be in {lang}.
+3. Structure the final answer around:
    - What is this? (brief summary of what the document/information is about)
    - What does it mean? (explain in simple terms)
    - What do I need to do? (action items, if any)
    - Important dates / fees / requirements (if extractable)
    - Who does this apply to? (if relevant)
    - Source/citation (page numbers or document reference)
-3. Follow the EXPLANATION LEVEL guidance above exactly.
 4. If the document is a form, and the question is about how to fill it,
    explain what goes in each field. Mark any example as "SAMPLE — FOR EXPLANATION ONLY — NOT FOR SUBMISSION".
 5. If you do not have enough information to answer, say so clearly.
@@ -446,9 +520,9 @@ INSTRUCTIONS:
 7. Do NOT invent fees, deadlines, penalties, or legal requirements. If not in evidence, say you could not verify.
 8. Preserve the ORIGINAL MEANING at every level. Simplification changes the language, not the facts.
 
-OUTPUT: Write the answer directly. Do not include any preamble.
+OUTPUT: Write the final answer directly. Do not include any preamble.
 """
-        answer = self.llm.generate(prompt)
+            answer = self.llm.generate(prompt)
 
         return {
             "question": question,
@@ -473,6 +547,82 @@ OUTPUT: Write the answer directly. Do not include any preamble.
             text = chunk.get("text", "")[:600]
             lines.append(f"[Page {page}] {text}")
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _level_guidance(explanation_level: str) -> str:
+        """Return the level guidance text for inlining into prompts."""
+        guidance = {
+            "original": """\
+The user chose ORIGINAL-level explanation.
+This means: preserve the original wording and register as much as possible,
+and explain what the formal/official/technical language actually means WITHOUT
+turning it into casual everyday language.
+
+- Keep quotes or close paraphrases of important original phrases where they
+  matter, then explain what each one means in clear terms.
+- Do NOT rewrite the whole thing into everyday language. The tone should stay
+  close to the original -- formal stays formal, legal stays legal -- but with
+  clear explanations of what each important part means.
+- Distinguish three things for each important passage:
+  (a) what it literally says,
+  (b) what it implies in practice, and
+  (c) what the person needs to know or do about it.
+- This is NOT a translation. If the original is in Nepali, the explanation is
+  also in Nepali but at the same formal level -- you are explaining the meaning,
+  not simplifying the language.
+- Never lose a fact, requirement, deadline, fee, or eligibility detail while
+  explaining. Clarify the language, not the facts.
+""",
+            "simple": """\
+The user chose SIMPLE-level explanation.
+This means: rewrite the idea in clear, natural, everyday language that preserves
+the EXACT meaning and intent -- no facts changed, no requirements invented, no
+deadlines or fees guessed.
+
+- If the original is in Nepali and the user's language is Nepali, explain in
+  natural everyday Nepali. If the original is in English, explain in clear
+  everyday English. Match the user's language, not the original's register.
+- This is meaning-preserving simplification, NOT a word-for-word translation.
+  Translate the idea, not each sentence. A translation copies the words; an
+  explanation makes the meaning clear. Focus on meaning.
+- Explain technical, legal, or official terms in plain language the first time
+  they appear, but keep the overall flow natural.
+- Use normal sentence length. Avoid unnecessarily fancy words, but do not make
+  it sound childish.
+- Keep all facts, requirements, deadlines, fees, eligibility, and action items
+  exactly as they are -- you are simplifying how they are said, not what they
+  mean.
+- The goal: someone who can read but does not fully understand the original
+  should come away understanding it correctly.
+""",
+            "very_simple": """\
+The user chose VERY SIMPLE-level explanation.
+This means: the easiest possible understanding without losing any facts.
+
+- Use short sentences. Each sentence should carry one clear idea.
+- Use the simplest everyday words that still preserve the exact meaning.
+- Explain every important term the first time it appears, in a short clause
+  right after the term -- for example: "citizenship (your official membership
+  in the country)".
+- If a concept is complicated, break it into the smallest clear steps, one step
+  per line or bullet where possible.
+- Keep ALL facts, requirements, deadlines, fees, eligibility, and action items
+  exactly accurate. Simplify the language, not the facts. Never invent or omit
+  anything important.
+- This level is for someone who struggles with formal, technical, or official
+  language. Write as if explaining to a friend who is smart but has never seen
+  this kind of document before.
+- This is still meaning-preserving simplification, not translation. You are
+  making the meaning easy to grasp, not copying the original wording.
+""",
+        }
+        return guidance.get(explanation_level, """\
+The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning.
+Rewrite the idea in clear, natural, everyday language.
+Preserve the exact meaning and intent -- do not change facts.
+Explain technical or official terms in plain language.
+Do NOT treat this as a word-for-word translation. Focus on meaning.
+""")
 
     @staticmethod
     def _extract_citations(answer: str, chunks: list[dict]) -> list[dict]:

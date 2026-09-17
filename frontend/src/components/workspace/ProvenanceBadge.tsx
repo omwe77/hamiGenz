@@ -1,11 +1,12 @@
 "use client";
 
 import React from "react";
+import type { GroundingReport } from "@/lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type Props = {
   provenance: "document" | "general_ai" | "mixed";
-  grounding: { overall_confidence?: string; warning?: string } | null;
+  grounding: GroundingReport | null;
 };
 
 const BADGES = {
@@ -32,18 +33,20 @@ const BADGES = {
 export default function ProvenanceBadge({ provenance, grounding }: Props) {
   const badge = BADGES[provenance] || BADGES.general_ai;
 
-  // Derive confidence sub-label
+  // Derive confidence sub-label from the full verification report
   let confidenceLabel = "";
-  if (grounding) {
-    const c = grounding.overall_confidence;
-    if (c === "HIGH") confidenceLabel = "All claims supported";
-    else if (c === "MEDIUM") confidenceLabel = "Partially supported";
-    else if (c === "LOW") confidenceLabel = "Insufficient evidence";
-  }
+  const band = grounding?.confidence_band;
+  const score = grounding?.confidence_score;
+  if (band === "HIGH") confidenceLabel = score != null ? `All claims supported (${score})` : "All claims supported";
+  else if (band === "MEDIUM") confidenceLabel = score != null ? `Partially supported (${score})` : "Partially supported";
+  else if (band === "LOW") confidenceLabel = score != null ? `Insufficient evidence (${score})` : "Insufficient evidence";
 
   // Warning from grounding
   let warningHtml = "";
-  if (grounding?.warning) {
+  if (grounding?.contradiction_found) {
+    const claims = grounding.contradiction_claims || [];
+    warningHtml = `Claims conflict with evidence: ${claims.join("; ")}`;
+  } else if (grounding?.warning) {
     warningHtml = grounding.warning;
   } else if (confidenceLabel === "Insufficient evidence") {
     warningHtml = "Some claims could not be verified from the available source.";

@@ -411,7 +411,7 @@ async def explain_text(req: ExplainRequest):
                 full_question = f"Explain this text in simple language: {req.text}"
 
             raw_answer = llm.generate(
-                f"""You are hamiGenZ, helping a user understand difficult information in simple language.
+                f"""You are hamiGenZ, helping a user understand difficult information.
 
 The user wants to understand this text:
 {req.text}
@@ -421,8 +421,12 @@ Relevant document content (with page numbers):
 
 QUESTION: {full_question}
 
+EXPLANATION LEVEL: {req.explanation_level}
+LEVEL GUIDANCE:
+{explainer._level_guidance(req.explanation_level)}
+
 INSTRUCTIONS:
-1. Explain the meaning of the text in simple, clear language.
+1. Explain the meaning of the text according to the EXPLANATION LEVEL above.
 2. Preserve the original meaning exactly -- simplify the language, not the facts.
 3. Explain any technical, legal, or official terms in plain language.
 4. Include page references where relevant, like (Page 3).
@@ -430,7 +434,9 @@ INSTRUCTIONS:
 6. Do NOT invent facts. Do not guess fees, deadlines, or legal requirements.
 7. Structure the answer: what it is, what it means, what to do.
 
-Respond with the answer directly."""
+TARGET LANGUAGE: {response_lang}
+
+Respond with the answer directly in {response_lang}."""
             )
 
             # Run verification layer on the explanation

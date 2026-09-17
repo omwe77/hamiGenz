@@ -9,12 +9,6 @@ dist/
 downloads/
 eggs/
 .installed.cfg
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
 .eggs/
 *.manifest

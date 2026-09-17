@@ -69,6 +69,10 @@ export interface UploadResponse {
   chunks: number;
   language_hint: string;
   message: string;
+  // Fields returned by backend /upload; some may be absent depending on pipeline stage
+  upload_date?: string;
+  page_count?: number;
+  status?: string;
 }
 
 export interface DocumentInfo {
