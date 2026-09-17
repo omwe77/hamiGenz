@@ -13,11 +13,14 @@ _BACKEND_DIR = Path(__file__).resolve().parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+
+from rate_limiter import rate_limit
+from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
@@ -229,6 +232,7 @@ async def health():
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    _rl: None = Depends(rate_limit("upload")),
 ):
     """
     Upload a document (PDF, PNG, JPG, TIFF) for analysis.
@@ -311,7 +315,7 @@ async def upload_document(
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask_question(req: AskRequest):
+async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
     """
     Ask a question about a document or general Nepal information.
 
@@ -349,10 +353,9 @@ async def ask_question(req: AskRequest):
             processing_time_ms=int((time.time() - start) * 1000),
         )
 
-    # Generate raw answer using LLM
-    context = "\n\n".join(
-        f"[Page {e['page_num']}] {e['text'][:500]}" for e in evidence[:5]
-    )
+    # Generate raw answer using LLM. Evidence is untrusted data — sanitize
+    # and wrap it so document content cannot override instructions.
+    context = evidence_block(evidence[:5])
 
     llm = app.state.ollama
 
@@ -365,11 +368,12 @@ async def ask_question(req: AskRequest):
 
     if is_form_question and evidence:
         # Form-filling explanation mode
-        form_prompt = f"""You are hamiGenZ, helping a user understand and fill out a form.
+        form_prompt = f"""{SYSTEM_PREAMBLE}
+
+You are hamiGenZ, helping a user understand and fill out a form.
 
 The user asked: {req.question}
 
-Relevant document content:
 {context}
 
 INSTRUCTIONS:
@@ -388,12 +392,13 @@ Respond with the explanation / sample form.
         raw_answer = llm.generate(form_prompt)
     else:
         # Normal document question
-        doc_prompt = f"""You are hamiGenZ, a helpful assistant that explains documents in simple language
+        doc_prompt = f"""{SYSTEM_PREAMBLE}
+
+You are hamiGenZ, a helpful assistant that explains documents in simple language
 for ordinary people in Nepal.
 
 The user asked: {req.question}
 
-Relevant document content (with page numbers):
 {context}
 
 INSTRUCTIONS:
@@ -459,7 +464,7 @@ Respond with the answer directly.
 # ─── /explain: direct text explanation with level control ──────────
 
 @app.post("/explain", response_model=ExplainResponse)
-async def explain_text(req: ExplainRequest):
+async def explain_text(req: ExplainRequest, _rl: None = Depends(rate_limit("ai"))):
     """
     Explain difficult text in simple language.
     Works with or without a document.
@@ -495,10 +500,8 @@ async def explain_text(req: ExplainRequest):
         evidence = pipeline.query(req.doc_id, req.text, top_k=5)
 
         if evidence:
-            # Document-grounded explanation
-            context = "\n\n".join(
-                f"[Page {e['page_num']}] {e['text'][:500]}" for e in evidence[:5]
-            )
+            # Document-grounded explanation — evidence is untrusted data
+            context = evidence_block(evidence[:5])
 
             if req.question:
                 full_question = f"{req.question} (Context: {req.text})"
@@ -506,13 +509,14 @@ async def explain_text(req: ExplainRequest):
                 full_question = f"Explain this text in simple language: {req.text}"
 
             raw_answer = llm.generate(
-                f"""You are hamiGenZ, helping a user understand difficult information.
+                f"""{SYSTEM_PREAMBLE}
+
+You are hamiGenZ, helping a user understand difficult information.
+
+{context}
 
 The user wants to understand this text:
 {req.text}
-
-Relevant document content (with page numbers):
-{context}
 
 QUESTION: {full_question}
 
@@ -714,7 +718,11 @@ async def get_page_image(doc_id: str, page_num: int):
 # ─── /documents/{doc_id}/search-text: search extracted text ───────
 
 @app.get("/documents/{doc_id}/search-text", response_model=SearchResponse)
-async def search_document_text(doc_id: str, query: str = Query(..., min_length=1)):
+async def search_document_text(
+    doc_id: str,
+    query: str = Query(..., min_length=1),
+    _rl: None = Depends(rate_limit("search")),
+):
     """
     Search extracted text across pages. Returns matches with page + context + highlight offsets.
     """
@@ -815,6 +823,7 @@ async def delete_document(doc_id: str):
 async def ask_general_question(
     question: str = Query(..., description="Your question about Nepal"),
     language: str = Query("auto", description="Response language"),
+    _rl: None = Depends(rate_limit("ai")),
 ):
     """
     Ask a general Nepal-specific question without uploading a document.
