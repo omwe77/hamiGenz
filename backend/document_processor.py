@@ -141,11 +141,20 @@ class DocumentProcessor:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
     def save_upload(self, file_bytes: bytes, filename: str) -> str:
-        """Save uploaded file, return doc_id."""
+        """Save uploaded file under a generated internal name, return doc_id.
+
+        The user-supplied filename is NEVER used on disk — only its sanitized
+        extension. This prevents path traversal and dangerous filenames.
+        """
         doc_id = str(uuid.uuid4())[:8]
         ext = Path(filename).suffix.lower()
-        safe_name = f"{doc_id}{ext}"
+        # Keep only a safe alphanumeric extension (max 5 chars)
+        ext = re.sub(r"[^a-z0-9]", "", ext)[:5]
+        safe_name = f"{doc_id}.{ext}" if ext else doc_id
         filepath = self.upload_dir / safe_name
+        # Double-check the resolved path stays inside the upload dir
+        if not filepath.resolve().is_relative_to(self.upload_dir.resolve()):
+            raise ValueError("Resolved upload path escaped upload directory")
         filepath.write_bytes(file_bytes)
         return str(filepath), doc_id
 
