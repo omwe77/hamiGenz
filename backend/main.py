@@ -3,6 +3,16 @@ hamigenz — FastAPI Backend
 Main application entry point.
 """
 import os
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+# Ensure the backend package is importable regardless of how the app is launched
+# (uvicorn backend.main:app, python -m uvicorn, run.sh, IDE, etc.)
+_BACKEND_DIR = Path(__file__).resolve().parent
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 

@@ -26,6 +26,18 @@ BACKEND_DIR = BASE_DIR / "backend"
 DATA_DIR = BASE_DIR / "data"
 TESTS_DIR = BASE_DIR / "tests"
 
+# ─── Ensure Tesseract env vars are set for standalone test runs ──
+# (When run via the server, document_processor.py handles this at import time.
+#  When the test script runs standalone, apply the same logic here.)
+if "TESSERACT_BIN" not in os.environ or not os.environ["TESSERACT_BIN"]:
+    _default_bin = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if _default_bin.exists():
+        os.environ["TESSERACT_BIN"] = str(_default_bin)
+if "TESSDATA_PREFIX" not in os.environ or not os.environ["TESSDATA_PREFIX"]:
+    _proj_tessdata = DATA_DIR / "tessdata"
+    if _proj_tessdata.is_dir():
+        os.environ["TESSDATA_PREFIX"] = str(_proj_tessdata)
+
 sys.path.insert(0, str(BACKEND_DIR))
 
 # ─── Imports ──────────────────────────────────────────────────────

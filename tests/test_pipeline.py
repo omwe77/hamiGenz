@@ -171,10 +171,27 @@ class TestFullPipeline:
 
         yield
 
-        # Cleanup
+        # Cleanup — remove only test-created artifacts, never tessdata/
         import shutil
+        _skip_names = {"tessdata", ".git", "__pycache__"}
         if os.path.exists(self.data_dir):
-            shutil.rmtree(self.data_dir)
+            for _root, _dirs, _files in os.walk(self.data_dir, topdown=False):
+                for _name in _files:
+                    if _name == ".gitkeep":
+                        continue
+                    _path = os.path.join(_root, _name)
+                    try:
+                        os.remove(_path)
+                    except (PermissionError, OSError):
+                        pass
+                for _name in _dirs:
+                    if _name in _skip_names:
+                        continue
+                    _path = os.path.join(_root, _name)
+                    try:
+                        os.rmdir(_path)
+                    except (PermissionError, OSError):
+                        pass
 
     def test_process_and_query_sample_document(self):
         """Create a sample document, process it, and query it."""
