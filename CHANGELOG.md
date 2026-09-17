@@ -2,6 +2,20 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Added — Official source registry (PR-011 foundation)
+- Curated registry of 10 authoritative Nepali sources (passport, national
+  ID/civil registration, immigration, traffic, laws via Nepal Law
+  Commission, judiciary, tax, citizenship, supreme court, govt portal)
+  with full metadata: organization, domain, title, category, source type,
+  authority level, verified status + date, current/outdated status
+- Authority boundary is the REGISTRY, never the TLD: org.np/edu.np are
+  open-registration domains and even uncurated *.gov.np hosts classify as
+  `unverified` until reviewed
+- `GET /knowledge/sources` (category filter) and `GET /knowledge/classify`
+- Action-panel links now display "✓ verified official" or an explicit
+  "unverified source" warning based on registry classification
+- 20 new registry tests (94 passed / 1 skipped total)
+
 ### Added — Form understanding (PR-010)
 - `POST /forms/detect`: heuristic form detection (field labels, checkbox
   patterns, form keywords — English + Nepali) with page-anchored field
