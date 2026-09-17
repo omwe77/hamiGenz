@@ -83,6 +83,13 @@ export default function WorkspacePage() {
     if (!inputText.trim()) return;
     setLoading(true);
     setError(null);
+    setLoadingStage(1);
+    const stageTimer = setInterval(() => {
+      setLoadingStage((prev) => {
+        if (prev >= LOADING_STAGES.length) return prev;
+        return prev + 1;
+      });
+    }, 700);
     try {
       const docId = activeDocId || undefined;
       const res = await explainText(
@@ -97,7 +104,9 @@ export default function WorkspacePage() {
       setError(String(e));
       setExplanation(null);
     } finally {
+      clearInterval(stageTimer);
       setLoading(false);
+      setLoadingStage(0);
     }
   }, [inputText, explainLevel, targetLang, question, activeDocId]);
 
@@ -200,7 +209,20 @@ export default function WorkspacePage() {
     [handleExplain]
   );
 
-  // ── Render ──────────────────────────────────────────────────────────
+  // ── Loading stage management ─────────────────────────────────────────
+  const [loadingStage, setLoadingStage] = useState(0);
+
+  const LOADING_STAGES = [
+    "Reading your text...",
+    "Understanding the meaning...",
+    "Finding the right words...",
+    "Checking supporting evidence...",
+    "Preparing your explanation...",
+  ];
+
+  const loadingStageText = loadingStage > 0 && loadingStage <= LOADING_STAGES.length
+    ? LOADING_STAGES[loadingStage - 1]
+    : "";
   return (
     <div style={styles.wrap}>
       {/* ── Header ──────────────────────────────────────────────────── */}
@@ -315,7 +337,7 @@ export default function WorkspacePage() {
                 <button
                   style={{
                     ...styles.explainBtn,
-                    ...(loading ? styles.explainBtnDisabled : {}),
+                    ...(loading ? styles.explainBtnLoading : {}),
                   }}
                   disabled={loading || !inputText.trim()}
                   onClick={handleExplain}
@@ -338,6 +360,12 @@ export default function WorkspacePage() {
                   Clear
                 </button>
               </div>
+
+              {loading && (
+                <p style={styles.loadingHint}>
+                  {loadingStageText}
+                </p>
+              )}
 
               {error && <div style={styles.error}>{error}</div>}
 
@@ -1255,6 +1283,16 @@ const styles: Record<string, React.CSSProperties> = {
   } as React.CSSProperties,
   searchMatchText: {
     color: "var(--color-text-secondary)",
+  } as React.CSSProperties,
+  loadingHint: {
+    fontSize: "var(--text-xs)",
+    fontWeight: "var(--font-medium)",
+    color: "var(--color-info)",
+    background: "var(--color-evidence)",
+    padding: "6px 10px",
+    borderRadius: "var(--radius-md)",
+    textAlign: "center",
+    margin: "8px 0 4px",
   } as React.CSSProperties,
   selectedBox: {
     display: "flex",
