@@ -112,3 +112,31 @@ export interface SearchResponse {
   query: string;
   matches: SearchMatch[];
 }
+
+// ── Action layer (PR-009) ─────────────────────────────────────────
+export interface DeadlineItem {
+  date: string;
+  description: string;
+  unverified?: boolean;
+}
+
+export interface FeeItem {
+  amount: string;
+  description: string;
+  unverified?: boolean;
+}
+
+export interface LinkItem {
+  url: string;
+  description: string;
+}
+
+export interface ActionsResponse {
+  requirements: string[];
+  deadlines: DeadlineItem[];
+  fees: FeeItem[];
+  eligibility: string[];
+  next_steps: string[];
+  official_links: LinkItem[];
+  meta: { status: "llm" | "hints_only" | "error"; note?: string };
+}

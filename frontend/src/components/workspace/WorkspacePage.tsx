@@ -8,6 +8,7 @@ import {
   deleteDocument,
   getDocumentViewer,
   searchDocumentText,
+  extractActions,
 } from "@/lib/hamigenz-api";
 import type {
   ViewerPage,
@@ -15,11 +16,13 @@ import type {
   DocumentInfo,
   SearchMatch,
   Citation,
+  ActionsResponse,
 } from "@/lib/types";
 import ExplanationLevelSelect from "./ExplanationLevelSelect";
 import ExplanationPanel from "./ExplanationPanel";
 import DocumentViewer from "./DocumentViewer";
 import ProvenanceBadge from "./ProvenanceBadge";
+import ActionPanel from "./ActionPanel";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type ExplainLevel = "original" | "simple" | "very_simple";
@@ -67,6 +70,11 @@ export default function WorkspacePage() {
   // ── Citation/highlight state ────────────────────────────────────────
   const [citationsByPage, setCitationsByPage] = useState<Map<number, Citation[]>>(new Map());
   const [highlightPage, setHighlightPage] = useState<number | null>(null);
+
+  // ── Action layer state (PR-009) ─────────────────────────────────────
+  const [actions, setActions] = useState<ActionsResponse | null>(null);
+  const [actionsLoading, setActionsLoading] = useState(false);
+  const [actionsError, setActionsError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -288,7 +296,22 @@ export default function WorkspacePage() {
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  // ── Keyboard shortcut: Ctrl+Enter → explain ────────────────────────
+  // ── Action extraction (PR-009): from pasted text or active document ──
+  const handleExtractActions = useCallback(() => {
+    if (actionsLoading) return;
+    const sourceText = inputText.trim();
+    if (!sourceText && !activeDocId) return;
+    setActionsLoading(true);
+    setActionsError(null);
+    extractActions(sourceText || undefined, sourceText ? undefined : activeDocId || undefined, question.trim() || undefined)
+      .then(setActions)
+      .catch((e) =>
+        setActionsError(e instanceof Error ? e.message : String(e))
+      )
+      .finally(() => setActionsLoading(false));
+  }, [actionsLoading, inputText, activeDocId, question]);
+
+  // Keyboard shortcut: Ctrl+Enter → explain ────────────────────────
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -477,6 +500,15 @@ export default function WorkspacePage() {
               </div>
 
               {error && <div style={styles.errorBox}>{error}</div>}
+
+              {/* Action layer: what should I do? (from pasted text) */}
+              <ActionPanel
+                actions={actions}
+                loading={actionsLoading}
+                error={actionsError}
+                onExtract={handleExtractActions}
+                disabled={!inputText.trim() && !activeDocId}
+              />
 
               <p style={styles.hint}>
                 Ctrl+Enter to explain · Select text in the Document tab to explain it
@@ -743,6 +775,15 @@ export default function WorkspacePage() {
                   </>
                 )}
               </div>
+
+              {/* Action layer for the active document (PR-009) */}
+              <ActionPanel
+                actions={actions}
+                loading={actionsLoading}
+                error={actionsError}
+                onExtract={handleExtractActions}
+                disabled={!activeDocId}
+              />
 
               <div style={styles.sideSection}>
                 <h3 style={styles.sideTitle}>Explain selected text</h3>

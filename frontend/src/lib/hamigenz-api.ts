@@ -70,6 +70,27 @@ export async function searchDocumentText(
   return res.json();
 }
 
+export async function extractActions(
+  text?: string,
+  docId?: string,
+  question?: string
+): Promise<ActionsResponse> {
+  const body: Record<string, unknown> = {};
+  if (text) body.text = text;
+  if (docId) body.doc_id = docId;
+  if (question) body.question = question;
+  const res = await fetch(`${BASE}/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`/actions failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
 // Shared types for hamiGenZ backend API responses
 // Kept in sync with backend Pydantic models
 import type {
@@ -78,4 +99,5 @@ import type {
   DocumentInfo,
   ViewerResponse,
   SearchResponse,
+  ActionsResponse,
 } from "./types";
