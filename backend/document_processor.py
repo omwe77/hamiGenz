@@ -140,13 +140,19 @@ class DocumentProcessor:
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_upload(self, file_bytes: bytes, filename: str) -> str:
-        """Save uploaded file under a generated internal name, return doc_id.
+    def save_upload(self, file_bytes: bytes, filename: str,
+                    doc_id: str = "") -> tuple[str, str]:
+        """Save uploaded file under a generated internal name, return (path, doc_id).
 
         The user-supplied filename is NEVER used on disk — only its sanitized
         extension. This prevents path traversal and dangerous filenames.
+        An explicit doc_id (trusted internal identifier) may be passed for
+        the manual reindex path; otherwise one is generated.
         """
-        doc_id = str(uuid.uuid4())[:8]
+        if not doc_id:
+            doc_id = str(uuid.uuid4())[:8]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", doc_id):
+            raise ValueError("Invalid document id")
         ext = Path(filename).suffix.lower()
         # Keep only a safe alphanumeric extension (max 5 chars)
         ext = re.sub(r"[^a-z0-9]", "", ext)[:5]
@@ -403,6 +409,17 @@ class MetadataStore:
 
     def add_chunks(self, chunks: list[dict]) -> None:
         conn = sqlite3.connect(str(self.db_path))
+        conn.executemany(
+            "INSERT INTO chunks (chunk_id, doc_id, page_num, text, source_type) VALUES (?,?,?,?,?)",
+            [(c["chunk_id"], c["doc_id"], c["page_num"], c["text"], c["source_type"]) for c in chunks]
+        )
+        conn.commit()
+        conn.close()
+
+    def replace_chunks(self, doc_id: str, chunks: list[dict]) -> None:
+        """Replace all stored chunks for a document (used by reindexing)."""
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
         conn.executemany(
             "INSERT INTO chunks (chunk_id, doc_id, page_num, text, source_type) VALUES (?,?,?,?,?)",
             [(c["chunk_id"], c["doc_id"], c["page_num"], c["text"], c["source_type"]) for c in chunks]
