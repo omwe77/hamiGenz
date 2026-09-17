@@ -48,7 +48,12 @@ DB_PATH = DATA_DIR / "hamigenz.db"
 
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+# Multilingual embedding model — chosen via tests/evaluation retrieval
+# benchmark (PR-014): all-MiniLM-L6-v2 scored Hit@1 0.22 / MRR 0.41 overall
+# and 0.0 Hit@1 on English→Nepali cross-lingual queries; this model scores
+# Hit@1 0.72 / MRR 0.81 with zero false matches. Same 384-dim, local, free.
+EMBED_MODEL = os.getenv("EMBED_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
+REINDEX_ON_STARTUP = os.getenv("REINDEX_ON_STARTUP", "1") not in ("0", "false", "no")
 
 
 # ─── Lifespan ────────────────────────────────────────────────────
@@ -69,6 +74,43 @@ async def lifespan(app: FastAPI):
     )
     app.state.chunker = Chunker(chunk_size=500, overlap=50)
     app.state.metadata = MetadataStore(db_path=str(DB_PATH))
+
+    # Embedding-model migration guard: if the stored stamp differs from the
+    # active model, existing vectors are from a DIFFERENT embedding space
+    # (same dim ≠ same model). Auto-reindex from stored chunk text where
+    # possible; otherwise quarantine the stale index.
+    stamp = app.state.vector_store.check_model_stamp(EMBED_MODEL)
+    if stamp["missing"]:
+        app.state.vector_store.write_model_stamp(EMBED_MODEL)
+    elif stamp["stored"] != EMBED_MODEL:
+        stale = [d for d in app.state.vector_store._doc_indices
+                 if d not in set(stamp["reindex_chunks"])]
+        if REINDEX_ON_STARTUP:
+            migrated = []
+            for doc_id in stamp["reindex_chunks"]:
+                try:
+                    app.state.vector_store.reindex_document(
+                        doc_id, app.state.embedder)
+                    migrated.append(doc_id)
+                except Exception as exc:
+                    print(f"[hamigenz] Reindex failed for {doc_id}: {exc}")
+                    stale.append(doc_id)
+            print(f"[hamigenz] Embedding model changed "
+                  f"({stamp['stored']} → {EMBED_MODEL}); "
+                  f"reindexed {len(migrated)} doc(s)")
+        else:
+            print(f"[hamigenz] WARNING: embedding model changed "
+                  f"({stamp['stored']} → {EMBED_MODEL}) but "
+                  f"REINDEX_ON_STARTUP=0 — {len(stamp['reindex_chunks'])} "
+                  f"doc(s) still use old vectors")
+        for doc_id in stale:
+            try:
+                app.state.vector_store.remove_document(doc_id)
+                print(f"[hamigenz] Quarantined stale vector index: {doc_id}")
+            except Exception as exc:
+                print(f"[hamigenz] Failed to remove stale index {doc_id}: {exc}")
+        app.state.vector_store.write_model_stamp(EMBED_MODEL)
+
     app.state.ollama = OllamaService(base_url=OLLAMA_BASE, model=OLLAMA_MODEL)
     app.state.pipeline = Pipeline(
         embedding_service=app.state.embedder,
@@ -279,6 +321,7 @@ async def health():
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    reindex_doc_id: str = Query("", description="Existing doc_id to re-embed with the current embedding model (reindex mode)"),
     _rl: None = Depends(rate_limit("upload")),
 ):
     """
@@ -320,9 +363,27 @@ async def upload_document(
     # Save under a generated internal name (user filename never touches disk)
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
     try:
-        filepath, doc_id = processor.save_upload(file_bytes, filename)
+        if not reindex_doc_id:
+            filepath, doc_id = processor.save_upload(file_bytes, filename)
     except ValueError as e:
         raise HTTPException(400, "Invalid upload") from e
+
+    # Reindex mode: re-embed an EXISTING document with the current model
+    # (e.g. after a model switch when auto-reindex was skipped or failed).
+    # The file must be re-uploaded; processing runs fully and replaces the
+    # old vector index + chunk rows under the SAME doc_id.
+    if reindex_doc_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
+            raise HTTPException(400, "Invalid document id")
+        if app.state.metadata.get_document(reindex_doc_id) is None:
+            raise HTTPException(404, "Document not found — cannot reindex")
+        # Clean the old representations before reprocessing
+        app.state.vector_store.remove_document(reindex_doc_id)
+        app.state.metadata.delete_document(reindex_doc_id)
+        filepath, doc_id = processor.save_upload(
+            file_bytes, filename, doc_id=reindex_doc_id)
+    else:
+        filepath, doc_id = processor.save_upload(file_bytes, filename)
 
     # Process
     pipeline = app.state.pipeline
@@ -504,6 +565,9 @@ Respond with the answer directly.
 
     elapsed = int((time.time() - start) * 1000)
     formatted["processing_time_ms"] = elapsed
+    # format_answer returns 'language'; the response model requires
+    # 'language_used' (both carry the same value).
+    formatted["language_used"] = formatted.get("language", response_lang)
 
     return AskResponse(**formatted)
 

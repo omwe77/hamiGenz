@@ -2,6 +2,29 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Changed — Embedding model switched on benchmark evidence (PR-014)
+- New evaluation system: gold dataset (12+ human-verified cases across 11
+  categories with alternative-form key facts, forbidden facts, and
+  sentence-level negation guards), retrieval benchmark (Hit@k / MRR /
+  negative probes across English, Nepali, romanized, mixed), explanation
+  evaluator (deterministic fact checks, no LLM judge in CI), and 16
+  dataset-integrity self-consistency tests
+- Benchmark verdict: all-MiniLM-L6-v2 scored Hit@1 0.22 / MRR 0.41 with a
+  **0.33 false-match rate** and 0.00 Hit@1 on English→Nepali queries;
+  paraphrase-multilingual-MiniLM-L12-v2 scores Hit@1 0.72 / MRR 0.81 with
+  zero false matches — default switched accordingly (same 384-dim,
+  local, free)
+- Model-switch safety: `data/vectors/embed_model.txt` stamp; on mismatch,
+  docs are re-embedded from stored chunk text automatically (or
+  quarantined when not re-embedable) instead of silently serving garbage
+  vectors; manual `POST /upload?reindex_doc_id=` also available
+- **Fixed: Nepali uploads crashed on Windows** — vector metadata JSON was
+  written without `encoding="utf-8"` (cp1252 cannot encode Devanagari);
+  all JSON reads/writes in the vector store now UTF-8
+- Fixed: `/ask` 500 — `format_answer` returns `language` but the response
+  model required `language_used` (missing-field mapping added)
+- See docs/EVALUATION.md for full results and the decision rationale
+
 ### Added — Official-source answering (PR-012)
 - `/ask-general` now answers official-information questions (fees,
   procedures, laws, deadlines) from VERIFIED REGISTRY SOURCES via a local
