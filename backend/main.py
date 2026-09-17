@@ -22,7 +22,14 @@ from typing import Optional
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
 from vector_store import EmbeddingService, VectorStore, Pipeline
-from llm_service import OllamaService, GroundingValidator, ExplanationEngine, LanguageDetector, VerificationLayer
+from llm_service import (
+    OllamaService,
+    LLMUnavailableError,
+    GroundingValidator,
+    ExplanationEngine,
+    LanguageDetector,
+    VerificationLayer,
+)
 
 
 # ─── Configuration ───────────────────────────────────────────────
@@ -120,6 +127,10 @@ class AskResponse(BaseModel):
     evidence_pages: list[int]
     language_used: str
     processing_time_ms: Optional[int] = None
+    # Verification layer report (STEP 3) — optional so older payloads stay valid
+    grounding: Optional[dict] = None
+    explanation_level: Optional[str] = None
+    language: Optional[str] = None
 
 
 class DocumentInfo(BaseModel):
@@ -184,6 +195,22 @@ class SearchResponse(BaseModel):
     doc_id: str
     query: str
     matches: list[SearchMatch]
+
+
+# ─── Helper: error handling ──────────────────────────────────────
+def _llm_unavailable_503(e: LLMUnavailableError) -> HTTPException:
+    """Map LLM backend failures to a clean 503 (never leak stack traces)."""
+    print(f"[hamigenz] LLM unavailable: {e}")
+    return HTTPException(
+        503,
+        "The explanation service is temporarily unavailable. "
+        "Please make sure the local AI backend is running and try again.",
+    )
+
+
+def metadata_exists(app, doc_id: str) -> bool:
+    """Check a doc_id exists in metadata before using it downstream."""
+    return app.state.metadata.get_document(doc_id) is not None
 
 
 # ─── Endpoints ───────────────────────────────────────────────────
@@ -346,6 +373,14 @@ Respond with the answer directly.
     # Validate grounding + run verification layer
     verification = app.state.verification.verify(req.question, raw_answer, evidence)
     grounding = verification["grounding_report"]
+    grounding.update({
+        "contradiction_found": verification["contradiction_found"],
+        "contradiction_claims": verification["contradiction_claims"],
+        "confidence_score": verification["confidence_score"],
+        "confidence_band": verification["confidence_band"],
+        "unsupported_facts": verification["unsupported_facts"],
+        "recommendation": verification["recommendation"],
+    })
 
     # If contradictions found, attempt a corrected answer
     final_answer = raw_answer
@@ -358,6 +393,14 @@ Respond with the answer directly.
             # Re-validate the corrected answer
             verification = app.state.verification.verify(req.question, final_answer, evidence)
             grounding = verification["grounding_report"]
+            grounding.update({
+                "contradiction_found": verification["contradiction_found"],
+                "contradiction_claims": verification["contradiction_claims"],
+                "confidence_score": verification["confidence_score"],
+                "confidence_band": verification["confidence_band"],
+                "unsupported_facts": verification["unsupported_facts"],
+                "recommendation": verification["recommendation"],
+            })
 
     # Format final answer
     formatted = explainer.format_answer(
@@ -407,6 +450,9 @@ async def explain_text(req: ExplainRequest):
     # If doc_id provided, retrieve evidence from that document
     if has_doc:
         pipeline = app.state.pipeline
+        # Validate doc_id before passing it near the filesystem/vector registry
+        if req.doc_id and not metadata_exists(app, req.doc_id):
+            raise HTTPException(404, f"Document {req.doc_id} not found")
         evidence = pipeline.query(req.doc_id, req.text, top_k=5)
 
         if evidence:
@@ -452,6 +498,16 @@ Respond with the answer directly in {response_lang}."""
             # Run verification layer on the explanation
             verification = app.state.verification.verify(full_question, raw_answer, evidence)
             grounding = verification["grounding_report"]
+            # Surface verification-layer results in the top-level report the
+            # frontend reads (they were previously lost inside /verify).
+            grounding.update({
+                "contradiction_found": verification["contradiction_found"],
+                "contradiction_claims": verification["contradiction_claims"],
+                "confidence_score": verification["confidence_score"],
+                "confidence_band": verification["confidence_band"],
+                "unsupported_facts": verification["unsupported_facts"],
+                "recommendation": verification["recommendation"],
+            })
 
             # If contradictions found, attempt a corrected explanation
             final_answer = raw_answer
@@ -463,6 +519,14 @@ Respond with the answer directly in {response_lang}."""
                     final_answer = corrected
                     verification = app.state.verification.verify(full_question, final_answer, evidence)
                     grounding = verification["grounding_report"]
+                    grounding.update({
+                        "contradiction_found": verification["contradiction_found"],
+                        "contradiction_claims": verification["contradiction_claims"],
+                        "confidence_score": verification["confidence_score"],
+                        "confidence_band": verification["confidence_band"],
+                        "unsupported_facts": verification["unsupported_facts"],
+                        "recommendation": verification["recommendation"],
+                    })
 
             formatted = explainer.format_answer(
                 question=full_question,
@@ -545,6 +609,10 @@ async def get_document_viewer(doc_id: str):
     if not doc:
         raise HTTPException(404, f"Document {doc_id} not found")
 
+    stored_path = Path(doc["filepath"]).resolve()
+    if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(403, "Invalid document path")
+
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
     pages = processor.extract_text(doc["filepath"])
 
@@ -583,6 +651,17 @@ async def get_page_image(doc_id: str, page_num: int):
     if not doc:
         raise HTTPException(404, f"Document {doc_id} not found")
 
+    # Defense against out-of-range / negative page numbers
+    if page_num < 1 or page_num > 10000:
+        raise HTTPException(404, f"Page {page_num} not found")
+
+    # Defense-in-depth: the stored filepath must live inside UPLOAD_DIR.
+    # (doc_id and filepath come from our own metadata DB, never from user input,
+    #  but verify anyway so a tampered DB row can't escape the upload sandbox.)
+    stored_path = Path(doc["filepath"]).resolve()
+    if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(403, "Invalid document path")
+
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
     img_bytes = processor.render_page_image(doc["filepath"], page_num)
 
@@ -604,6 +683,10 @@ async def search_document_text(doc_id: str, query: str = Query(..., min_length=1
     doc = metadata.get_document(doc_id)
     if not doc:
         raise HTTPException(404, f"Document {doc_id} not found")
+
+    stored_path = Path(doc["filepath"]).resolve()
+    if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(403, "Invalid document path")
 
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
     pages = processor.extract_text(doc["filepath"])
@@ -669,6 +752,12 @@ async def delete_document(doc_id: str):
 
     doc = metadata.get_document(doc_id)
     filepath = doc.get("filepath")
+
+    # Defense-in-depth: never delete anything outside the upload sandbox
+    if filepath:
+        stored_path = Path(filepath).resolve()
+        if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
+            raise HTTPException(403, "Invalid document path")
 
     # Remove from vector store
     vector_store.remove_document(doc_id)

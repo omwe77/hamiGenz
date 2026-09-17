@@ -10,6 +10,10 @@ from typing import Optional
 from document_processor import DocumentProcessor
 
 
+class LLMUnavailableError(RuntimeError):
+    """Raised when the local LLM backend cannot be reached or fails."""
+
+
 class OllamaService:
     """Interface to local Ollama LLM."""
 
@@ -50,21 +54,28 @@ class OllamaService:
 
         if stream:
             chunks = []
-            with requests.post(f"{self.base_url}/api/generate",
-                               json=payload, stream=True, timeout=120) as resp:
-                for line in resp.iter_lines():
-                    if line:
-                        data = json.loads(line)
-                        if "response" in data:
-                            chunks.append(data["response"])
-                        if data.get("done"):
-                            break
+            try:
+                with requests.post(f"{self.base_url}/api/generate",
+                                   json=payload, stream=True, timeout=timeout) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if line:
+                            data = json.loads(line)
+                            if "response" in data:
+                                chunks.append(data["response"])
+                            if data.get("done"):
+                                break
+            except (requests.RequestException, json.JSONDecodeError) as e:
+                raise LLMUnavailableError(f"LLM backend error: {e}") from e
             return "".join(chunks)
         else:
-            resp = requests.post(f"{self.base_url}/api/generate",
-                                 json=payload, timeout=120)
-            resp.raise_for_status()
-            return resp.json().get("response", "")
+            try:
+                resp = requests.post(f"{self.base_url}/api/generate",
+                                     json=payload, timeout=timeout)
+                resp.raise_for_status()
+                return resp.json().get("response", "")
+            except (requests.RequestException, json.JSONDecodeError) as e:
+                raise LLMUnavailableError(f"LLM backend error: {e}") from e
 
     def generate_structured(self, prompt: str) -> dict:
         """
