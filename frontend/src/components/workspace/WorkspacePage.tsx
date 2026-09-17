@@ -587,6 +587,24 @@ export default function WorkspacePage() {
                     </button>
                   )}
                 </div>
+                {searchQuery.trim() !== "" && searchResults.length === 0 && (
+                  <div style={styles.searchNoResults}>
+                    No matches found for "{searchQuery}"
+                  </div>
+                )}
+                {searchResults.length > 0 && (
+                  <div style={styles.searchResultsInfo}>
+                    <span style={styles.searchResultsCount}>
+                      {searchResults.length} match{searchResults.length !== 1 ? "es" : ""}
+                    </span>
+                    <button
+                      style={styles.searchClear}
+                      onClick={() => setSearchQuery("")}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
                 {searchResults.length > 0 && (
                   <div style={styles.searchResults}>
                     {searchResults.map((m, i) => (
@@ -1283,6 +1301,25 @@ const styles: Record<string, React.CSSProperties> = {
   } as React.CSSProperties,
   searchMatchText: {
     color: "var(--color-text-secondary)",
+  } as React.CSSProperties,
+  searchNoResults: {
+    padding: "var(--space-3)",
+    background: "var(--color-bg-alt)",
+    borderRadius: "var(--radius-sm)",
+    fontSize: "var(--text-sm)",
+    color: "var(--color-text-tertiary)",
+    textAlign: "center",
+  } as React.CSSProperties,
+  searchResultsInfo: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "var(--space-2)",
+  } as React.CSSProperties,
+  searchResultsCount: {
+    fontSize: "var(--text-xs)",
+    fontWeight: "var(--font-medium)",
+    color: "var(--color-accent)",
   } as React.CSSProperties,
   loadingHint: {
     fontSize: "var(--text-xs)",
