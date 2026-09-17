@@ -233,6 +233,10 @@ async def upload_document(
     """
     Upload a document (PDF, PNG, JPG, TIFF) for analysis.
     The document is processed, chunked, embedded, and indexed.
+
+    Untrusted input defenses: size limits, magic-byte content validation
+    (extension and declared type are ignored), page-count limits, and
+    user-controlled filenames never touch the filesystem.
     """
     # Read file
     file_bytes = await file.read()
@@ -248,18 +252,53 @@ async def upload_document(
     if ext not in (".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"):
         raise HTTPException(400, f"Unsupported file type: {ext}. Use PDF or image (PNG/JPG/TIFF).")
 
-    # Save file
+    # ── Content-based validation (never trust declared type) ──────────
+    _MAGIC = {
+        ".pdf": b"%PDF-",
+        ".png": b"\x89PNG\r\n\x1a\n",
+        ".jpg": b"\xff\xd8\xff",
+        ".jpeg": b"\xff\xd8\xff",
+        ".tif": b"II*\x00",  # little-endian TIFF (big-endian handled below)
+    }
+    head = file_bytes[:16]
+    expected = _MAGIC.get(ext)
+    tiff_be = ext in (".tif", ".tiff") and head.startswith(b"MM\x00*")
+    if expected and not (head.startswith(expected) or tiff_be):
+        raise HTTPException(400, "File content does not match its type. Upload rejected.")
+
+    # Save under a generated internal name (user filename never touches disk)
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-    filepath, doc_id = processor.save_upload(file_bytes, filename)
+    try:
+        filepath, doc_id = processor.save_upload(file_bytes, filename)
+    except ValueError as e:
+        raise HTTPException(400, "Invalid upload") from e
 
     # Process
     pipeline = app.state.pipeline
-    result = pipeline.process_document(str(filepath), doc_id, filename)
+    try:
+        result = pipeline.process_document(str(filepath), doc_id, filename)
+    except Exception:
+        # Malformed/corrupt documents (bad PDF structure, broken images, OCR
+        # failures) must fail cleanly — never leak a stack trace to the client.
+        print(f"[hamigenz] Document processing failed for {doc_id}")
+        import traceback
+        traceback.print_exc()
+        Path(filepath).unlink(missing_ok=True)
+        raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.")
 
     if result["status"] == "error":
         # Cleanup file on error
         Path(filepath).unlink(missing_ok=True)
         raise HTTPException(400, result.get("message", "Processing failed"))
+
+    # ── Resource limits on processed documents ────────────────────────
+    MAX_PAGES = 200
+    if result["pages"] > MAX_PAGES:
+        # Roll back indexing entirely — don't keep a document we reject
+        app.state.vector_store.remove_document(doc_id)
+        app.state.metadata.delete_document(doc_id)
+        Path(filepath).unlink(missing_ok=True)
+        raise HTTPException(400, f"Document has too many pages (max {MAX_PAGES}).")
 
     return UploadResponse(
         doc_id=doc_id,
