@@ -3,6 +3,7 @@ hamigenz — Embedding Service + Vector Storage (FAISS)
 """
 import os
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -64,12 +65,77 @@ class VectorStore:
         """Load registry of existing doc indices."""
         registry_path = self.vectors_dir / "registry.json"
         if registry_path.exists():
-            with open(registry_path) as f:
+            with open(registry_path, encoding="utf-8") as f:
                 self._doc_indices = json.load(f)
+
+    def _stamp_path(self) -> Path:
+        return self.vectors_dir / "embed_model.txt"
+
+    def check_model_stamp(self, model_name: str) -> dict:
+        """Compare the stored embedding-model stamp with the active model.
+
+        The stamp prevents silent vector corruption: two different models
+        can share the same dimension (e.g. all-MiniLM-L6-v2 and
+        paraphrase-multilingual-MiniLM-L12-v2 are both 384-dim), so a
+        dimension check alone cannot detect a model switch.
+
+        Returns {current, stored, reindex_chunks, missing} where
+        reindex_chunks lists doc_ids whose stored chunks can be re-embedded
+        from chunk metadata alone (no original file needed).
+        """
+        stored = None
+        if self._stamp_path().exists():
+            stored = self._stamp_path().read_text(encoding="utf-8").strip()
+        reindexable = []
+        if stored and stored != model_name:
+            for doc_id in self._doc_indices:
+                meta_path = self.vectors_dir / f"{doc_id}_meta.json"
+                if meta_path.exists():
+                    try:
+                        with open(meta_path, encoding="utf-8") as f:
+                            chunks = json.load(f)
+                        if chunks and all("text" in c for c in chunks):
+                            reindexable.append(doc_id)
+                    except (json.JSONDecodeError, OSError):
+                        pass
+        return {
+            "current": model_name,
+            "stored": stored,
+            "reindex_chunks": reindexable,
+            "missing": stored is None,
+        }
+
+    def write_model_stamp(self, model_name: str) -> None:
+        self._stamp_path().write_text(model_name, encoding="utf-8")
+
+    @staticmethod
+    def sanitize_chunk_text(text: str) -> str:
+        """Ensure chunk text is embeddable: non-empty and str-typed."""
+        if not isinstance(text, str):
+            return ""
+        text = re.sub(r"\\s+", " ", text).strip()
+        return text if text else "(empty chunk)"
+
+    def reindex_document(self, doc_id: str, embedder,
+                         batch_size: int = 32) -> dict:
+        """Re-embed a document's chunks with a new model, in place.
+
+        Reads chunk text from stored metadata (works even if the original
+        upload is gone), re-embeds, and replaces the FAISS index.
+        """
+        meta_path = self.vectors_dir / f"{doc_id}_meta.json"
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        texts = [self.sanitize_chunk_text(c.get("text", "")) for c in meta]
+        embeddings = embedder.embed_texts(texts, batch_size=batch_size)
+        index = faiss.IndexFlatIP(embedder.dimension)
+        index.add(embeddings.astype(np.float32))
+        faiss.write_index(index, str(self.vectors_dir / f"{doc_id}.faiss"))
+        return {"doc_id": doc_id, "chunks": len(meta)}
 
     def _save_registry(self):
         registry_path = self.vectors_dir / "registry.json"
-        with open(registry_path, "w") as f:
+        with open(registry_path, "w", encoding="utf-8") as f:
             json.dump(self._doc_indices, f, indent=2)
 
     def add_document(self, doc_id: str, chunks: list[dict],
@@ -101,7 +167,9 @@ class VectorStore:
             }
             for c in chunks
         ]
-        with open(meta_path, "w") as f:
+        # encoding='utf-8' is REQUIRED: chunk text is frequently Nepali and
+        # the Windows default (cp1252) cannot encode Devanagari.
+        with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
         self._doc_indices[doc_id] = str(index_path)
@@ -130,7 +198,7 @@ class VectorStore:
         if not meta_path.exists():
             return []
 
-        with open(meta_path) as f:
+        with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
 
         results = []
@@ -149,7 +217,7 @@ class VectorStore:
         return results
 
     def search_all(self, query_embedding: np.ndarray,
-                   top_k: int = 5, min_score: float = 0.3) -> list[dict]:
+                   top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """
         Search across all documents.
         Returns merged results with doc_id.
@@ -166,7 +234,7 @@ class VectorStore:
             meta_path = self.vectors_dir / f"{doc_id}_meta.json"
             if not meta_path.exists():
                 continue
-            with open(meta_path) as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
 
             for score, idx in zip(scores[0], ids[0]):
@@ -257,7 +325,7 @@ class Pipeline:
         }
 
     def query(self, doc_id: str | None, question: str,
-              top_k: int = 5) -> list[dict]:
+              top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """Retrieve relevant chunks for a question."""
         query_emb = self.embedder.embed_text(question)
 
