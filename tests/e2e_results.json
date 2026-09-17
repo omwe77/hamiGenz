@@ -1,5 +1,5 @@
 {
-  "run_timestamp": "2026-09-16T18:21:16.695228",
+  "run_timestamp": "2026-09-17T11:24:27.179445",
   "passport_pdf": "C:\\Users\\LENOVO\\OneDrive - London Metropolitan University\\Documents\\my_projects\\hamigenz\\data\\passport_procedure.pdf",
   "passport_pages": 6,
   "total_chunks": 10,
@@ -8,7 +8,7 @@
   "questions_tested": 25,
   "results": [
     {
-      "timestamp": "2026-09-16T18:14:59.670765",
+      "timestamp": "2026-09-17T11:18:27.288439",
       "question": "passport_extraction",
       "language": "auto",
       "status": "PASS",
@@ -16,7 +16,7 @@
       "details": "source_types: ['text', 'text', 'ocr', 'text', 'text', 'text']"
     },
     {
-      "timestamp": "2026-09-16T18:14:59.670765",
+      "timestamp": "2026-09-17T11:18:27.289741",
       "question": "chunking",
       "language": "auto",
       "status": "PASS",
@@ -24,7 +24,7 @@
       "details": ""
     },
     {
-      "timestamp": "2026-09-16T18:15:03.548899",
+      "timestamp": "2026-09-17T11:18:30.632795",
       "question": "embeddings",
       "language": "auto",
       "status": "PASS",
@@ -32,7 +32,7 @@
       "details": ""
     },
     {
-      "timestamp": "2026-09-16T18:15:03.554342",
+      "timestamp": "2026-09-17T11:18:30.636308",
       "question": "faiss_index",
       "language": "auto",
       "status": "PASS",
@@ -40,7 +40,7 @@
       "details": ""
     },
     {
-      "timestamp": "2026-09-16T18:15:03.576264",
+      "timestamp": "2026-09-17T11:18:30.657105",
       "question": "metadata_persistence",
       "language": "auto",
       "status": "PASS",
@@ -48,7 +48,7 @@
       "details": ""
     },
     {
-      "timestamp": "2026-09-16T18:15:09.505853",
+      "timestamp": "2026-09-17T11:18:36.397985",
       "question": "pipeline_process",
       "language": "auto",
       "status": "PASS",
@@ -56,196 +56,196 @@
       "details": ""
     },
     {
-      "timestamp": "2026-09-16T18:15:35.672944",
+      "timestamp": "2026-09-17T11:19:01.159539",
       "question": "Yo document ko purpose ke ho?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "This document explains how to apply for an ePassport through an online pre-enrollment form. (Page 1)  \n**What it means**: It is a guide for Nepali citizens to start the passport application process di",
-      "details": "answer 556 chars, 9.6s, pages=[1, 3], citations=yes"
+      "answer_preview": "This document explains how to apply for an ePassport through the online pre-enrollment process. (Page 1)  \n\n**What it means**:  \nIt is a guide for people in Nepal who want to apply for an electronic p",
+      "details": "answer 672 chars, 12.1s, pages=[1, 3], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:15:44.131901",
+      "timestamp": "2026-09-17T11:19:10.017703",
       "question": "What is the purpose of this document?",
       "language": "english",
       "status": "PASS",
-      "answer_preview": "**What this document is:**  \nThis document explains the process for applying for a new passport when your current one is lost, damaged, or needs renewal.  \n\n**What it means:**  \n- You need to submit *",
-      "details": "answer 733 chars, 8.5s, pages=[4, 6], citations=yes"
+      "answer_preview": "This document is **instructions for applying for a new passport** when your current one is **renewed, lost, or damaged**.  \n\n### What it means:  \n- You need to **submit passport photos** (front and ba",
+      "details": "answer 659 chars, 8.9s, pages=[4, 6], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:16:01.976288",
+      "timestamp": "2026-09-17T11:19:21.928939",
       "question": "यो दस्तावेजको PURPOSE के हो?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "यो दस्तावेजको उद्देश्य दस्तावेजमा स्पष्ट रूपमा लेखिएको छैन (पृष्ठ 3)। दस्तावेजमा केही कोड, तारिखहरू (जस्तै 2026), र संख्याहरू छन्, जस्तै \"एाश्म०5९ ला००५९\" र \"सि शिकएलीा 2026 रे काला\"। यो दस्तावेज संभव",
-      "details": "answer 381 chars, 17.8s, pages=[3], citations=no"
+      "answer_preview": "म दस्तावेजको उद्देश्य बुझिसकें छैन (Page 3)। दस्तावेजमा केही संख्या, चिन्ह र अक्षरहरू छन् जसलाई सामान्य भाषामा अनुवाद गर्न सकिन छैन। यदि तपाईंले दस्तावेजको विस्तृत विवरण वा स्पष्ट वाक्य दिन सकें, म तप",
+      "details": "answer 225 chars, 11.9s, pages=[3], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:16:26.731306",
+      "timestamp": "2026-09-17T11:19:40.584978",
       "question": "passport banauna k k chainxa?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "**Passport Banauna K K Chainxa?** (Page 1)  \n**के हो?**  \ne-Passport आवेदन प्रक्रिया ऑनलाइन गर्न आवश्यक छ। तपाईंले डिपार्टमेंट अफ पासपोर्टको वेबसाइटमा आवेदन गर्नु पर्छ।  \n\n**के गर्नु पर्छ?**  \n1. **वे",
-      "details": "answer 1293 chars, 24.8s, pages=[1, 5], citations=yes"
+      "answer_preview": "**Passport Banauna K K Chainxa?** (Page 1)  \n**के हो?**  \ne-Passport आवेदन प्रक्रिया ऑनलाइन गर्न डिपार्टमेंट अफ पासपोर्टको वेबसाइटमा आवेदन भर्नु हो।  \n\n**के गर्नु पर्छ?**  \n1. **वेबसाइट खोल्नु** (Page",
+      "details": "answer 936 chars, 18.7s, pages=[1, 5], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:16:40.223938",
+      "timestamp": "2026-09-17T11:19:55.018373",
       "question": "deadline kahile ho?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "Deadline (तारिख) दस्तावेजमा पनि उल्लेख छ। तपाईंको प्रश्न अनुसार, दस्तावेजमा \"2026 रे काला\" (2026 को तारिख) लेखिएको छ (पृष्ठ 3)। यसको अर्थ 2026 मा काम समाप्त गर्नुपर्छ भनेको छ। तर, ठाडो तारिख वा विस्तृ",
-      "details": "answer 264 chars, 13.5s, pages=[3], citations=no"
+      "answer_preview": "Deadline (तयारी तारिख) दस्तावेजमा पनि उल्लेख छ। (पृष्ठ 3)  \n\n**के हो तारिख?**  \n\"2026 रे काला\" भनेको 2026 सालको तयारी तारिख हो। यसको अर्थ यो काम वा प्रक्रिया 2026 सालमा पूरा गर्नुपर्छ।  \n\n**के गर्नुपर",
+      "details": "answer 396 chars, 14.4s, pages=[3], citations=no"
     },
     {
-      "timestamp": "2026-09-16T18:16:51.916351",
+      "timestamp": "2026-09-17T11:20:05.887863",
       "question": "What are the steps to apply for a passport?",
       "language": "english",
       "status": "PASS",
-      "answer_preview": "To apply for a passport, follow these steps:  \n\n**What it is**: A passport is an official document that proves your identity and citizenship.  \n**What it means**: You need to complete specific steps t",
-      "details": "answer 932 chars, 11.7s, pages=[2, 6], citations=yes"
+      "answer_preview": "**What is a passport application?**  \nA passport application is the process of requesting a passport from the government. It involves submitting personal details, documents, and completing forms to pr",
+      "details": "answer 1047 chars, 10.9s, pages=[2, 6], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:17:14.457729",
+      "timestamp": "2026-09-17T11:20:30.339559",
       "question": "नेपाल राहदानी कसरी लगाउने?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "**नेपाल राहदानी फारम भर्ने विधि**  \n[पृष्ठ ३] मा उल्लेखित जानकारी अनुसार, राहदानी फारममा निम्न ठाउँहरू भर्नु पर्छ:  \n\n1. **लाउन ज्ञ** (Recipient's Name): राहदानी गर्ने व्यक्तिको नाम।  \n2. **एाश्म०5९ ल",
-      "details": "answer 1070 chars, 22.5s, pages=[3], citations=no"
+      "answer_preview": "**नेपाल राहदानी कसरी लगाउने?**  \nनेपालमा राहदानी गर्नका लागि आवश्यक फारामका केही मुख्य खाना छन्, जस्तै:  \n\n### **1. लाउन ज्ञ (Recipient's Name)**  \n- **समझदारी:** राहदानी गर्ने व्यक्तिको नाम।  \n- **पृ",
+      "details": "answer 1194 chars, 24.5s, pages=[3], citations=no"
     },
     {
-      "timestamp": "2026-09-16T18:17:32.997765",
+      "timestamp": "2026-09-17T11:20:43.373806",
       "question": "Step 3 ma ke bhaneko cha?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "Step 3 मा तपाईंले \"Apply for Passport राहदानीको लागि आवेदन\" बटन छान्नु पर्छ (Page 1)। यो बटन चालू गर्दा तपाईंले आवेदन प्रक्रिया सुरु गर्नु छ।",
-      "details": "answer 141 chars, 18.5s, pages=[1, 3], citations=yes"
+      "answer_preview": "**Step 3 (Page 1):**  \n**के हो?**  \nस्टेप ३ मा तपाईंले \"Apply for Passport राहदानीको लागि आवेदन\" बटन छान्नु पर्छ।  \n\n**के भने?**  \nयो बटन तपाईंको आवेदन प्रक्रिया सुरु गर्नका लागि छ। तपाईं यस बटन छाने ",
+      "details": "answer 440 chars, 13.0s, pages=[1, 3], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:17:40.611330",
+      "timestamp": "2026-09-17T11:20:51.477088",
       "question": "Step 4 ma ke bhaneko cha?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "You could not find information about \"Step 4\" in the provided document content (Page 1 and Page 3). The document only describes Steps 1–3 for the online pre-enrollment application form for an ePasspor",
-      "details": "answer 284 chars, 7.6s, pages=[1, 3], citations=yes"
+      "answer_preview": "Step 4 बारेको जानकारी दस्तावेजमा छैन (Page 3 र Page 1 तल देखाइएको छ)। दस्तावेजमा उपलब्ध जानकारी अनुसार, आवेदन प्रक्रियाका चरण ३ समाप्त भएको छ। चरण ४ को विवरण दस्तावेजमा नछैन।",
+      "details": "answer 174 chars, 8.1s, pages=[1, 3], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:17:52.918389",
+      "timestamp": "2026-09-17T11:21:02.704535",
       "question": "Appointment country kahan le chayan garnu parcha?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "You asked: \"Appointment country kahan le chayan garnu parcha?\" (Where to get an appointment country?).  \n\n**What it is**: This question seems to relate to applying for a passport or visa appointment, ",
-      "details": "answer 1174 chars, 12.3s, pages=[1, 3], citations=yes"
+      "answer_preview": "**What it is:**  \nYou are asking where to apply for an appointment related to a passport or travel document.  \n\n**What it means:**  \nThe document explains the process to apply for an ePassport (electr",
+      "details": "answer 821 chars, 11.2s, pages=[1, 3], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:18:06.614292",
+      "timestamp": "2026-09-17T11:21:15.146015",
       "question": "Data Privacy Consent ko k ho?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "आप जो प्रश्न राखेकै छ, \"डाटा प्राइवेसी कन्सेंट के हो?\" तलको दस्तावेजमा यो शब्द छैन (पृष्ठ ४ र ५)। दस्तावेजमा डाटा प्राइवेसी कन्सेंट बारे कुनै जानकारी छैन। यो दस्तावेज इ-पासपोर्ट आवेदन प्रक्रिया विषयमा",
-      "details": "answer 378 chars, 13.7s, pages=[4, 5], citations=no"
+      "answer_preview": "Data Privacy Consent को बारेमा डेटा प्राइवेसी कन्सेंट के हो, यह डकुमेन्टमा उल्लेख छैन। यह डकुमेन्ट इ-पासपोर्ट आवेदन प्रक्रिया बारेमा हो, जहाँ आपको व्यक्तिगत जानकारी (जस्तै नाम, पता, नागरिकता नम्बर, आद",
+      "details": "answer 313 chars, 12.4s, pages=[4, 5], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:18:12.535697",
+      "timestamp": "2026-09-17T11:21:22.178219",
       "question": "What is the website URL mentioned?",
       "language": "english",
       "status": "PASS",
-      "answer_preview": "The document does not mention a specific website URL. It refers to the \"Nepal e-Passport mobile app\" for checking application status but does not provide a website address. (Page 5)",
-      "details": "answer 181 chars, 5.9s, pages=[4, 5], citations=yes"
+      "answer_preview": "The document does not mention a specific website URL. It provides instructions for applying for an e-Passport, including steps like reviewing the application summary, filling CAPTCHA, and using the Ne",
+      "details": "answer 395 chars, 7.0s, pages=[4, 5], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:18:24.803761",
+      "timestamp": "2026-09-17T11:21:31.690451",
       "question": "नेपालपासपोर्ट गव्ह पोर्टको URL के हो?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "म तपाईंको प्रश्नको लागि दिएको दस्तावेजमा नेपाल पासपोर्ट गव्ह पोर्टको URL लेख नमिलेको छ। (पृष्ठ 3) मा देखिएको विवरण एक डाटा टेबल वा कोडिङ भएको देखिन्छ, जसमा URL जस्तो कुनै ठाउँ छैन। \n\n**के गर्नु पर्छ?*",
-      "details": "answer 362 chars, 12.3s, pages=[3], citations=no"
+      "answer_preview": "म नेपाल पासपोर्ट गव्ह पोर्टको URL बारे जानकारी दिन सक्छु भने, दिएका दस्तावेजमा यो जानकारी छैन (पृष्ठ 3)। दस्तावेजमा मात्र संख्या, कोड र अक्षरहरूको समूह छ, जसले URL बुझाउँछ नहि। तपाईंले नेपाल पासपोर्ट ",
+      "details": "answer 242 chars, 9.5s, pages=[3], citations=no"
     },
     {
-      "timestamp": "2026-09-16T18:18:47.717077",
+      "timestamp": "2026-09-17T11:21:43.990250",
       "question": "Pasaport ko type के कस्ता छन्?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "पासपोर्ट को टाइप के कस्ता छन्? (पृष्ठ ३)  \nदस्तावेजमा पासपोर्ट को टाइप विशेष रूपमा उल्लेख गरिएको छैन। तथापि, दस्तावेजमा केही कोड र संख्या (जस्तै \"एाश्म०5९ ला००५९\", \"ए०७०७३\") र वैधता अवधि (\"2026 रे काल",
-      "details": "answer 674 chars, 22.9s, pages=[3], citations=no"
+      "answer_preview": "म तपाईंको प्रश्नको लागि दिएको दस्तावेजमा जानकारी नहीं फेला पाउँ। दस्तावेजमा पासपोर्टको प्रकारहरू विस्तारित रूपमा देखाइएको छैन। तपाईंले आधिकारिक स्रोतहरू जस्तै पोलिस विभाग अथवा नेपाल ताज विभागको वेबसाइ",
+      "details": "answer 264 chars, 12.3s, pages=[3], citations=no"
     },
     {
-      "timestamp": "2026-09-16T18:18:55.827223",
+      "timestamp": "2026-09-17T11:22:18.267186",
       "question": "Ordinary 34 pages and Ordinary 66 pages ko fark k ho?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "**What is Ordinary 34 pages?**  \nIt is a standard passport with 34 pages, used for regular travel purposes like tourism, education, or employment.  \n\n**What is Ordinary 66 pages?**  \nIt is a business ",
-      "details": "answer 636 chars, 8.1s, pages=[2, 4], citations=yes"
+      "answer_preview": "Ordinary 34 पेज र Ordinary 66 पेज को अंतर हो यसले आपको पासपोर्टको प्रकार निर्धारण गर्छ। Ordinary 34 पेज लाई सामान्य पासपोर्टको लागि छुट्टै छ भने Ordinary 66 पेज व्यवसायी पासपोर्टको लागि छुट्टै छ (Page",
+      "details": "answer 306 chars, 34.3s, pages=[2, 4], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:19:15.786761",
+      "timestamp": "2026-09-17T11:22:31.195905",
       "question": "CAPTCHA ko k garnu parcha?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "**CAPTCHA के के गर्नु पर्छ?**  \n(Page 5)  \n**के हो CAPTCHA?**  \nCAPTCHA एक सुरक्षा परीक्षण हो जुन तपाईंलाई मानव हुनु भनेर प्रमाणित गर्न छ। यो तपाईंलाई बुझाउँछ कि तपाईं कुनै मानव हुनु छैन किनकि एउटी मा",
-      "details": "answer 847 chars, 20.0s, pages=[3, 5], citations=yes"
+      "answer_preview": "**CAPTCHA के के छ?**  \nCAPTCHA एक सुरक्षा परीक्षण हो, जसले तपाईंलाई जानकारी दिनु भएको छ कि तपाईं एक मानव हो र न कि कुनै बाहेकी यन्त्र।  \n\n**के गर्नु पर्छ?**  \n1. आवेदन चक्रको तलको भागमा CAPTCHA भर्नु ",
+      "details": "answer 516 chars, 12.9s, pages=[3, 5], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:19:28.360594",
+      "timestamp": "2026-09-17T11:22:41.666162",
       "question": "Before Pre-enrollment ko instructions ke bhanera cha?",
       "language": "english",
       "status": "PASS",
-      "answer_preview": "**What it is:**  \nPre-enrollment for an ePassport is the first step to apply for an electronic passport. It involves filling out an online form and preparing documents for a later in-person visit.  \n\n",
-      "details": "answer 1129 chars, 12.6s, pages=[1, 6], citations=yes"
+      "answer_preview": "**What is Pre-enrollment?**  \nPre-enrollment is the first step to apply for an ePassport. It involves filling out an online form to start the process.  \n\n**What does it mean?**  \nYou need to complete ",
+      "details": "answer 1054 chars, 10.5s, pages=[1, 6], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:19:48.186632",
+      "timestamp": "2026-09-17T11:22:59.568100",
       "question": "Yo form submission garna ke k garnu parcha?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "**Explanation of Form Submission Process for ePassport Pre-Enrollment**  \n**Page Reference: Page 1**  \n\n1. **Step 1**: Open the Department of Passports web portal at [https://nepalpassport.gov.np](htt",
-      "details": "answer 1626 chars, 19.8s, pages=[1, 6], citations=yes"
+      "answer_preview": "**Explanation of Form Fields (Page 1):**  \n1. **Name (नाम):** Write your full name as it appears in your ID card.  \n2. **Date of Birth (जन्म तारिख):** Enter your birth date in the format DD/MM/YYYY.  ",
+      "details": "answer 1230 chars, 17.9s, pages=[1, 6], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:19:59.542168",
+      "timestamp": "2026-09-17T11:23:06.530823",
       "question": "Privacy consent ma ke bhaneko cha?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "Privacy consent ma ke bhaneko cha?  \nPrivacy consent (प्राइवेसी कंसेंट) ma ke bhaneko cha?  \n**What it is:** Privacy consent means agreeing to share your personal information (like name, address, NID,",
-      "details": "answer 895 chars, 11.4s, pages=[4, 5], citations=yes"
+      "answer_preview": "The document does not mention \"privacy consent\" or anything related to agreeing to the use of personal data. It only provides instructions for filling out application forms (Page 4-5), such as enterin",
+      "details": "answer 390 chars, 7.0s, pages=[4, 5], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:20:05.616853",
+      "timestamp": "2026-09-17T11:23:13.211264",
       "question": "How many pages for business passport?",
       "language": "english",
       "status": "PASS",
-      "answer_preview": "**What it is:** A business passport is a type of passport issued for travel related to business purposes.  \n**What it means:** The business passport has **66 pages** (Page 2).  \n**What to do:** When a",
-      "details": "answer 280 chars, 6.1s, pages=[2, 4], citations=yes"
+      "answer_preview": "The business passport has **66 pages**. This information is mentioned on **Page 2**.  \n\n### What it means:  \nThe number of pages refers to the total pages in the passport booklet.  \n\n### What to do:  ",
+      "details": "answer 349 chars, 6.7s, pages=[2, 4], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:20:14.326414",
+      "timestamp": "2026-09-17T11:23:21.344764",
       "question": "Apply for Passport button kahile click garnu parcha?",
       "language": "romanized_nepali",
       "status": "PASS",
-      "answer_preview": "**Apply for Passport button kahile click garnu parcha?**  \n**What it is:** \"Apply for Passport\" button is the starting point to begin your ePassport application process.  \n**What it means:** Clicking ",
-      "details": "answer 668 chars, 8.7s, pages=[1, 6], citations=yes"
+      "answer_preview": "**What it is:** The \"Apply for Passport\" button is part of the online pre-enrollment process for an e-Passport.  \n**What it means:** Clicking this button starts the application process by opening the ",
+      "details": "answer 637 chars, 8.1s, pages=[1, 6], citations=yes"
     },
     {
-      "timestamp": "2026-09-16T18:20:38.913074",
+      "timestamp": "2026-09-17T11:23:54.923092",
       "question": "नेपाली भाषामा यो प्रक्रिया के हो?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "यो प्रक्रिया नेपालको पासपोर्ट विभागको इ-पासपोर्ट आवेदन प्रक्रिया हो। (पृष्ठ १)  \n\n**के हो?**  \nयो इ-पासपोर्ट आवेदन फारम भर्न खुल्ने इलेक्ट्रोनिक प्रक्रिया हो। तपाईं आफ्नो डेटा इन्टरनेटको माध्यम बाट भर",
-      "details": "answer 809 chars, 24.6s, pages=[1, 3], citations=no"
+      "answer_preview": "यो प्रक्रिया नेपालको पासपोर्ट विभागको वेबसाइटमा इलेक्ट्रोनिक पासपोर्ट (ePassport) लागि आवेदन दिनको अनुमति दिने प्रक्रिया हो। (पृष्ठ १)  \n\n**के हो?**  \nयो प्रक्रिया आपलाई इलेक्ट्रोनिक पासपोर्ट लागि आवे",
+      "details": "answer 823 chars, 33.6s, pages=[1, 3], citations=no"
     },
     {
-      "timestamp": "2026-09-16T18:20:52.322019",
+      "timestamp": "2026-09-17T11:24:05.450205",
       "question": "Step 7 ma ke bhaneko cha?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "म डकुमेन्टमा \"स्टेप ७\" बारे कुनै जानकारी नहुन भएको छ। डकुमेन्टमा विभिन्न कोड, तारिख र निर्देशनहरू छन् (पृष्ठ ३), तर \"स्टेप ७\" लाई सीधै उल्लेख गरिएको छैन। तपाईंले स्टेप ७ बारे अधिक जानकारी चाहानु भए अन",
-      "details": "answer 237 chars, 13.4s, pages=[3], citations=no"
+      "answer_preview": "म डॉक्युमेन्टमा \"स्टेप 7\" को विशेष जानकारी नहीं पाउँछ (पृष्ठ 3)। डॉक्युमेन्टमा मात्र संख्या, समय र चिन्हहरू छन् जसले स्टेप 7 को विस्तृत विवरण देखाउँछैन। तपाईंले स्टेप 7 को विशेष जानकारी चाहानु भए अधिक",
+      "details": "answer 228 chars, 10.5s, pages=[3], citations=no"
     },
     {
-      "timestamp": "2026-09-16T18:21:09.176621",
+      "timestamp": "2026-09-17T11:24:19.660013",
       "question": "यो दस्तावेजको अन्तिम स्टेप कुन हो?",
       "language": "nepali",
       "status": "PASS",
-      "answer_preview": "(पृष्ठ 3) दस्तावेजको अन्तिम स्टेप हो \"माथि उल्लेखित सर्तहरु मैले परे र सासमा मेरो सहमति छ\" (ऊपर लेखिएका सर्तहरु म अपनाएको छु र म अनुमति दिएको छु)। यो अनुमति दिनु दस्तावेजको अन्तिम कार्य हो। तपाईंले दस",
-      "details": "answer 322 chars, 16.9s, pages=[3], citations=no"
+      "answer_preview": "(पृष्ठ 3) दस्तावेजको अन्तिम स्टेप अन्तिम शर्तहरु मान्न अनुमति दिनु हो। यहाँ लेखिएको, \"माथि उल्लेखित सर्तहरु मैले परे र सासमा मेरो सहमति छ\" अर्थात् तपाईंले दस्तावेजमा लेखिएका सर्तहरु मान्न अनुमति दिएको",
+      "details": "answer 223 chars, 14.2s, pages=[3], citations=no"
     }
   ]
 }
