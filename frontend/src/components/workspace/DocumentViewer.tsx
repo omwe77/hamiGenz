@@ -104,30 +104,62 @@ export default function DocumentViewer({ docId, pages, onTextHighlight, activeCi
         >
           {page.text.split("\n").map((para, i) => {
             // If there are active citations, check whether this paragraph
-            // contains any of their excerpts and wrap those excerpts in a highlight span.
+            // contains any of their excerpts and wrap each in a highlight span.
             if (activeCitations.length > 0 && para.trim()) {
-              let processed = para;
-              const highlights: { start: number; end: number }[] = [];
-              for (const c of activeCitations) {
-                const idx = processed.toLowerCase().indexOf(c.excerpt.toLowerCase());
-                if (idx !== -1) {
-                  highlights.push({ start: idx, end: idx + c.excerpt.length });
+              const lowerPara = para.toLowerCase();
+              // Collect all matches with their citation index so we can
+              // render each one. Use a set of ranges to avoid overlapping.
+              const ranges: { start: number; end: number; citationIdx: number }[] = [];
+              for (let ci = 0; ci < activeCitations.length; ci++) {
+                const c = activeCitations[ci];
+                const excerptLower = c.excerpt.toLowerCase();
+                let idx = 0;
+                while (true) {
+                  idx = lowerPara.indexOf(excerptLower, idx);
+                  if (idx === -1) break;
+                  ranges.push({ start: idx, end: idx + c.excerpt.length, citationIdx: ci });
+                  idx += excerptLower.length;
                 }
               }
-              if (highlights.length > 0) {
-                // Sort and build highlighted string (simple approach: wrap first match)
-                highlights.sort((a, b) => a.start - b.start);
-                const h = highlights[0];
-                const before = processed.slice(0, h.start);
-                const match = processed.slice(h.start, h.end);
-                const after = processed.slice(h.end);
-                return (
-                  <p key={i} style={styles.pagePara}>
-                    {before}
-                    <span style={styles.highlight}>{match}</span>
-                    {after}
-                  </p>
-                );
+              if (ranges.length > 0) {
+                ranges.sort((a, b) => a.start - b.start);
+                // Merge overlapping ranges (keep first citation's index for the merged span)
+                const merged: { start: number; end: number; citationIdx: number }[] = [];
+                for (const r of ranges) {
+                  if (merged.length > 0 && r.start <= merged[merged.length - 1].end) {
+                    merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
+                  } else {
+                    merged.push({ ...r });
+                  }
+                }
+                // Build the paragraph with highlighted spans
+                let result: React.ReactNode[] = [];
+                let pos = 0;
+                for (const m of merged) {
+                  if (m.start > pos) {
+                    result.push(<span key={`t-${pos}`}>{para.slice(pos, m.start)}</span>);
+                  }
+                  const highlightedText = para.slice(m.start, m.end);
+                  result.push(
+                    <span
+                      key={`h-${m.start}-${m.citationIdx}`}
+                      style={styles.highlight}
+                      onMouseUp={(e) => {
+                        e.stopPropagation();
+                        const sel = window.getSelection();
+                        if (sel) sel.removeAllRanges();
+                        onTextHighlight(highlightedText);
+                      }}
+                    >
+                      {highlightedText}
+                    </span>
+                  );
+                  pos = m.end;
+                }
+                if (pos < para.length) {
+                  result.push(<span key={`t-${pos}`}>{para.slice(pos)}</span>);
+                }
+                return <p key={i} style={styles.pagePara}>{result}</p>;
               }
             }
             return <p key={i} style={styles.pagePara}>{para}</p>;
