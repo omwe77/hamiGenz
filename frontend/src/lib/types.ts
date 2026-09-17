@@ -129,6 +129,9 @@ export interface FeeItem {
 export interface LinkItem {
   url: string;
   description: string;
+  classification?: "verified_official" | "registered_official" | "unverified";
+  source_id?: string | null;
+  source_name?: string | null;
 }
 
 export interface ActionsResponse {
