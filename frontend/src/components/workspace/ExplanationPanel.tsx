@@ -129,10 +129,44 @@ export default function ExplanationPanel({
         </div>
       )}
 
-      {/* Grounding note */}
-      {grounding?.warning && (
-        <div style={styles.groundingWarning}>
-          ⚠️ {grounding.warning}
+      {/* Grounding / verification note */}
+      {(grounding?.warning || grounding?.recommendation) && (
+        <div style={styles.groundingSection}>
+          <h3 style={styles.sectionTitle}>
+            {grounding?.contradiction_found ? "⚠️ Verification warning" : "Verification"}
+          </h3>
+          {grounding?.contradiction_found && (
+            <div style={styles.contradictionWarning}>
+              <strong>This answer contains claims that conflict with the document evidence.</strong>
+              <p style={styles.contradictionDetail}>
+                {grounding?.contradiction_claims?.map((c, i) => (
+                  <span key={i} style={styles.contradictionClaim}>
+                    • "{c}"
+                  </span>
+                ))}
+              </p>
+            </div>
+          )}
+          {grounding?.recommendation && (
+            <p style={styles.recommendation}>{grounding.recommendation}</p>
+          )}
+          {grounding?.confidence_band && (
+            <div style={styles.confidenceRow}>
+              <span style={styles.confidenceLabel}>Confidence:</span>
+              <span style={{
+                ...styles.confidenceValue,
+                ...(grounding.confidence_band === "HIGH" ? styles.confidenceHigh : {}),
+                ...(grounding.confidence_band === "MEDIUM" ? styles.confidenceMedium : {}),
+                ...(grounding.confidence_band === "LOW" ? styles.confidenceLow : {}),
+              }}>
+                {grounding.confidence_band}
+                {grounding.confidence_score != null && ` (${grounding.confidence_score})`}
+              </span>
+            </div>
+          )}
+          {grounding?.warning && (
+            <p style={styles.groundingWarningText}>⚠️ {grounding.warning}</p>
+          )}
         </div>
       )}
 
@@ -259,5 +293,65 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius-md)",
     fontSize: "var(--text-sm)",
     color: "var(--color-info)",
+  } as React.CSSProperties,
+  groundingSection: {
+    padding: "var(--space-3)",
+    background: "var(--color-surface)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-md)",
+    marginTop: "var(--space-3)",
+  } as React.CSSProperties,
+  contradictionWarning: {
+    padding: "var(--space-2)",
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: "var(--radius-sm)",
+    marginBottom: "var(--space-2)",
+  } as React.CSSProperties,
+  contradictionDetail: {
+    margin: "var(--space-1) 0 0 0",
+    fontSize: "var(--text-sm)",
+    color: "#991b1b",
+  } as React.CSSProperties,
+  contradictionClaim: {
+    display: "block",
+    marginBottom: "2px",
+  } as React.CSSProperties,
+  recommendation: {
+    fontSize: "var(--text-sm)",
+    color: "var(--color-text-secondary)",
+    margin: "var(--space-1) 0 0 0",
+    padding: "var(--space-2)",
+    background: "var(--color-bg-alt)",
+    borderRadius: "var(--radius-sm)",
+  } as React.CSSProperties,
+  confidenceRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--space-2)",
+    marginTop: "var(--space-2)",
+    fontSize: "var(--text-sm)",
+  } as React.CSSProperties,
+  confidenceLabel: {
+    color: "var(--color-text-tertiary)",
+    fontWeight: "var(--font-medium)",
+  } as React.CSSProperties,
+  confidenceValue: {
+    fontWeight: "var(--font-semibold)",
+    color: "var(--color-text-primary)",
+  } as React.CSSProperties,
+  confidenceHigh: {
+    color: "#166534",
+  } as React.CSSProperties,
+  confidenceMedium: {
+    color: "#92400e",
+  } as React.CSSProperties,
+  confidenceLow: {
+    color: "#dc2626",
+  } as React.CSSProperties,
+  groundingWarningText: {
+    fontSize: "var(--text-sm)",
+    color: "var(--color-info)",
+    marginTop: "var(--space-2)",
   } as React.CSSProperties,
 };

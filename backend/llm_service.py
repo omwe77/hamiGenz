@@ -182,6 +182,170 @@ and include a clear warning.
         return "\n\n".join(lines)
 
 
+class VerificationLayer:
+    """
+    Standalone verification layer for hamiGenZ answers.
+
+    Runs claim extraction + contradiction check + confidence scoring.
+    Can be called independently of the explanation pipeline,
+    and is wired into /ask and /explain so every answer carries
+    a verification report.
+
+    STEP 3 deliverable: stronger verification than raw grounding —
+    contradiction detection with re-prompt guidance, numeric confidence
+    score, and an explicit recommendation for the frontend.
+    """
+
+    # Classification → numeric weight (higher = more trustworthy)
+    _WEIGHTS = {
+        "SUPPORTED": 1.0,
+        "PARTIALLY_SUPPORTED": 0.55,
+        "INSUFFICIENT_EVIDENCE": 0.15,
+        "CONTRADICTED": 0.0,
+    }
+
+    def __init__(self, llm: OllamaService, validator: GroundingValidator | None = None):
+        self.llm = llm
+        self.validator = validator or GroundingValidator(llm)
+
+    def verify(self, question: str, answer: str,
+               evidence_chunks: list[dict]) -> dict:
+        """
+        Run full verification on an answer.
+
+        Returns a dict with:
+          - grounding_report: raw claim-level classification (from GroundingValidator)
+          - contradiction_found: bool — any claim marked CONTRADICTED
+          - contradiction_claims: list of contradicted claim texts
+          - confidence_score: 0–100 numeric score derived from claim weights
+          - confidence_band: "HIGH" / "MEDIUM" / "LOW" / "UNKNOWN"
+          - unsupported_facts: list of claim texts that are PARTIALLY_SUPPORTED
+                                 or INSUFFICIENT_EVIDENCE or CONTRADICTED
+          - recommendation: short guidance for the frontend / user
+        """
+        report = self.validator.validate(question, answer, evidence_chunks)
+
+        claims = report.get("claims", [])
+        contradicted = [c for c in claims if c.get("classification") == "CONTRADICTED"]
+        unsupported = [
+            c for c in claims
+            if c.get("classification") in ("PARTIALLY_SUPPORTED", "INSUFFICIENT_EVIDENCE", "CONTRADICTED")
+        ]
+
+        # Numeric confidence: weighted average of claim weights, scaled to 0–100.
+        # If there are no claims (empty answer / no evidence), fall back to the
+        # qualitative band from the validator.
+        if claims:
+            total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
+            confidence_score = round((total_weight / len(claims)) * 100)
+        else:
+            confidence_score = None
+
+        band = report.get("overall_confidence", "UNKNOWN")
+        if confidence_score is not None:
+            if confidence_score >= 75:
+                band = "HIGH"
+            elif confidence_score >= 45:
+                band = "MEDIUM"
+            else:
+                band = "LOW"
+
+        # Contradiction handling: if any claim is directly contradicted by evidence,
+        # the answer should not be presented as fully reliable.
+        contradiction_found = len(contradicted) > 0
+        if contradiction_found:
+            recommendation = (
+                "Some claims in this answer conflict with the document evidence. "
+                "Treat the answer with caution and check the original source."
+            )
+        elif band == "LOW":
+            recommendation = (
+                "This answer could not be fully verified from the document. "
+                "Important details may be missing or imprecise — check the original source."
+            )
+        elif band == "MEDIUM":
+            recommendation = (
+                "This answer is partially supported by the document. "
+                "Some details may need verification."
+            )
+        else:
+            recommendation = (
+                "This answer is supported by the document evidence."
+            )
+
+        return {
+            "grounding_report": report,
+            "contradiction_found": contradiction_found,
+            "contradiction_claims": [c["claim"] for c in contradicted],
+            "confidence_score": confidence_score,
+            "confidence_band": band,
+            "unsupported_facts": [c["claim"] for c in unsupported],
+            "recommendation": recommendation,
+        }
+
+    def re_prompt_on_contradiction(self, question: str, answer: str,
+                                   evidence_chunks: list[dict],
+                                   verification: dict) -> str | None:
+        """
+        If the verification found contradictions, re-generate the answer
+        with an explicit instruction to remove or correct contradicted claims.
+
+        Returns a revised answer string, or None if no correction was attempted
+        (e.g. no contradiction, or correction failed).
+        """
+        if not verification.get("contradiction_found"):
+            return None
+
+        evidence_text = self._format_evidence(evidence_chunks)
+        contradicted_claims = verification.get("contradiction_claims", [])
+        claims_json = json.dumps(contradicted_claims, ensure_ascii=False)
+
+        correction_prompt = f"""You are hamiGenZ. You previously generated this answer:
+
+PREVIOUS ANSWER:
+{answer}
+
+However, verification against the document evidence found that the following claims
+conflict with the evidence and must be REMOVED or CORRECTED:
+
+CONTRADICTED CLAIMS:
+{claims_json}
+
+RETRIEVED EVIDENCE (with page numbers):
+{evidence_text}
+
+QUESTION: {question}
+
+INSTRUCTIONS:
+1. Rewrite the answer so that NONE of the contradicted claims appear.
+2. Where the evidence supports a different fact, use the evidence instead.
+3. Where the evidence does not support the claim at all, remove the claim and say
+   that the document does not contain that information.
+4. Do NOT invent new facts to replace the removed claims.
+5. Keep the rest of the answer that IS supported.
+6. Respond in the same language as the previous answer.
+7. Preserve page citations where they are supported by evidence.
+
+Write the corrected answer directly.
+"""
+        try:
+            revised = self.llm.generate(correction_prompt, timeout=120)
+            return revised
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_evidence(chunks: list[dict]) -> str:
+        if not chunks:
+            return "NO EVIDENCE RETRIEVED."
+        lines = []
+        for chunk in chunks:
+            page = chunk.get("page_num", "?")
+            text = chunk.get("text", "")[:800]
+            lines.append(f"[Page {page}] {text}")
+        return "\n\n".join(lines)
+
+
 class ExplanationEngine:
     """
     Structure answers to be user-friendly and actionable.

@@ -15,7 +15,7 @@ from typing import Optional
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
 from vector_store import EmbeddingService, VectorStore, Pipeline
-from llm_service import OllamaService, GroundingValidator, ExplanationEngine, LanguageDetector
+from llm_service import OllamaService, GroundingValidator, ExplanationEngine, LanguageDetector, VerificationLayer
 
 
 # ─── Configuration ───────────────────────────────────────────────
@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
         metadata_store=app.state.metadata,
     )
     app.state.validator = GroundingValidator(app.state.ollama)
+    app.state.verification = VerificationLayer(app.state.ollama, app.state.validator)
     app.state.explainer = ExplanationEngine(app.state.ollama)
 
     # Check Ollama connectivity
@@ -332,13 +333,26 @@ Respond with the answer directly.
 """
         raw_answer = llm.generate(doc_prompt)
 
-    # Validate grounding
-    grounding = validator.validate(req.question, raw_answer, evidence)
+    # Validate grounding + run verification layer
+    verification = app.state.verification.verify(req.question, raw_answer, evidence)
+    grounding = verification["grounding_report"]
+
+    # If contradictions found, attempt a corrected answer
+    final_answer = raw_answer
+    if verification.get("contradiction_found"):
+        corrected = app.state.verification.re_prompt_on_contradiction(
+            req.question, raw_answer, evidence, verification
+        )
+        if corrected:
+            final_answer = corrected
+            # Re-validate the corrected answer
+            verification = app.state.verification.verify(req.question, final_answer, evidence)
+            grounding = verification["grounding_report"]
 
     # Format final answer
     formatted = explainer.format_answer(
         question=req.question,
-        raw_answer=raw_answer,
+        raw_answer=final_answer,
         evidence_chunks=evidence,
         grounding_report=grounding,
         lang=response_lang,
@@ -419,10 +433,24 @@ INSTRUCTIONS:
 Respond with the answer directly."""
             )
 
-            grounding = app.state.validator.validate(full_question, raw_answer, evidence)
+            # Run verification layer on the explanation
+            verification = app.state.verification.verify(full_question, raw_answer, evidence)
+            grounding = verification["grounding_report"]
+
+            # If contradictions found, attempt a corrected explanation
+            final_answer = raw_answer
+            if verification.get("contradiction_found"):
+                corrected = app.state.verification.re_prompt_on_contradiction(
+                    full_question, raw_answer, evidence, verification
+                )
+                if corrected:
+                    final_answer = corrected
+                    verification = app.state.verification.verify(full_question, final_answer, evidence)
+                    grounding = verification["grounding_report"]
+
             formatted = explainer.format_answer(
                 question=full_question,
-                raw_answer=raw_answer,
+                raw_answer=final_answer,
                 evidence_chunks=evidence,
                 grounding_report=grounding,
                 lang=response_lang,

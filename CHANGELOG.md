@@ -10,6 +10,7 @@
 - FAISS vector storage per document
 - Ollama LLM (qwen3:8b)
 - Grounding validation (claim extraction vs evidence)
+- **Verification layer (STEP 3):** contradiction detection, numeric confidence score (0–100), confidence band, unsupported-facts list, and automatic answer re-prompt when contradictions are found — wired into /ask and /explain
 - Explanation engine (structured, simple language)
 - Language detection (Nepali, English, Romanized Nepali, mixed)
 - Form-filling explanation mode with SAMPLE markers
