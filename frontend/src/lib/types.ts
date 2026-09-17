@@ -140,3 +140,34 @@ export interface ActionsResponse {
   official_links: LinkItem[];
   meta: { status: "llm" | "hints_only" | "error"; note?: string };
 }
+
+// ── Form understanding (PR-010) ───────────────────────────────────
+export interface FormDetection {
+  is_form: boolean;
+  confidence: number;
+  field_count: number;
+  matched_keywords: string[];
+}
+
+export interface FormField {
+  label: string;
+  page: number;
+  evidence: string;
+}
+
+export interface FormDetectResponse {
+  detection: FormDetection;
+  fields: FormField[];
+}
+
+export interface FieldExplanation {
+  meaning: string;
+  belongs: string;
+  do_not_enter: string;
+  example: string;
+  sample_format: string;
+  source_quote: string;
+  page: number | null;
+  sample_markers: string[];
+  meta: { status: "llm" | "hints_only" | "error"; note?: string };
+}

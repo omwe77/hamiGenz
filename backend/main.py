@@ -22,6 +22,7 @@ from typing import Optional
 from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
+from form_understanding import FormUnderstandingService
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
@@ -77,6 +78,7 @@ async def lifespan(app: FastAPI):
     app.state.verification = VerificationLayer(app.state.ollama, app.state.validator)
     app.state.explainer = ExplanationEngine(app.state.ollama)
     app.state.action_extractor = ActionExtractor(app.state.ollama)
+    app.state.form_service = FormUnderstandingService(app.state.ollama)
 
     # Check Ollama connectivity
     try:
@@ -194,6 +196,20 @@ class ActionsResponse(BaseModel):
 class ActionsRequest(BaseModel):
     text: Optional[str] = None
     doc_id: Optional[str] = None
+    question: Optional[str] = None
+
+
+class FormDetectRequest(BaseModel):
+    text: Optional[str] = None
+    doc_id: Optional[str] = None
+
+
+class FormExplainRequest(BaseModel):
+    label: str
+    doc_id: Optional[str] = None
+    context: Optional[str] = None
+    page: Optional[int] = None
+    language: str = "auto"
     question: Optional[str] = None
 
 
@@ -696,6 +712,76 @@ async def extract_actions(req: ActionsRequest, _rl: None = Depends(rate_limit("a
 
     result = app.state.action_extractor.extract(text, req.question)
     return ActionsResponse(**result)
+
+
+# ─── /forms: form understanding (PR-010) ────────────────────────────
+
+async def _form_source_text(text: Optional[str], doc_id: Optional[str]) -> str:
+    """Resolve direct text or a document's per-page text for form analysis."""
+    if text and text.strip():
+        return text
+    if doc_id:
+        if not metadata_exists(app, doc_id):
+            raise HTTPException(404, f"Document {doc_id} not found")
+        processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+        doc = app.state.metadata.get_document(doc_id)
+        pages = processor.extract_text(doc["filepath"])
+        return "\n".join(f"[PAGE {p['page_num']}]\n{p['text']}" for p in pages)
+    raise HTTPException(400, "Provide text or doc_id.")
+
+
+@app.post("/forms/detect")
+async def detect_form_endpoint(req: FormDetectRequest, _rl: None = Depends(rate_limit("search"))):
+    """
+    Detect whether text (or a document) looks like a form, and extract the
+    likely field labels with page-anchored evidence. Cheap: no LLM call.
+    """
+    text = await _form_source_text(req.text, req.doc_id)
+    if len(text) > 200000:
+        raise HTTPException(400, "Text too long.")
+    return app.state.form_service.fields(text)
+
+
+@app.post("/forms/explain-field")
+async def explain_form_field(req: FormExplainRequest, _rl: None = Depends(rate_limit("ai"))):
+    """
+    Explain ONE form field: what it means, what belongs there, what NOT to
+    enter, and a clearly-marked SAMPLE of the expected answer TYPE.
+
+    Never invents the user's personal information; examples use generic
+    placeholders unusable as real identity data (PR-010 safety rules).
+    """
+    if not req.label or len(req.label) > 120:
+        raise HTTPException(400, "Invalid field label.")
+
+    # Prefer the doc's real page text as context; fall back to caller-supplied
+    if req.doc_id:
+        if not metadata_exists(app, req.doc_id):
+            raise HTTPException(404, f"Document {req.doc_id} not found")
+        doc = app.state.metadata.get_document(req.doc_id)
+        processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+        pages = processor.extract_text(doc["filepath"])
+        if req.page:
+            page = next((p for p in pages if p["page_num"] == req.page), None)
+            context = page["text"] if page else ""
+        else:
+            context = "\n".join(p["text"] for p in pages)
+        if not context and req.context:
+            context = req.context
+    elif req.context:
+        context = req.context
+    else:
+        raise HTTPException(400, "Provide doc_id or context for the field.")
+
+    if len(context) > 100000:
+        context = context[:100000]
+
+    return app.state.form_service.explain_field(
+        label=req.label,
+        context=context,
+        lang=req.language,
+        question=req.question,
+    )
 
 
 # ─── /documents/{doc_id}/viewer: per-page extracted text ──────────
