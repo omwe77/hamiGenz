@@ -21,6 +21,7 @@ from typing import Optional
 
 from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
+from action_extractor import ActionExtractor
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI):
     app.state.validator = GroundingValidator(app.state.ollama)
     app.state.verification = VerificationLayer(app.state.ollama, app.state.validator)
     app.state.explainer = ExplanationEngine(app.state.ollama)
+    app.state.action_extractor = ActionExtractor(app.state.ollama)
 
     # Check Ollama connectivity
     try:
@@ -169,6 +171,30 @@ class ExplainResponse(BaseModel):
     provenance: str  # document, general_ai, mixed
     language_used: str
     processing_time_ms: Optional[int] = None
+
+
+class ActionItem(BaseModel):
+    date: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[str] = None
+    url: Optional[str] = None
+    unverified: Optional[bool] = None
+
+
+class ActionsResponse(BaseModel):
+    requirements: list[str] = []
+    deadlines: list[dict] = []
+    fees: list[dict] = []
+    eligibility: list[str] = []
+    next_steps: list[str] = []
+    official_links: list[dict] = []
+    meta: dict = {}
+
+
+class ActionsRequest(BaseModel):
+    text: Optional[str] = None
+    doc_id: Optional[str] = None
+    question: Optional[str] = None
 
 
 class ViewerPage(BaseModel):
@@ -638,6 +664,38 @@ Respond with the answer directly.
         language_used=response_lang,
         processing_time_ms=elapsed,
     )
+
+
+# ─── /actions: action layer (requirements, deadlines, fees, …) ───────
+
+@app.post("/actions", response_model=ActionsResponse)
+async def extract_actions(req: ActionsRequest, _rl: None = Depends(rate_limit("ai"))):
+    """
+    Extract actionable structure (requirements, deadlines, fees, eligibility,
+    next steps, official links) from direct text or a document's evidence.
+
+    Never invents facts: LLM output is cross-checked against regex hints from
+    the source text, and unsupported fees/dates are flagged `unverified`.
+    """
+    text = (req.text or "").strip()
+
+    if not text and req.doc_id:
+        if not metadata_exists(app, req.doc_id):
+            raise HTTPException(404, f"Document {req.doc_id} not found")
+        evidence = app.state.pipeline.query(req.doc_id, req.question or "requirements deadlines fees eligibility next steps", top_k=8)
+        if evidence:
+            text = "\n\n".join(e.get("text", "") for e in evidence)
+        else:
+            raise HTTPException(404, "No extractable content found for this document.")
+
+    if not text:
+        raise HTTPException(400, "Provide text or doc_id to extract actions from.")
+
+    if len(text) > 60000:
+        raise HTTPException(400, "Text too long (max 60000 characters).")
+
+    result = app.state.action_extractor.extract(text, req.question)
+    return ActionsResponse(**result)
 
 
 # ─── /documents/{doc_id}/viewer: per-page extracted text ──────────

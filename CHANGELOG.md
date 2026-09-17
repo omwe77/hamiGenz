@@ -2,6 +2,27 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Added — Action layer (PR-009)
+- `POST /actions` endpoint: extracts requirements (checklist), deadlines,
+  fees, eligibility, next steps, and official links from pasted text or a
+  document's retrieved evidence
+- `action_extractor.py`: LLM structured extraction cross-checked against
+  deterministic regex hints (currency amounts, day-first dates, official
+  URLs) — fees/dates the LLM reports that regex cannot find in the source
+  are flagged `unverified` instead of silently trusted
+- Nepali-aware normalization: Devanagari digit conversion, day-first date
+  parsing with month/day disambiguation, idempotent currency
+  canonicalization (रु / Rs. / NPR)
+- Official-link safety: only http(s) URLs on Nepali official domains
+  (gov.np / org.np / edu.np) are ever displayed; lookalike hosts rejected
+- Degraded mode: if the LLM is unavailable, falls back to regex hints
+  (`meta.status: hints_only`) rather than failing
+- Workspace UI: "What should I do?" ActionPanel in both the text-explain
+  and document tabs — checkbox requirements, dated deadlines, fee badges,
+  numbered next steps, rel=nofollow official links
+- tests/test_actions.py: 25 offline tests (normalization, hints, URL
+  safety, hallucination guards); endpoint verified live end-to-end
+
 ### Security (development-phase hardening)
 - Upload hardening: magic-byte content validation (declared MIME ignored),
   user filenames never touch disk (`<uuid>.<sanitized-ext>`), page-count
