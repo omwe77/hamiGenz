@@ -7,6 +7,7 @@ import type { GroundingReport } from "@/lib/types";
 type Props = {
   provenance: "document" | "general_ai" | "mixed";
   grounding: GroundingReport | null;
+  sourceUnavailable?: boolean;
 };
 
 const BADGES = {
@@ -30,7 +31,51 @@ const BADGES = {
   },
 };
 
-export default function ProvenanceBadge({ provenance, grounding }: Props) {
+export default function ProvenanceBadge({ provenance, grounding, sourceUnavailable }: Props) {
+  if (sourceUnavailable) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
+            padding: "var(--space-1) var(--space-3)",
+            background: "#fef2f2",
+            color: "#991b1b",
+            border: "1px solid #fecaca",
+            borderRadius: "var(--radius-md)",
+            fontSize: "var(--text-xs)",
+            fontWeight: "var(--font-bold)",
+            letterSpacing: "0.03em",
+          }}
+        >
+          <span
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: "#991b1b",
+            }}
+          />
+          SOURCE UNAVAILABLE
+        </div>
+        <div
+          style={{
+            fontSize: "var(--text-xs)",
+            color: "#991b1b",
+            background: "#fef2f2",
+            padding: "var(--space-1) var(--space-2)",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid #fecaca",
+          }}
+        >
+          The source for this information could not be retrieved or verified.
+        </div>
+      </div>
+    );
+  }
+
   const badge = BADGES[provenance] || BADGES.general_ai;
 
   // Derive confidence sub-label from the full verification report

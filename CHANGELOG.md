@@ -1,5 +1,40 @@
 # hamiGenZ Changelog
 
+## Unreleased (fix/ocr-integration-tests)
+
+### Fixed
+- **Test teardown no longer deletes `data/`**: `TestFullPipeline` previously walked
+  the shared `data/` directory in teardown and removed tracked tessdata models and
+  test PDFs. It now runs in an isolated temp directory.
+- `/endpoints` route crashed (untyped `request` parameter, wrong return annotation);
+  it now renders the live route index correctly with endpoint docstrings.
+- `/documents/{doc_id}/search-text` was POST but the frontend called GET — unified
+  on GET.
+- Removed wildcard `allow_origins=["*"]` combined with `allow_credentials=True`
+  (invalid/unsafe combination); CORS is now an explicit origin allowlist
+  (`FRONTEND_ORIGIN`, localhost variants, optional `CORS_EXTRA_ORIGINS`).
+- Removed dead `backend/admin_routes.py` (imported nonexistent `get_pipeline` /
+  `_session_dirs`, never registered).
+- Removed duplicate `contextlib`/`pathlib` imports and unused `_get_session_id`.
+- Document viewer: rendered one pager per page (each with its own navigation);
+  now a single continuous viewer with page anchors.
+- Citation excerpts never matched raw page text (backend chunks are
+  whitespace-normalized); highlighting now falls back to progressively shorter
+  word-boundary snippets.
+- Search-match highlights were applied in the wrong coordinate space (context-window
+  offsets vs page text); now aligns on the matched term itself.
+- "Explain this" used a stale `handleExplain` closure (ran the previous input);
+  now explains the current selection directly.
+- Workspace loading stages were declared after use and never visible; fixed state
+  order and made progress announcements screen-reader friendly (`aria-live`).
+
+### Added
+- Scanned-page images now display inside the document viewer (was metadata-only).
+- Search: debounced queries, match navigation (prev/next), active match scrolling.
+- Clickable example prompts in the explain empty state (empty-state teaching).
+- Responsive workspace grids (`ws-grid-2`, `ws-grid-3`) with tablet/mobile
+  breakpoints; accessible labels on icon-only buttons.
+
 ## Phase 1 MVP (current)
 
 - Document upload (PDF, PNG, JPG, TIFF)

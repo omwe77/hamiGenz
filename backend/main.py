@@ -13,9 +13,6 @@ _BACKEND_DIR = Path(__file__).resolve().parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from contextlib import asynccontextmanager
-from pathlib import Path
-
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -89,10 +86,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for frontend
+# CORS for frontend — explicit origins only (wildcard + credentials is an
+# invalid/unsafe combination and browsers reject it).
+# Configure extra origins via CORS_EXTRA_ORIGINS (comma-separated).
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+CORS_ORIGINS = list({
+    FRONTEND_ORIGIN,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    *[o.strip() for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()],
+})
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -178,12 +184,6 @@ class SearchResponse(BaseModel):
     doc_id: str
     query: str
     matches: list[SearchMatch]
-
-
-# ─── Helper: session isolation ───────────────────────────────────
-def _get_session_id(request) -> str:
-    """Extract or generate session ID from request header."""
-    return request.headers.get("X-Session-ID", "default-session")
 
 
 # ─── Endpoints ───────────────────────────────────────────────────
@@ -595,7 +595,7 @@ async def get_page_image(doc_id: str, page_num: int):
 
 # ─── /documents/{doc_id}/search-text: search extracted text ───────
 
-@app.post("/documents/{doc_id}/search-text", response_model=SearchResponse)
+@app.get("/documents/{doc_id}/search-text", response_model=SearchResponse)
 async def search_document_text(doc_id: str, query: str = Query(..., min_length=1)):
     """
     Search extracted text across pages. Returns matches with page + context + highlight offsets.
@@ -755,9 +755,9 @@ async def root():
 # ─── /endpoints — plain HTML index of all registered routes ─────
 
 @app.get("/endpoints")
-async def endpoints_index(request):
+async def endpoints_index(request: Request):
     """Returns a plain HTML page listing all registered routes.
-    
+
     Generated live from app.routes — never hardcoded.
     Groups routes by tag if available, else lists them.
     Excludes the root '/' endpoint (listed separately on /).
@@ -777,12 +777,10 @@ async def endpoints_index(request):
         if method == "HEAD":
             continue  # skip HEAD, implicitly registered with GET routes
         tags = getattr(route, "tags", None) or []
-        summary = getattr(route, "summary", None) or ""
-        description = (
-            summary
-            or (summary and "")
-            or "No description available"
-        )
+        # Prefer the endpoint's own docstring first line, then its summary
+        endpoint = getattr(route, "endpoint", None)
+        doc = (endpoint.__doc__ or "").strip().splitlines()[0] if endpoint and endpoint.__doc__ else ""
+        description = doc or getattr(route, "summary", None) or "No description available"
         routes.append({
             "method": method,
             "path": route.path,
@@ -810,7 +808,7 @@ async def endpoints_index(request):
     return html
 
 
-def _render_endpoints_html(groups: dict[str, list[dict]], ordered_groups: list[str]) -> dict:
+def _render_endpoints_html(groups: dict[str, list[dict]], ordered_groups: list[str]) -> HTMLResponse:
     """Build plain HTML response for the endpoints index page."""
     html_parts = [
         "<!DOCTYPE html>",

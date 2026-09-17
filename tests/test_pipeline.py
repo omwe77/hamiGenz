@@ -150,15 +150,18 @@ class TestFullPipeline:
         from vector_store import EmbeddingService, VectorStore, Pipeline
         from llm_service import OllamaService
 
-        self.data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        os.makedirs(self.data_dir, exist_ok=True)
+        import tempfile
+        # Use an isolated temp dir — NEVER walk/clean the real data/ dir.
+        # (An earlier version cleaned the shared data/ directory in teardown,
+        #  which deleted tracked tessdata models and test PDFs.)
+        self.tmp_dir = tempfile.mkdtemp(prefix="hamigenz_test_")
 
-        self.processor = DocumentProcessor(upload_dir=os.path.join(self.data_dir, "uploads"))
+        self.processor = DocumentProcessor(upload_dir=os.path.join(self.tmp_dir, "uploads"))
         self.chunker = Chunker(chunk_size=500, overlap=50)
-        self.metadata = MetadataStore(db_path=os.path.join(self.data_dir, "test_hamigenz.db"))
+        self.metadata = MetadataStore(db_path=os.path.join(self.tmp_dir, "test_hamigenz.db"))
         self.embedder = EmbeddingService(model_name="all-MiniLM-L6-v2")
         self.vector_store = VectorStore(
-            vectors_dir=os.path.join(self.data_dir, "vectors"),
+            vectors_dir=os.path.join(self.tmp_dir, "vectors"),
             dimension=self.embedder.dimension,
         )
         self.ollama = OllamaService()
@@ -171,27 +174,9 @@ class TestFullPipeline:
 
         yield
 
-        # Cleanup — remove only test-created artifacts, never tessdata/
+        # Cleanup — remove only the isolated temp dir
         import shutil
-        _skip_names = {"tessdata", ".git", "__pycache__"}
-        if os.path.exists(self.data_dir):
-            for _root, _dirs, _files in os.walk(self.data_dir, topdown=False):
-                for _name in _files:
-                    if _name == ".gitkeep":
-                        continue
-                    _path = os.path.join(_root, _name)
-                    try:
-                        os.remove(_path)
-                    except (PermissionError, OSError):
-                        pass
-                for _name in _dirs:
-                    if _name in _skip_names:
-                        continue
-                    _path = os.path.join(_root, _name)
-                    try:
-                        os.rmdir(_path)
-                    except (PermissionError, OSError):
-                        pass
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_process_and_query_sample_document(self):
         """Create a sample document, process it, and query it."""
@@ -213,7 +198,7 @@ class TestFullPipeline:
 """
 
         doc_id = "test_sample_001"
-        filepath = os.path.join(self.data_dir, "uploads", f"{doc_id}.txt")
+        filepath = os.path.join(self.tmp_dir, "uploads", f"{doc_id}.txt")
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         # Write as a simple text file that pdfplumber can't read, but let's test with PDF
