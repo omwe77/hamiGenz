@@ -2,6 +2,19 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Fixed — Homepage UX audit (PR-015/016/019)
+- **Critical: all four "Try hamiGenZ" CTAs pointed to a nonexistent
+  `#open-workspace` anchor** — the homepage→workspace journey was broken;
+  now links to the real `/workspace` route (verified in served HTML)
+- Removed nav link to a nonexistent `About` section
+- Hero is now a semantic `<h1>` (was a div — accessibility + SEO)
+- Mobile: story section's 2-column grid + sticky document card now
+  collapse to a single column; oversized hero heading scales down
+- Robustness: if anime.js fails to load (or `prefers-reduced-motion`),
+  hero/story content is force-revealed instead of staying at opacity 0
+- Trust copy: removed `localhost:8000` developer-speak from the demo
+  section (now states the privacy benefit in user language)
+
 ### Changed — Embedding model switched on benchmark evidence (PR-014)
 - New evaluation system: gold dataset (12+ human-verified cases across 11
   categories with alternative-form key facts, forbidden facts, and

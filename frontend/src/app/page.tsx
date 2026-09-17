@@ -7,10 +7,16 @@ export default function Home() {
   const [animeReady, setAnimeReady] = useState(false);
 
   useEffect(() => {
-    import("animejs").then((mod) => {
-      (window as any).anime = mod.animate;
-      setAnimeReady(true);
-    });
+    import("animejs")
+      .then((mod) => {
+        (window as any).anime = mod.animate;
+        setAnimeReady(true);
+      })
+      .catch(() => {
+        // anime failed to load — reveal hero content statically instead of
+        // leaving it permanently invisible (inline opacity: 0).
+        document.documentElement.classList.add("no-anime");
+      });
   }, []);
 
   useEffect(() => {
@@ -272,7 +278,7 @@ export default function Home() {
             gap: "var(--space-6)",
           }}
         >
-          {["Product", "How it works", "Sources", "About"].map((label) => (
+          {["Product", "How it works", "Sources"].map((label) => (
             <a
               key={label}
               href={`#${label.toLowerCase().replace(" ", "-")}`}
@@ -287,7 +293,7 @@ export default function Home() {
             </a>
           ))}
           <a
-            href="#open-workspace"
+            href="/workspace"
             style={{
               background: "var(--color-accent)",
               color: "white",
@@ -362,22 +368,23 @@ export default function Home() {
             alignItems: "center",
           }}
         >
-          <div
+          <h1
             id="hero-title"
+            className="hero-title"
             style={{
               opacity: 0,
               transform: "translateY(30px)",
+              margin: "0 0 var(--space-6)",
               fontFamily: "var(--font-serif)",
               fontSize: "var(--text-6xl)",
               color: "var(--color-text-primary)",
-              marginBottom: "var(--space-6)",
               lineHeight: "1.1",
               letterSpacing: "-0.03em",
             }}
           >
             Don&apos;t understand it?{" "}
             <span style={{ color: "var(--color-accent)" }}>Ask hamiGenZ.</span>
-          </div>
+          </h1>
 
           <div
             id="hero-sub"
@@ -407,7 +414,7 @@ export default function Home() {
             }}
           >
             <a
-              href="#open-workspace"
+              href="/workspace"
               style={{
                 background: "var(--color-accent)",
                 color: "white",
@@ -1434,7 +1441,7 @@ export default function Home() {
             }}
           >
             <a
-              href="#open-workspace"
+              href="/workspace"
               style={{
                 background: "var(--color-accent)",
                 color: "white",
@@ -1465,7 +1472,7 @@ export default function Home() {
                 fontSize: "var(--text-sm)",
               }}
             >
-              Connects to the backend on localhost:8000
+              Runs entirely on your machine — your documents never leave your computer.
             </p>
           </div>
         </div>
@@ -1767,7 +1774,7 @@ export default function Home() {
             }}
           >
             <a
-              href="#open-workspace"
+              href="/workspace"
               style={{
                 background: "var(--color-accent)",
                 color: "white",
