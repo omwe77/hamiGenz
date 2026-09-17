@@ -6,7 +6,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -705,6 +706,209 @@ async def root():
         },
         "docs": "/docs",
     }
+
+
+# ─── /endpoints — plain HTML index of all registered routes ─────
+
+@app.get("/endpoints")
+async def endpoints_index(request):
+    """Returns a plain HTML page listing all registered routes.
+    
+    Generated live from app.routes — never hardcoded.
+    Groups routes by tag if available, else lists them.
+    Excludes the root '/' endpoint (listed separately on /).
+    """
+    routes: list[dict] = []
+    for route in app.routes:
+        # Skip the root endpoint itself
+        if hasattr(route, "path") and route.path == "/":
+            continue
+        # Only include routes that have a path
+        if not hasattr(route, "path") or not route.path:
+            continue
+        methods = getattr(route, "methods", None)
+        if not methods:
+            continue
+        method = next(iter(methods), "GET") if methods else "GET"
+        if method == "HEAD":
+            continue  # skip HEAD, implicitly registered with GET routes
+        tags = getattr(route, "tags", None) or []
+        summary = getattr(route, "summary", None) or ""
+        description = (
+            summary
+            or (summary and "")
+            or "No description available"
+        )
+        routes.append({
+            "method": method,
+            "path": route.path,
+            "description": description,
+            "tags": tags,
+        })
+
+    # Sort: by tag group first, then by path
+    def sort_key(r):
+        tag = r["tags"][0] if r["tags"] else "___uncategorized"
+        return (tag, r["path"])
+
+    routes.sort(key=sort_key)
+
+    # Group by tag
+    groups: dict[str, list[dict]] = {}
+    for r in routes:
+        tag = r["tags"][0] if r["tags"] else "Other"
+        groups.setdefault(tag, []).append(r)
+
+    ordered_groups = sorted(groups.keys())
+
+    # Render HTML
+    html = _render_endpoints_html(groups, ordered_groups)
+    return html
+
+
+def _render_endpoints_html(groups: dict[str, list[dict]], ordered_groups: list[str]) -> dict:
+    """Build plain HTML response for the endpoints index page."""
+    html_parts = [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="UTF-8" />',
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+        "<title>hamiGenZ — Backend Endpoints</title>",
+        "<style>",
+        "  * { box-sizing: border-box; margin: 0; padding: 0; }",
+        "  body {",
+        "    background: #0d0d0d;",
+        "    color: #e0e0e0;",
+        "    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;",
+        "    font-size: 14px;",
+        "    line-height: 1.6;",
+        "    padding: 24px;",
+        "    min-height: 100vh;",
+        "  }",
+        "  .header {",
+        "    margin-bottom: 28px;",
+        '    border-bottom: 2px solid #c8520b;',
+        "    padding-bottom: 16px;",
+        "  }",
+        "  .header h1 {",
+        "    color: #c8520b;",
+        "    font-size: 22px;",
+        "    font-weight: 700;",
+        "    letter-spacing: -0.3px;",
+        "  }",
+        "  .header p {",
+        "    color: #888;",
+        "    font-size: 13px;",
+        "    margin-top: 4px;",
+        "  }",
+        "  .footer {",
+        "    margin-top: 40px;",
+        '    border-top: 1px solid #333;',
+        "    padding-top: 12px;",
+        "    color: #666;",
+        "    font-size: 11px;",
+        "  }",
+        "  .group {",
+        "    margin-bottom: 24px;",
+        "  }",
+        "  .group-name {",
+        "    color: #aaa;",
+        "    font-size: 11px;",
+        "    text-transform: uppercase;",
+        "    letter-spacing: 1.5px;",
+        "    margin-bottom: 8px;",
+        "    padding-left: 8px;",
+        "  }",
+        "  table {",
+        "    width: 100%;",
+        "    border-collapse: collapse;",
+        "    background: #1a1a1a;",
+        "    border-radius: 6px;",
+        "    overflow: hidden;",
+        "  }",
+        "  th {",
+        "    text-align: left;",
+        "    color: #777;",
+        "    font-size: 11px;",
+        "    text-transform: uppercase;",
+        "    letter-spacing: 1px;",
+        "    padding: 8px 12px;",
+        "    border-bottom: 1px solid #333;",
+        "    background: #111;",
+        "  }",
+        "  td {",
+        "    padding: 8px 12px;",
+        "    border-bottom: 1px solid #222;",
+        "    vertical-align: top;",
+        "  }",
+        "  tr:last-child td { border-bottom: none; }",
+        "  .method {",
+        "    display: inline-block;",
+        "    padding: 2px 8px;",
+        "    border-radius: 3px;",
+        "    font-size: 11px;",
+        "    font-weight: 600;",
+        "    letter-spacing: 0.5px;",
+        "    text-transform: uppercase;",
+        "  }",
+        "  .method-GET { background: #1e3a5f; color: #7dd3fc; }",
+        "  .method-POST { background: #166534; color: #86efac; }",
+        "  .method-PUT { background: #92400e; color: #fde68a; }",
+        "  .method-DELETE { background: #991b1b; color: #fca5a5; }",
+        "  .method-PATCH { background: #4c1d95; color: #c4b5fd; }",
+        "  .path {",
+        "    color: #e0e0e0;",
+        "    font-family: 'Fira Code', 'JetBrains Mono', monospace;",
+        "    font-size: 13px;",
+        "  }",
+        "  .desc {",
+        "    color: #999;",
+        "    font-size: 12px;",
+        "    max-width: 500px;",
+        "  }",
+        "  .empty {",
+        "    color: #555;",
+        "    font-style: italic;",
+        "    padding: 8px 12px;",
+        "    font-size: 12px;",
+        "  }",
+        "</style>",
+        "</head>",
+        "<body>",
+        '<div class="header">',
+        "  <h1>hamiGenZ — Backend Endpoints</h1>",
+        "  <p>Live API reference — auto-generated from the running server's registered routes. Updates automatically when endpoints change.</p>",
+        "</div>",
+    ]
+
+    for tag in ordered_groups:
+        items = groups[tag]
+        html_parts.append(f'<div class="group">')
+        html_parts.append(f'  <div class="group-name">{tag}</div>')
+        html_parts.append("  <table>")
+        html_parts.append("    <tr><th>Method</th><th>Path</th><th>Description</th></tr>")
+        for r in items:
+            method = r["method"]
+            path = r["path"]
+            desc = r["description"]
+            html_parts.append(
+                f'    <tr>'
+                f'      <td><span class="method method-{method}">{method}</span></td>'
+                f'      <td class="path">{path}</td>'
+                f'      <td class="desc">{desc}</td>'
+                f'    </tr>'
+            )
+        html_parts.append("  </table>")
+        html_parts.append("</div>")
+
+    html_parts.append('<div class="footer">')
+    html_parts.append("  <strong>hamiGenZ</strong> — Don't understand it? Ask hamiGenZ.")
+    html_parts.append("</div>")
+    html_parts.append("</body>")
+    html_parts.append("</html>")
+
+    return HTMLResponse(content="".join(html_parts), media_type="text/html")
 
 
 # ─── Run ─────────────────────────────────────────────────────────
