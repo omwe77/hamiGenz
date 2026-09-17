@@ -19,6 +19,7 @@ import re
 from urllib.parse import urlparse
 
 from llm_service import OllamaService, LLMUnavailableError
+import source_registry
 
 # ─── Normalization helpers ────────────────────────────────────────
 
@@ -289,6 +290,8 @@ class ActionExtractor:
 
     @staticmethod
     def _links(v) -> list[dict]:
+        """Sanitized official links, each labeled against the curated
+        source registry so the UI can show authority honestly."""
         out = []
         if isinstance(v, list):
             for item in v:
@@ -299,7 +302,14 @@ class ActionExtractor:
                     url = sanitize_url(str(item))
                     desc = ""
                 if url:
-                    out.append({"url": url, "description": desc})
+                    c = source_registry.classify_url(url)
+                    out.append({
+                        "url": url,
+                        "description": desc,
+                        "classification": c["classification"],
+                        "source_id": c.get("source", {}).get("id"),
+                        "source_name": c.get("source", {}).get("organization"),
+                    })
         return out[:10]
 
     @staticmethod

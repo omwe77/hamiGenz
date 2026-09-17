@@ -150,6 +150,22 @@ export default function ActionPanel({
                   >
                     {l.url.replace(/^https?:\/\//, "")}
                   </a>
+                  {l.classification === "verified_official" && (
+                    <span
+                      style={styles.verifiedBadge}
+                      title={l.source_name ? `Curated source: ${l.source_name}` : "In hamiGenZ's curated official-source registry"}
+                    >
+                      ✓ verified official
+                    </span>
+                  )}
+                  {l.classification === "unverified" && (
+                    <span
+                      style={styles.unverifiedLinkBadge}
+                      title="Not in hamiGenZ's curated registry — verify carefully before relying on it"
+                    >
+                      unverified source
+                    </span>
+                  )}
                   {l.description && (
                     <span style={styles.itemText}> — {l.description}</span>
                   )}
@@ -344,5 +360,24 @@ const styles: Record<string, React.CSSProperties> = {
   link: {
     fontSize: "var(--text-xs)",
     wordBreak: "break-all",
+  },
+  verifiedBadge: {
+    fontSize: "var(--text-xs)",
+    color: "#166534",
+    background: "#dcfce7",
+    border: "1px solid #86efac",
+    borderRadius: "var(--radius-sm)",
+    padding: "1px 6px",
+    whiteSpace: "nowrap",
+    fontWeight: "var(--font-semibold)",
+  },
+  unverifiedLinkBadge: {
+    fontSize: "var(--text-xs)",
+    color: "#92400e",
+    background: "#fef9c3",
+    border: "1px solid #fde68a",
+    borderRadius: "var(--radius-sm)",
+    padding: "1px 6px",
+    whiteSpace: "nowrap",
   },
 };

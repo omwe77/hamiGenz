@@ -23,6 +23,7 @@ from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
 from form_understanding import FormUnderstandingService
+import source_registry
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
@@ -782,6 +783,35 @@ async def explain_form_field(req: FormExplainRequest, _rl: None = Depends(rate_l
         lang=req.language,
         question=req.question,
     )
+
+
+# ─── /knowledge: curated official-source registry (PR-011) ──────────
+
+@app.get("/knowledge/sources")
+async def list_knowledge_sources(category: Optional[str] = None):
+    """
+    List curated official Nepali information sources with authority and
+    verification metadata. Membership in this registry — not the domain
+    TLD — is what makes a source official.
+    """
+    if category:
+        sources = source_registry.sources_for_category(category)
+    else:
+        sources = source_registry.all_sources()
+    return {
+        "count": len(sources),
+        "sources": [source_registry.public_view(s) for s in sources],
+    }
+
+
+@app.get("/knowledge/classify")
+async def classify_source_url(url: str = Query(..., min_length=4)):
+    """
+    Classify a URL against the curated registry:
+    verified_official / registered_official / unverified.
+    Useful for labeling links shown anywhere in the UI.
+    """
+    return source_registry.classify_url(url)
 
 
 # ─── /documents/{doc_id}/viewer: per-page extracted text ──────────
