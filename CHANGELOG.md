@@ -2,6 +2,18 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Improved — Live explanation evaluation + checker linguistics (PR-014)
+- First live `--live` run of the explanation evaluator (qwen3:8b, 17 gold
+  cases): facts 0.88 / hallucination-free 1.00 / script 1.00 / pass 0.88 —
+  failures are omissions, never fabrications or negation flips
+- Negation guards upgraded to sentence-scoped **marker sets** (Nepali
+  negation has many grammatical forms: छैन / हुँदैन / पाइँदैन …) — a
+  sentence using the guarded phrase must contain one of the markers
+- Key facts accept alternative surface forms (देवनागरी/ASCII digits,
+  सत्तरी/सत्तर, romanized variants) so legitimate paraphrase is not
+  punished as fact loss
+- Results recorded in docs/EVALUATION.md
+
 ### Fixed — Homepage UX audit (PR-015/016/019)
 - **Critical: all four "Try hamiGenZ" CTAs pointed to a nonexistent
   `#open-workspace` anchor** — the homepage→workspace journey was broken;

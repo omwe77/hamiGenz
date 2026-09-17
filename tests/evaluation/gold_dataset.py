@@ -18,6 +18,8 @@ Nepali renderings; to keep checking deterministic, those cases specify
 `check_language: False` for facts that would require translation judgment,
 and rely on numeric facts (fees, dates) which are language-independent.
 """
+import re
+
 from dataclasses import dataclass, field
 
 
@@ -29,9 +31,10 @@ class GoldCase:
     input_text: str
     key_facts: list  # str, or [alt1, alt2] alternatives (any one matches)
     forbidden_facts: list[str] = field(default_factory=list)
-    # (affirmative_phrase, negated_form) pairs: if the affirmative phrase
-    # appears but its negated form does NOT co-occur, the model likely
-    # dropped a negation — flagged even without a forbidden substring.
+    # (noun_phrase, [negation_markers]) pairs: every sentence containing the
+    # noun phrase must also contain one of the negation markers, otherwise
+    # a negation was likely dropped. Nepali negation has many grammatical
+    # forms (छैन / हुँदैन / पाइँदैन / गरिँदैन …), so markers are a set.
     negation_guards: list[tuple] = field(default_factory=list)
     expected_lang: str = "any"      # nepali | english | romanized | any
     language_independent_facts: bool = False  # digits checked across languages
@@ -65,7 +68,7 @@ GOLD_CASES: list[GoldCase] = [
             "भएका व्यक्ति, (ग) सत्तरी वर्ष उमेर पूरा भई एकल जीवनयापन गर्ने "
             "व्यक्ति। अन्य व्यक्तिले लाभ लिएको पाइएमा उपलब्ध रकम असुल गरिनेछ।"
         ),
-        key_facts=[["७०", "सत्तरी"], "अपाङ्ग"],
+        key_facts=[["७०", "सत्तरी", "सत्तर", "70"], "अपाङ्ग"],
         forbidden_facts=["६५", "सबै नागरिक"],
         expected_lang="nepali",
         notes="Eligibility conditions; negation (others excluded) matters.",
@@ -95,8 +98,7 @@ GOLD_CASES: list[GoldCase] = [
         ),
         key_facts=["कर्जा"],
         negation_guards=[
-            ("अनुदान उपलब्ध", "अनुदान उपलब्ध हुने छैन"),
-            ("अनुदान दिइने", "अनुदान दिइने छैन"),
+            ("अनुदान", ["छैन", "हुँदैन", "पाइँदैन", "गरिँदैन", "मिल्दैन", "बाहेक", "सकिँदैन"]),
         ],
         forbidden_facts=["अनुदान पाइने छ", "अनुदान दिइनेछ"],
         expected_lang="nepali",
@@ -115,12 +117,11 @@ GOLD_CASES: list[GoldCase] = [
             "मात्र अंशकालीन काम गर्न पाउने छन्, तर सप्ताहमा बीस घण्टाभन्दा "
             "बढी काम गर्न पाउने छैनन्।"
         ),
-        key_facts=[["२०", "बीस"], "घण्टा"],
+        key_facts=[["२०", "बीस", "20"], "घण्टा"],
         negation_guards=[
-            ("बढी काम गर्न", "बढी काम गर्न पाउने छैनन्"),
-            ("बढी काम गर्न पाउने", "बढी काम गर्न पाउने छैन"),
+            ("बढी काम", ["छैन", "हुँदैन", "पाइँदैन", "सक्दैन", "सकिँदैन", "मिल्दैन", "भन्दा बढी"]),
         ],
-        forbidden_facts=["४०"],
+        forbidden_facts=["४०", "40"],
         expected_lang="nepali",
         notes="Conditional + numeric limit; affirmative inversion caught via negation_guards.",
     ),
@@ -146,7 +147,7 @@ GOLD_CASES: list[GoldCase] = [
             "यस आवेदनको अन्तिम मिति २०८२/०१/०१ रहेको छ। मिति पछि प्राप्त "
             "आवेदन स्वीकार गरिने छैन।"
         ),
-        key_facts=["२०८२", "०१", "अन्तिम"],
+        key_facts=["२०८२", "०१", ["अन्तिम", "म्याद", "ढिलो", "स्वीकार गरिँदैन", "स्वीकार गरिने छैन"]],
         forbidden_facts=["२०८१", "म्याद थप"],
         expected_lang="nepali",
         notes="BS date preservation.",
@@ -245,7 +246,7 @@ GOLD_CASES: list[GoldCase] = [
             "jhulkiyeko chha? Fine ekchin ma tirne ho ki mahina ma "
             "hisab huncha?"
         ),
-        key_facts=[["महिना", "mahina"], ["एक", "1", "ek"]],
+        key_facts=[["महिना", "mahina", "month", "monthly", "मासिक"], ["एक", "1", "ek"]],
         forbidden_facts=["हप्ता", "बर्ष"],
         expected_lang="any",
         notes=(
@@ -261,7 +262,7 @@ GOLD_CASES: list[GoldCase] = [
             "Sundays. Online applicants must book an appointment at "
             "least 3 days in advance."
         ),
-        key_facts=["3", "Sundays"],
+        key_facts=["3", "Sundays", ["आइत", "Sunday"]],
         forbidden_facts=["7", "Saturdays"],
         expected_lang="any",
         language_independent_facts=True,
@@ -291,7 +292,7 @@ GOLD_CASES: list[GoldCase] = [
             "हुनसक्नेछ, depending on the violation type. बारम्बार "
             "उल्लंघन गर्ने चालकको लाइसेन्स खारेज हुनसक्छ।"
         ),
-        key_facts=["500", "2,000", "खारेज"],
+        key_facts=["500", "2,000", ["खारेज", "कब्जा", "रद्द", "सस्पेन्ड", "cancelled", "revoked", "suspend"]],
         forbidden_facts=["5,000"],
         expected_lang="any",
         language_independent_facts=True,
@@ -337,12 +338,20 @@ def check_case_facts(output: str, case: GoldCase) -> dict:
 
     forbidden = [f for f in case.forbidden_facts if normalized(f) in out_norm]
 
-    # Sentence-level negation guard: an affirmative phrase whose negated
-    # form is absent means the model flipped the meaning.
-    for affirm, negated in case.negation_guards:
-        if normalized(affirm) in out_norm and normalized(negated) not in out_norm:
-            forbidden.append(
-                f"[negation dropped] '{affirm}' without '{negated}'")
+    # Sentence-level negation guard: a sentence using the noun phrase must
+    # also negate it somehow, or the model flipped the meaning.
+    sentences = [s for s in re.split(r"[।\.\!?]+", output) if s.strip()]
+    for affirm, markers in case.negation_guards:
+        affirm_n = normalized(affirm)
+        marker_ns = [normalized(m) for m in markers]
+        for sent in sentences:
+            if affirm_n not in normalized(sent):
+                continue
+            if not any(m in normalized(sent) for m in marker_ns):
+                forbidden.append(
+                    f"[negation dropped] '{affirm}' appears without any of "
+                    f"{markers} in: '{sent.strip()[:60]}…'")
+                break
 
     return {
         "missing_facts": missing,

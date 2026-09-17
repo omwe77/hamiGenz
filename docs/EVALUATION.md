@@ -136,7 +136,31 @@ into garbage. `VectorStore` now keeps an `embed_model.txt` stamp:
 .venv/Scripts/python.exe -m pytest tests/test_evaluation.py -v
 ```
 
-## 5. Limitations
+## 5. Live explanation evaluation (qwen3:8b)
+
+Ran with `--live` (real Ollama qwen3:8b, 17 gold cases):
+
+| Metric | Score |
+|---|---|
+| All key facts preserved | **0.88** |
+| Hallucination-free (no forbidden facts / negation flips) | **1.00** |
+| Script-appropriate output (Devanagari for Nepali cases) | **1.00** |
+| Overall pass (all of the above + level plausibility) | **0.88** |
+
+The 2 remaining failures are fact-omissions, not hallucinations — the
+model summarized without repeating an explicit fact (e.g. a "3 days"
+lead time, a license-cancellation consequence). No fabricated facts, no
+negation flips, no wrong-script answers.
+
+Checker design notes (learned from live runs):
+- Nepali negation has many grammatical forms, so negation guards use a
+  **set of negation markers per sentence** (छैन / हुँदैन / पाइँदैन …),
+  not a single expected phrasing.
+- Key facts accept **alternative surface forms** (देवनागरी/ASCII digits,
+  सत्तरी/सत्तर, romanized/Devanagari) so paraphrase isn't punished as
+  fact loss — only true omission or wrong numbers are flagged.
+
+## 6. Limitations
 
 - The corpus is synthetic (12 topics) — realistic, but small. Expand with
   real OCR'd government documents over time.
