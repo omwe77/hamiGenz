@@ -5,7 +5,7 @@ import type { GroundingReport } from "@/lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type Props = {
-  provenance: "document" | "general_ai" | "mixed";
+  provenance: "document" | "general_ai" | "mixed" | "official_source";
   grounding: GroundingReport | null;
   sourceUnavailable?: boolean;
 };
@@ -28,6 +28,12 @@ const BADGES = {
     bg: "#f3e8ff",
     fg: "#6b21a8",
     border: "#d8b4fe",
+  },
+  official_source: {
+    label: "OFFICIAL SOURCE",
+    bg: "#dbeafe",
+    fg: "#1e40af",
+    border: "#93c5fd",
   },
 };
 

@@ -3,6 +3,7 @@
 import React from "react";
 import type { ExplainResponse, GroundingReport } from "@/lib/types";
 import ProvenanceBadge from "./ProvenanceBadge";
+import OfficialSourcesCard from "./OfficialSourcesCard";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type Props = {
@@ -77,6 +78,15 @@ export default function ExplanationPanel({
 }: Props) {
   const { explanation: expData, citations, provenance, language_used } = explanation;
   const grounding = explanation.grounding;
+  // Official-source answering fields (PR-012) — present when this payload
+  // came through the official pipeline.
+  const officialSources = (explanation as unknown as {
+    official_sources?: Parameters<typeof OfficialSourcesCard>[0]["sources"];
+    freshness?: Parameters<typeof OfficialSourcesCard>[0]["freshness"];
+  }).official_sources;
+  const freshness = (explanation as unknown as {
+    freshness?: Parameters<typeof OfficialSourcesCard>[0]["freshness"];
+  }).freshness;
 
   return (
     <div style={styles.container}>
@@ -181,6 +191,11 @@ export default function ExplanationPanel({
             </p>
           )}
         </div>
+      )}
+
+      {/* Official sources — why should I trust this? (PR-012) */}
+      {officialSources && officialSources.length > 0 && freshness && (
+        <OfficialSourcesCard sources={officialSources} freshness={freshness} />
       )}
 
       {/* Provenance badge */}

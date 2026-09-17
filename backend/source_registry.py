@@ -32,7 +32,10 @@ def reload_registry() -> None:
 
 
 def all_sources() -> list[dict]:
-    return _load_registry()["sources"]
+    """Return a copy of the registry sources — callers must never mutate
+    the shared cached dicts (a stray s['verified']=False would corrupt
+    every later lookup in the process)."""
+    return [dict(s) for s in _load_registry()["sources"]]
 
 
 def get_source(source_id: str) -> dict | None:
@@ -49,7 +52,7 @@ def find_by_domain(domain: str) -> dict | None:
     for s in all_sources():
         reg = s["domain"].lower().removeprefix("www.")
         if host == reg or host.endswith("." + reg):
-            return s
+            return dict(s)
     return None
 
 
@@ -79,7 +82,7 @@ def classify_url(url: str) -> dict:
 
 def sources_for_category(category: str) -> list[dict]:
     cat = category.lower().strip()
-    return [s for s in all_sources() if s.get("category") == cat]
+    return [dict(s) for s in all_sources() if s.get("category") == cat]
 
 
 def authority_rank(url: str) -> int:

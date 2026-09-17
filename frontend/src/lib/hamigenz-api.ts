@@ -91,6 +91,21 @@ export async function extractActions(
   return res.json();
 }
 
+export async function askGeneral(
+  question: string,
+  language: string = "auto"
+): Promise<AskGeneralResponse> {
+  const res = await fetch(
+    `${BASE}/ask-general?question=${encodeURIComponent(question)}&language=${encodeURIComponent(language)}`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`/ask-general failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
 export async function detectFormFields(
   text?: string,
   docId?: string
@@ -140,4 +155,5 @@ import type {
   ActionsResponse,
   FormDetectResponse,
   FieldExplanation,
+  AskGeneralResponse,
 } from "./types";

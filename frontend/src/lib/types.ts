@@ -15,8 +15,51 @@ export interface ExplainResponse {
   explanation: ExplanationData;
   citations: Citation[];
   grounding: GroundingReport | null;
-  provenance: "document" | "general_ai" | "mixed";
+  provenance: "document" | "general_ai" | "mixed" | "official_source";
   language_used: string;
+  processing_time_ms?: number;
+}
+
+// ── Official-source answering (PR-012) ────────────────────────────
+export interface OfficialSourceInfo {
+  source_id: string;
+  organization: string;
+  title: string;
+  url: string;
+  source_type: string;
+  authority_level: string;
+  verified: boolean;
+  status: string;
+  verified_date: string | null;
+  fetched_date: string | null;
+  excerpt?: string;
+  doc_title?: string;
+  page?: number | null;
+}
+
+export interface FreshnessInfo {
+  verdict: "current" | "stale" | "unknown" | "none";
+  stale_sources: string[];
+  notes: string;
+}
+
+export interface AskGeneralResponse {
+  question: string;
+  answer: string;
+  provenance: "official_source" | "general_ai";
+  citations: Citation[];
+  evidence_pages: number[];
+  language_used: string;
+  official_sources: OfficialSourceInfo[];
+  freshness: FreshnessInfo;
+  grounding_note: string;
+  verification: {
+    confidence_band?: string;
+    confidence_score?: number | null;
+    unsupported_facts?: string[];
+    contradiction_found?: boolean;
+    recommendation?: string;
+  } | null;
   processing_time_ms?: number;
 }
 

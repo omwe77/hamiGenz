@@ -1,0 +1,18 @@
+{
+  "source_id": "dotm",
+  "fetched_date": "2026-09-17",
+  "fetched_url": "https://dotm.gov.np",
+  "note": "Snapshot of official driving-license information from dotm.gov.np. Re-fetch before relying on any fee or deadline shown here.",
+  "documents": [
+    {
+      "title": "Driving license application procedure (सवारी चालक अनुमतिपत्र)",
+      "page": 1,
+      "text": "Driving license applications in Nepal are submitted online through the Department of Transport Management apply portal. Steps: fill the online form, choose the license office and exam date, print the submission receipt, take the written (likhit) exam on the scheduled date, pass the practical (व्यावहारिक) trial after a waiting period, then collect the license. Age requirement: 18 years for motorcycles/cars (16 with guardian consent for up to 125cc motorcycle), 21 for professional/public vehicles. Required documents: citizenship certificate, medical certificate for categories A2 and above, and eye test where applicable."
+    },
+    {
+      "title": "License fees and validity",
+      "page": 1,
+      "text": "Department of Transport Management fee schedule: written exam application fee Rs. 500 (motorcycle category A), practical test fee Rs. 1,000-2,500 depending on category, license printed card fee Rs. 1,500. Learner license validity: 1 year from written exam pass. Renewal fee: Rs. 2,000 per 5-year cycle for private categories. Fines for expired license renewal: Rs. 50 per month late fee after expiry (as per current notice — confirm at dotm.gov.np)."
+    }
+  ]
+}
