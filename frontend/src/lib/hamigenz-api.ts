@@ -91,6 +91,44 @@ export async function extractActions(
   return res.json();
 }
 
+export async function detectFormFields(
+  text?: string,
+  docId?: string
+): Promise<FormDetectResponse> {
+  const body: Record<string, unknown> = {};
+  if (text) body.text = text;
+  if (docId) body.doc_id = docId;
+  const res = await fetch(`${BASE}/forms/detect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`/forms/detect failed (${res.status})`);
+  return res.json();
+}
+
+export async function explainFormField(
+  label: string,
+  opts: { docId?: string; context?: string; page?: number; language?: string; question?: string }
+): Promise<FieldExplanation> {
+  const body: Record<string, unknown> = { label };
+  if (opts.docId) body.doc_id = opts.docId;
+  if (opts.context) body.context = opts.context;
+  if (opts.page) body.page = opts.page;
+  if (opts.language) body.language = opts.language;
+  if (opts.question) body.question = opts.question;
+  const res = await fetch(`${BASE}/forms/explain-field`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`/forms/explain-field failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
 // Shared types for hamiGenZ backend API responses
 // Kept in sync with backend Pydantic models
 import type {
@@ -100,4 +138,6 @@ import type {
   ViewerResponse,
   SearchResponse,
   ActionsResponse,
+  FormDetectResponse,
+  FieldExplanation,
 } from "./types";

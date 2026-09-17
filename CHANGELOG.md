@@ -2,6 +2,24 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Added — Form understanding (PR-010)
+- `POST /forms/detect`: heuristic form detection (field labels, checkbox
+  patterns, form keywords — English + Nepali) with page-anchored field
+  extraction; cheap, no LLM call
+- `POST /forms/explain-field`: grounded per-field explanation — what the
+  field means, what belongs there, common mistakes, sample format, and a
+  clearly-marked SAMPLE (FOR EXPLANATION ONLY / NOT FOR SUBMISSION)
+- Anti-fabrication guards: examples use generic placeholders unusable as
+  real identity data; long digit sequences are scrubbed from examples;
+  the LLM must quote the field's own wording as evidence
+- Degraded mode falls back to quoting the form's own wording
+- Workspace UI: FormPanel in the text-explain tab (pasted text) and the
+  document tab (active document) — field chips with page numbers, per-field
+  explanations, SAMPLE frame, evidence box
+- tests/test_forms.py: 18 offline tests with realistic Nepali citizenship
+  application + English passport form samples; endpoint verified live
+  (Nepali field detection + grounded Nepali explanation)
+
 ### Added — Action layer (PR-009)
 - `POST /actions` endpoint: extracts requirements (checklist), deadlines,
   fees, eligibility, next steps, and official links from pasted text or a

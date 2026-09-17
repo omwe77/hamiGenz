@@ -23,6 +23,7 @@ import ExplanationPanel from "./ExplanationPanel";
 import DocumentViewer from "./DocumentViewer";
 import ProvenanceBadge from "./ProvenanceBadge";
 import ActionPanel from "./ActionPanel";
+import FormPanel from "./FormPanel";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type ExplainLevel = "original" | "simple" | "very_simple";
@@ -510,6 +511,13 @@ export default function WorkspacePage() {
                 disabled={!inputText.trim() && !activeDocId}
               />
 
+              {/* Form understanding: explain form fields (PR-010) */}
+              <FormPanel
+                text={inputText.trim() || undefined}
+                docId={activeDocId}
+                targetLang={targetLang}
+              />
+
               <p style={styles.hint}>
                 Ctrl+Enter to explain · Select text in the Document tab to explain it
               </p>
@@ -784,6 +792,9 @@ export default function WorkspacePage() {
                 onExtract={handleExtractActions}
                 disabled={!activeDocId}
               />
+
+              {/* Form understanding for the active document (PR-010) */}
+              <FormPanel docId={activeDocId} targetLang={targetLang} />
 
               <div style={styles.sideSection}>
                 <h3 style={styles.sideTitle}>Explain selected text</h3>
