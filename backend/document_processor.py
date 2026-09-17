@@ -17,16 +17,33 @@ import pytesseract
 
 
 # ─── Tesseract configuration ──────────────────────────────────────
-# Absolute path to tesseract binary (Windows install default)
-TESSERACT_BIN = os.getenv(
-    "TESSERACT_BIN",
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-)
-# Project-local tessdata directory (contains nep.traineddata, eng.traineddata, osd.traineddata)
-PROJECT_TESSDATA = Path(__file__).parent.parent / "data" / "tessdata"
+# Resolve paths relative to THIS file's location, not the CWD, so the backend
+# works no matter how it is launched (uvicorn, IDE, run.sh, etc.)
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_TESSERACT_BIN = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+_PROJECT_TESSDATA = _BACKEND_ROOT / "data" / "tessdata"
+
+# Tesseract binary: env var override → Windows default → last-resort search
+if "TESSERACT_BIN" in os.environ and os.environ["TESSERACT_BIN"]:
+    TESSERACT_BIN = Path(os.environ["TESSERACT_BIN"])
+elif _DEFAULT_TESSERACT_BIN.exists():
+    TESSERACT_BIN = _DEFAULT_TESSERACT_BIN
+else:
+    # Fallback: try to find tesseract on PATH
+    import shutil
+    found = shutil.which("tesseract")
+    TESSERACT_BIN = Path(found) if found else _DEFAULT_TESSERACT_BIN
+
+# Project tessdata: env var override → project data/tessdata
+if "TESSDATA_PREFIX" in os.environ and os.environ["TESSDATA_PREFIX"]:
+    PROJECT_TESSDATA = Path(os.environ["TESSDATA_PREFIX"])
+elif _PROJECT_TESSDATA.is_dir():
+    PROJECT_TESSDATA = _PROJECT_TESSDATA
+else:
+    PROJECT_TESSDATA = _PROJECT_TESSDATA  # still set, OCR will fail loudly if missing
 
 # Apply configuration once at import time
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_BIN
+pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_BIN)
 if PROJECT_TESSDATA.exists():
     os.environ["TESSDATA_PREFIX"] = str(PROJECT_TESSDATA)
 
