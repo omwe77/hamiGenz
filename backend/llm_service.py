@@ -10,6 +10,10 @@ from typing import Optional
 from document_processor import DocumentProcessor
 
 
+class LLMUnavailableError(RuntimeError):
+    """Raised when the local LLM backend cannot be reached or fails."""
+
+
 class OllamaService:
     """Interface to local Ollama LLM."""
 
@@ -32,7 +36,7 @@ class OllamaService:
             print(f"[OllamaService] Cannot reach Ollama at {self.base_url}: {e}")
 
     def generate(self, prompt: str, stream: bool = False,
-                 options: dict | None = None) -> str:
+                 options: dict | None = None, timeout: int = 120) -> str:
         """
         Generate a response from the LLM.
         Returns full response text.
@@ -50,21 +54,28 @@ class OllamaService:
 
         if stream:
             chunks = []
-            with requests.post(f"{self.base_url}/api/generate",
-                               json=payload, stream=True, timeout=120) as resp:
-                for line in resp.iter_lines():
-                    if line:
-                        data = json.loads(line)
-                        if "response" in data:
-                            chunks.append(data["response"])
-                        if data.get("done"):
-                            break
+            try:
+                with requests.post(f"{self.base_url}/api/generate",
+                                   json=payload, stream=True, timeout=timeout) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if line:
+                            data = json.loads(line)
+                            if "response" in data:
+                                chunks.append(data["response"])
+                            if data.get("done"):
+                                break
+            except (requests.RequestException, json.JSONDecodeError) as e:
+                raise LLMUnavailableError(f"LLM backend error: {e}") from e
             return "".join(chunks)
         else:
-            resp = requests.post(f"{self.base_url}/api/generate",
-                                 json=payload, timeout=120)
-            resp.raise_for_status()
-            return resp.json().get("response", "")
+            try:
+                resp = requests.post(f"{self.base_url}/api/generate",
+                                     json=payload, timeout=timeout)
+                resp.raise_for_status()
+                return resp.json().get("response", "")
+            except (requests.RequestException, json.JSONDecodeError) as e:
+                raise LLMUnavailableError(f"LLM backend error: {e}") from e
 
     def generate_structured(self, prompt: str) -> dict:
         """
@@ -182,6 +193,170 @@ and include a clear warning.
         return "\n\n".join(lines)
 
 
+class VerificationLayer:
+    """
+    Standalone verification layer for hamiGenZ answers.
+
+    Runs claim extraction + contradiction check + confidence scoring.
+    Can be called independently of the explanation pipeline,
+    and is wired into /ask and /explain so every answer carries
+    a verification report.
+
+    STEP 3 deliverable: stronger verification than raw grounding —
+    contradiction detection with re-prompt guidance, numeric confidence
+    score, and an explicit recommendation for the frontend.
+    """
+
+    # Classification → numeric weight (higher = more trustworthy)
+    _WEIGHTS = {
+        "SUPPORTED": 1.0,
+        "PARTIALLY_SUPPORTED": 0.55,
+        "INSUFFICIENT_EVIDENCE": 0.15,
+        "CONTRADICTED": 0.0,
+    }
+
+    def __init__(self, llm: OllamaService, validator: GroundingValidator | None = None):
+        self.llm = llm
+        self.validator = validator or GroundingValidator(llm)
+
+    def verify(self, question: str, answer: str,
+               evidence_chunks: list[dict]) -> dict:
+        """
+        Run full verification on an answer.
+
+        Returns a dict with:
+          - grounding_report: raw claim-level classification (from GroundingValidator)
+          - contradiction_found: bool — any claim marked CONTRADICTED
+          - contradiction_claims: list of contradicted claim texts
+          - confidence_score: 0–100 numeric score derived from claim weights
+          - confidence_band: "HIGH" / "MEDIUM" / "LOW" / "UNKNOWN"
+          - unsupported_facts: list of claim texts that are PARTIALLY_SUPPORTED
+                                 or INSUFFICIENT_EVIDENCE or CONTRADICTED
+          - recommendation: short guidance for the frontend / user
+        """
+        report = self.validator.validate(question, answer, evidence_chunks)
+
+        claims = report.get("claims", [])
+        contradicted = [c for c in claims if c.get("classification") == "CONTRADICTED"]
+        unsupported = [
+            c for c in claims
+            if c.get("classification") in ("PARTIALLY_SUPPORTED", "INSUFFICIENT_EVIDENCE", "CONTRADICTED")
+        ]
+
+        # Numeric confidence: weighted average of claim weights, scaled to 0–100.
+        # If there are no claims (empty answer / no evidence), fall back to the
+        # qualitative band from the validator.
+        if claims:
+            total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
+            confidence_score = round((total_weight / len(claims)) * 100)
+        else:
+            confidence_score = None
+
+        band = report.get("overall_confidence", "UNKNOWN")
+        if confidence_score is not None:
+            if confidence_score >= 75:
+                band = "HIGH"
+            elif confidence_score >= 45:
+                band = "MEDIUM"
+            else:
+                band = "LOW"
+
+        # Contradiction handling: if any claim is directly contradicted by evidence,
+        # the answer should not be presented as fully reliable.
+        contradiction_found = len(contradicted) > 0
+        if contradiction_found:
+            recommendation = (
+                "Some claims in this answer conflict with the document evidence. "
+                "Treat the answer with caution and check the original source."
+            )
+        elif band == "LOW":
+            recommendation = (
+                "This answer could not be fully verified from the document. "
+                "Important details may be missing or imprecise — check the original source."
+            )
+        elif band == "MEDIUM":
+            recommendation = (
+                "This answer is partially supported by the document. "
+                "Some details may need verification."
+            )
+        else:
+            recommendation = (
+                "This answer is supported by the document evidence."
+            )
+
+        return {
+            "grounding_report": report,
+            "contradiction_found": contradiction_found,
+            "contradiction_claims": [c["claim"] for c in contradicted],
+            "confidence_score": confidence_score,
+            "confidence_band": band,
+            "unsupported_facts": [c["claim"] for c in unsupported],
+            "recommendation": recommendation,
+        }
+
+    def re_prompt_on_contradiction(self, question: str, answer: str,
+                                   evidence_chunks: list[dict],
+                                   verification: dict) -> str | None:
+        """
+        If the verification found contradictions, re-generate the answer
+        with an explicit instruction to remove or correct contradicted claims.
+
+        Returns a revised answer string, or None if no correction was attempted
+        (e.g. no contradiction, or correction failed).
+        """
+        if not verification.get("contradiction_found"):
+            return None
+
+        evidence_text = self._format_evidence(evidence_chunks)
+        contradicted_claims = verification.get("contradiction_claims", [])
+        claims_json = json.dumps(contradicted_claims, ensure_ascii=False)
+
+        correction_prompt = f"""You are hamiGenZ. You previously generated this answer:
+
+PREVIOUS ANSWER:
+{answer}
+
+However, verification against the document evidence found that the following claims
+conflict with the evidence and must be REMOVED or CORRECTED:
+
+CONTRADICTED CLAIMS:
+{claims_json}
+
+RETRIEVED EVIDENCE (with page numbers):
+{evidence_text}
+
+QUESTION: {question}
+
+INSTRUCTIONS:
+1. Rewrite the answer so that NONE of the contradicted claims appear.
+2. Where the evidence supports a different fact, use the evidence instead.
+3. Where the evidence does not support the claim at all, remove the claim and say
+   that the document does not contain that information.
+4. Do NOT invent new facts to replace the removed claims.
+5. Keep the rest of the answer that IS supported.
+6. Respond in the same language as the previous answer.
+7. Preserve page citations where they are supported by evidence.
+
+Write the corrected answer directly.
+"""
+        try:
+            revised = self.llm.generate(correction_prompt, timeout=120)
+            return revised
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_evidence(chunks: list[dict]) -> str:
+        if not chunks:
+            return "NO EVIDENCE RETRIEVED."
+        lines = []
+        for chunk in chunks:
+            page = chunk.get("page_num", "?")
+            text = chunk.get("text", "")[:800]
+            lines.append(f"[Page {page}] {text}")
+        return "\n\n".join(lines)
+
+
 class ExplanationEngine:
     """
     Structure answers to be user-friendly and actionable.
@@ -193,10 +368,12 @@ class ExplanationEngine:
     def format_answer(self, question: str, raw_answer: str,
                       evidence_chunks: list[dict],
                       grounding_report: dict | None = None,
-                      lang: str = "nepali") -> dict:
+                      lang: str = "nepali",
+                      explanation_level: str = "simple") -> dict:
         """
         Format a final user-facing answer.
         Returns structured response with sections.
+        explanation_level: "original" | "simple" | "very_simple"
         """
         evidence_text = self._format_evidence(evidence_chunks)
         grounding_note = ""
@@ -210,38 +387,153 @@ class ExplanationEngine:
             elif confidence == "MEDIUM":
                 grounding_note = "ℹ️ This answer is partially based on the document; some details may need verification."
 
-        prompt = f"""You are hamiGenZ, a helpful assistant that explains documents and official information
+        level_guidance = {
+            "original": """\
+The user chose ORIGINAL-level explanation.
+This means: preserve the original wording and register as much as possible,
+and explain what the formal/official/technical language actually means WITHOUT
+turning it into casual everyday language.
+
+- Keep quotes or close paraphrases of important original phrases where they
+  matter, then explain what each one means in clear terms.
+- Do NOT rewrite the whole thing into everyday language. The tone should stay
+  close to the original -- formal stays formal, legal stays legal -- but with
+  clear explanations of what each important part means.
+- Distinguish three things for each important passage:
+  (a) what it literally says,
+  (b) what it implies in practice, and
+  (c) what the person needs to know or do about it.
+- This is NOT a translation. If the original is in Nepali, the explanation is
+  also in Nepali but at the same formal level -- you are explaining the meaning,
+  not simplifying the language.
+- Never lose a fact, requirement, deadline, fee, or eligibility detail while
+  explaining. Clarify the language, not the facts.
+""",
+            "simple": """\
+The user chose SIMPLE-level explanation.
+This means: rewrite the idea in clear, natural, everyday language that preserves
+the EXACT meaning and intent -- no facts changed, no requirements invented, no
+deadlines or fees guessed.
+
+- If the original is in Nepali and the user's language is Nepali, explain in
+  natural everyday Nepali. If the original is in English, explain in clear
+  everyday English. Match the user's language, not the original's register.
+- This is meaning-preserving simplification, NOT a word-for-word translation.
+  Translate the idea, not each sentence. A translation copies the words; an
+  explanation makes the meaning clear. Focus on meaning.
+- Explain technical, legal, or official terms in plain language the first time
+  they appear, but keep the overall flow natural.
+- Use normal sentence length. Avoid unnecessarily fancy words, but do not make
+  it sound childish.
+- Keep all facts, requirements, deadlines, fees, eligibility, and action items
+  exactly as they are -- you are simplifying how they are said, not what they
+  mean.
+- The goal: someone who can read but does not fully understand the original
+  should come away understanding it correctly.
+""",
+            "very_simple": """\
+The user chose VERY SIMPLE-level explanation.
+This means: the easiest possible understanding without losing any facts.
+
+- Use short sentences. Each sentence should carry one clear idea.
+- Use the simplest everyday words that still preserve the exact meaning.
+- Explain every important term the first time it appears, in a short clause
+  right after the term -- for example: "citizenship (your official membership
+  in the country)".
+- If a concept is complicated, break it into the smallest clear steps, one step
+  per line or bullet where possible.
+- Keep ALL facts, requirements, deadlines, fees, eligibility, and action items
+  exactly accurate. Simplify the language, not the facts. Never invent or omit
+  anything important.
+- This level is for someone who struggles with formal, technical, or official
+  language. Write as if explaining to a friend who is smart but has never seen
+  this kind of document before.
+- This is still meaning-preserving simplification, not translation. You are
+  making the meaning easy to grasp, not copying the original wording.
+""",
+        }.get(explanation_level, """\
+The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning.
+Rewrite the idea in clear, natural, everyday language.
+Preserve the exact meaning and intent -- do not change facts.
+Explain technical or official terms in plain language.
+Do NOT treat this as a word-for-word translation. Focus on meaning.
+""")
+
+        if explanation_level == "original":
+            # ORIGINAL level: preserve the raw answer's wording/structure as much as
+            # possible. We still run it through the LLM once to ensure it's polished and
+            # that any truly opaque terms get a brief inline explanation, but we do NOT
+            # restructure or simplify the language. The user asked to understand the
+            # original, not get a rewrite.
+            prompt = f"""You are hamiGenZ. The user asked for an ORIGINAL-level explanation.
+
+QUESTION: {question}
+
+RAW ANSWER (preserve this wording and register as much as possible):
+{raw_answer}
+
+GROUNDING NOTE:
+{grounding_note}
+
+INSTRUCTIONS:
+1. Preserve the wording, structure, and register of the RAW ANSWER as much as possible.
+2. Only make small clarifications where a term is genuinely opaque — add a short inline
+   explanation in parentheses and keep the original phrase.
+3. Do NOT rewrite the answer into a simpler or more casual register.
+4. Do NOT restructure the answer.
+5. The final answer must be in {lang}.
+6. Ensure the answer is clear and readable, but stays faithful to the original tone.
+7. If the document is a form and the question is about how to fill it,
+   explain what goes in each field. Mark any example as "SAMPLE — FOR EXPLANATION ONLY — NOT FOR SUBMISSION".
+8. Do NOT invent fees, deadlines, penalties, or legal requirements.
+9. Include page citations where relevant, like (Page 3).
+
+OUTPUT: Write the final answer directly. Do not include any preamble.
+"""
+            answer = self.llm.generate(prompt)
+        else:
+            prompt = f"""You are hamiGenZ, a helpful assistant that explains documents and official information
 in simple, clear language for ordinary people in Nepal.
+
+EXPLANATION LEVEL: {explanation_level}
+(level_guidance below tells you exactly how to handle this level)
 
 QUESTION (may be in Nepali, English, or Romanized Nepali): {question}
 
 DOCUMENT CONTENT (relevant excerpts with page numbers):
 {evidence_text}
 
-RAW ANSWER FROM AI: {raw_answer}
+RAW ANSWER FROM AI:
+{raw_answer}
 
-GROUNDING NOTE: {grounding_note}
+GROUNDING NOTE:
+{grounding_note}
+
+LEVEL GUIDANCE:
+{level_guidance}
+
+TARGET LANGUAGE: {lang}
 
 INSTRUCTIONS:
-1. Write a clear, helpful answer in {lang}.
-2. Structure it around:
+1. Rewrite the answer into the final response, following the EXPLANATION LEVEL guidance exactly.
+2. The answer must be in {lang}.
+3. Structure the final answer around:
    - What is this? (brief summary of what the document/information is about)
    - What does it mean? (explain in simple terms)
    - What do I need to do? (action items, if any)
    - Important dates / fees / requirements (if extractable)
    - Who does this apply to? (if relevant)
    - Source/citation (page numbers or document reference)
-
-3. Use simple language. Explain any technical or legal terms.
 4. If the document is a form, and the question is about how to fill it,
    explain what goes in each field. Mark any example as "SAMPLE — FOR EXPLANATION ONLY — NOT FOR SUBMISSION".
 5. If you do not have enough information to answer, say so clearly.
 6. Include page citations where relevant, like (Page 3).
 7. Do NOT invent fees, deadlines, penalties, or legal requirements. If not in evidence, say you could not verify.
+8. Preserve the ORIGINAL MEANING at every level. Simplification changes the language, not the facts.
 
-OUTPUT: Write the answer directly. Do not include any preamble.
+OUTPUT: Write the final answer directly. Do not include any preamble.
 """
-        answer = self.llm.generate(prompt)
+            answer = self.llm.generate(prompt)
 
         return {
             "question": question,
@@ -250,6 +542,7 @@ OUTPUT: Write the answer directly. Do not include any preamble.
             "grounding": grounding_report,
             "grounding_note": grounding_note,
             "language": lang,
+            "explanation_level": explanation_level,
             "evidence_pages": list(set(
                 c.get("page_num") for c in evidence_chunks if c.get("page_num")
             )),
@@ -265,6 +558,82 @@ OUTPUT: Write the answer directly. Do not include any preamble.
             text = chunk.get("text", "")[:600]
             lines.append(f"[Page {page}] {text}")
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _level_guidance(explanation_level: str) -> str:
+        """Return the level guidance text for inlining into prompts."""
+        guidance = {
+            "original": """\
+The user chose ORIGINAL-level explanation.
+This means: preserve the original wording and register as much as possible,
+and explain what the formal/official/technical language actually means WITHOUT
+turning it into casual everyday language.
+
+- Keep quotes or close paraphrases of important original phrases where they
+  matter, then explain what each one means in clear terms.
+- Do NOT rewrite the whole thing into everyday language. The tone should stay
+  close to the original -- formal stays formal, legal stays legal -- but with
+  clear explanations of what each important part means.
+- Distinguish three things for each important passage:
+  (a) what it literally says,
+  (b) what it implies in practice, and
+  (c) what the person needs to know or do about it.
+- This is NOT a translation. If the original is in Nepali, the explanation is
+  also in Nepali but at the same formal level -- you are explaining the meaning,
+  not simplifying the language.
+- Never lose a fact, requirement, deadline, fee, or eligibility detail while
+  explaining. Clarify the language, not the facts.
+""",
+            "simple": """\
+The user chose SIMPLE-level explanation.
+This means: rewrite the idea in clear, natural, everyday language that preserves
+the EXACT meaning and intent -- no facts changed, no requirements invented, no
+deadlines or fees guessed.
+
+- If the original is in Nepali and the user's language is Nepali, explain in
+  natural everyday Nepali. If the original is in English, explain in clear
+  everyday English. Match the user's language, not the original's register.
+- This is meaning-preserving simplification, NOT a word-for-word translation.
+  Translate the idea, not each sentence. A translation copies the words; an
+  explanation makes the meaning clear. Focus on meaning.
+- Explain technical, legal, or official terms in plain language the first time
+  they appear, but keep the overall flow natural.
+- Use normal sentence length. Avoid unnecessarily fancy words, but do not make
+  it sound childish.
+- Keep all facts, requirements, deadlines, fees, eligibility, and action items
+  exactly as they are -- you are simplifying how they are said, not what they
+  mean.
+- The goal: someone who can read but does not fully understand the original
+  should come away understanding it correctly.
+""",
+            "very_simple": """\
+The user chose VERY SIMPLE-level explanation.
+This means: the easiest possible understanding without losing any facts.
+
+- Use short sentences. Each sentence should carry one clear idea.
+- Use the simplest everyday words that still preserve the exact meaning.
+- Explain every important term the first time it appears, in a short clause
+  right after the term -- for example: "citizenship (your official membership
+  in the country)".
+- If a concept is complicated, break it into the smallest clear steps, one step
+  per line or bullet where possible.
+- Keep ALL facts, requirements, deadlines, fees, eligibility, and action items
+  exactly accurate. Simplify the language, not the facts. Never invent or omit
+  anything important.
+- This level is for someone who struggles with formal, technical, or official
+  language. Write as if explaining to a friend who is smart but has never seen
+  this kind of document before.
+- This is still meaning-preserving simplification, not translation. You are
+  making the meaning easy to grasp, not copying the original wording.
+""",
+        }
+        return guidance.get(explanation_level, """\
+The user wants a SIMPLE, everyday-language explanation that preserves the exact meaning.
+Rewrite the idea in clear, natural, everyday language.
+Preserve the exact meaning and intent -- do not change facts.
+Explain technical or official terms in plain language.
+Do NOT treat this as a word-for-word translation. Focus on meaning.
+""")
 
     @staticmethod
     def _extract_citations(answer: str, chunks: list[dict]) -> list[dict]:

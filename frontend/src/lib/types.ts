@@ -1,0 +1,219 @@
+// Shared types for hamiGenZ backend API responses
+// Kept in sync with backend Pydantic models
+
+export interface AskResponse {
+  question: string;
+  answer: string;
+  citations: Citation[];
+  grounding_note: string;
+  evidence_pages: number[];
+  language_used: string;
+  processing_time_ms?: number;
+}
+
+export interface ExplainResponse {
+  explanation: ExplanationData;
+  citations: Citation[];
+  grounding: GroundingReport | null;
+  provenance: "document" | "general_ai" | "mixed" | "official_source";
+  language_used: string;
+  processing_time_ms?: number;
+}
+
+// ── Official-source answering (PR-012) ────────────────────────────
+export interface OfficialSourceInfo {
+  source_id: string;
+  organization: string;
+  title: string;
+  url: string;
+  source_type: string;
+  authority_level: string;
+  verified: boolean;
+  status: string;
+  verified_date: string | null;
+  fetched_date: string | null;
+  excerpt?: string;
+  doc_title?: string;
+  page?: number | null;
+}
+
+export interface FreshnessInfo {
+  verdict: "current" | "stale" | "unknown" | "none";
+  stale_sources: string[];
+  notes: string;
+}
+
+export interface AskGeneralResponse {
+  question: string;
+  answer: string;
+  provenance: "official_source" | "general_ai";
+  citations: Citation[];
+  evidence_pages: number[];
+  language_used: string;
+  official_sources: OfficialSourceInfo[];
+  freshness: FreshnessInfo;
+  grounding_note: string;
+  verification: {
+    confidence_band?: string;
+    confidence_score?: number | null;
+    unsupported_facts?: string[];
+    contradiction_found?: boolean;
+    recommendation?: string;
+  } | null;
+  processing_time_ms?: number;
+}
+
+export interface ExplanationData {
+  question: string;
+  answer: string;
+  citations: Citation[];
+  grounding: GroundingReport | null;
+  grounding_note: string;
+  language: string;
+  explanation_level: string;
+  evidence_pages: number[];
+  processing_time_ms?: number;
+}
+
+export interface Citation {
+  page: number;
+  excerpt: string;
+  chunk_id?: string;
+  start_offset?: number;
+  end_offset?: number;
+  source_type?: string;
+}
+
+export interface GroundingReport {
+  claims?: Claim[];
+  overall_confidence?: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  missing_evidence?: string[];
+  warning?: string;
+  // STEP 3 verification layer fields
+  contradiction_found?: boolean;
+  contradiction_claims?: string[];
+  confidence_score?: number;
+  confidence_band?: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  unsupported_facts?: string[];
+  recommendation?: string;
+}
+
+export interface Claim {
+  claim: string;
+  classification: "SUPPORTED" | "PARTIALLY_SUPPORTED" | "CONTRADICTED" | "INSUFFICIENT_EVIDENCE";
+  evidence: string;
+  page_refs?: number[];
+}
+
+export interface UploadResponse {
+  doc_id: string;
+  filename: string;
+  pages: number;
+  chunks: number;
+  language_hint: string;
+  message: string;
+  // Fields returned by backend /upload; some may be absent depending on pipeline stage
+  upload_date?: string;
+  page_count?: number;
+  status?: string;
+}
+
+export interface DocumentInfo {
+  doc_id: string;
+  filename: string;
+  upload_date: string;
+  page_count: number;
+  language_hint: string;
+  status: string;
+}
+
+export interface ViewerPage {
+  page_num: number;
+  text: string;
+  has_image: boolean;
+  image_url?: string;
+  word_count: number;
+}
+
+export interface ViewerResponse {
+  doc_id: string;
+  filename: string;
+  page_count: number;
+  pages: ViewerPage[];
+}
+
+export interface SearchMatch {
+  page: number;
+  text: string;
+  highlight_start: number;
+  highlight_end: number;
+  matched_term: string;
+}
+
+export interface SearchResponse {
+  doc_id: string;
+  query: string;
+  matches: SearchMatch[];
+}
+
+// ── Action layer (PR-009) ─────────────────────────────────────────
+export interface DeadlineItem {
+  date: string;
+  description: string;
+  unverified?: boolean;
+}
+
+export interface FeeItem {
+  amount: string;
+  description: string;
+  unverified?: boolean;
+}
+
+export interface LinkItem {
+  url: string;
+  description: string;
+  classification?: "verified_official" | "registered_official" | "unverified";
+  source_id?: string | null;
+  source_name?: string | null;
+}
+
+export interface ActionsResponse {
+  requirements: string[];
+  deadlines: DeadlineItem[];
+  fees: FeeItem[];
+  eligibility: string[];
+  next_steps: string[];
+  official_links: LinkItem[];
+  meta: { status: "llm" | "hints_only" | "error"; note?: string };
+}
+
+// ── Form understanding (PR-010) ───────────────────────────────────
+export interface FormDetection {
+  is_form: boolean;
+  confidence: number;
+  field_count: number;
+  matched_keywords: string[];
+}
+
+export interface FormField {
+  label: string;
+  page: number;
+  evidence: string;
+}
+
+export interface FormDetectResponse {
+  detection: FormDetection;
+  fields: FormField[];
+}
+
+export interface FieldExplanation {
+  meaning: string;
+  belongs: string;
+  do_not_enter: string;
+  example: string;
+  sample_format: string;
+  source_quote: string;
+  page: number | null;
+  sample_markers: string[];
+  meta: { status: "llm" | "hints_only" | "error"; note?: string };
+}

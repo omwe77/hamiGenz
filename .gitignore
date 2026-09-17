@@ -9,12 +9,6 @@ dist/
 downloads/
 eggs/
 .installed.cfg
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
 .eggs/
 *.manifest
@@ -25,7 +19,6 @@ wheels/
 venv/
 ENV/
 env/
-.venv/
 
 # IDE
 .idea/
@@ -38,7 +31,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data and uploads (NEVER commit user documents)
+# Data and uploads (NEVER commit user documents or vector indexes)
 data/uploads/
 data/vectors/
 *.faiss
@@ -49,20 +42,9 @@ registry.json
 *.sqlite3
 
 # Environment variables
-backend/.env
 .env
 .env.local
 .env.*.local
-
-# Vector DB files
-*.faiss
-*_meta.json
-registry.json
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
 
 # Logs
 *.log
@@ -80,5 +62,6 @@ frontend/out/
 frontend/build/
 frontend/.env.local
 
-# Testing data
+# Testing scratch data
 tests/data/
+tests/ocr_tests/

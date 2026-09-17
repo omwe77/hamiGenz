@@ -1,0 +1,23 @@
+{
+  "source_id": "passport-dept",
+  "fetched_date": "2026-09-17",
+  "fetched_url": "https://www.nepalpassport.gov.np",
+  "note": "Snapshot of official passport information from nepalpassport.gov.np. Re-fetch before relying on any fee or deadline shown here.",
+  "documents": [
+    {
+      "title": "Passport fees (शुल्क) — official notice",
+      "page": 1,
+      "text": "Passport fee structure as published by the Department of Passports, Ministry of Foreign Affairs. Ordinary passport (साधारण राहदानी) 34 pages: Rs. 5,000 for 15 days normal service. Ordinary passport 34 pages: Rs. 12,000 for express same-day or next-day service. Ordinary passport 66 pages: Rs. 10,000 for 15 days normal service. Ordinary passport 66 pages: Rs. 20,000 express. Lost/damaged passport re-issue (duplicate) 34 pages: Rs. 15,000. Fees are subject to change by ministry notice — always confirm on nepalpassport.gov.np before payment."
+    },
+    {
+      "title": "Required documents (आवश्यक कागजात) for adult passport",
+      "page": 1,
+      "text": "Documents required for a new ordinary passport application: Nepali citizenship certificate (नागरिकताको प्रमाणपत्र) original and copy; a printed appointment confirmation from nepalpassport.gov.np; for minors, birth registration certificate and parents' citizenship certificates; for married applicants applying with surname change, marriage registration certificate (विवाह दर्ता). Vaziyat/payer payment is made at the counter on the appointment day. Original documents are verified at the Department of Passports office, Tripureshwor or regional offices."
+    },
+    {
+      "title": "Appointment procedure (तालिका/अपोइन्टमेन्ट)",
+      "page": 1,
+      "text": "Passport applications require a pre-booked online appointment at nepalpassport.gov.np. Steps: create an account, fill the application form, choose passport office and appointment date, pay attention to the fee for the service level chosen (normal or express), print the application summary and appointment confirmation, and attend in person with original documents. Walk-in applications without an appointment are generally not entertained. On the appointment day, biometrics (photograph, fingerprints) are captured at the office."
+    }
+  ]
+}

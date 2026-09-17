@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+ollama==0.4.1
+pytesseract==0.3.10
+pdfplumber==0.11.0
+PyMuPDF==1.24.10
+pillow==11.0.0
+faiss-cpu==1.11.0
+sentence-transformers==3.1.1
+requests==2.32.3
+pytest==8.3.4
