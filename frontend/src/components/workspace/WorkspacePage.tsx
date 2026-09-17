@@ -9,12 +9,24 @@ import {
   getDocumentViewer,
   searchDocumentText,
 } from "@/lib/hamigenz-api";
+import type {
+  ViewerPage,
+  ExplainResponse,
+  DocumentInfo,
+  SearchMatch,
+  Citation,
+} from "@/lib/types";
+import ExplanationLevelSelect from "./ExplanationLevelSelect";
+import ExplanationPanel from "./ExplanationPanel";
+import DocumentViewer from "./DocumentViewer";
+import ProvenanceBadge from "./ProvenanceBadge";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type Props = {
   docId?: string;
   pages?: ViewerPage[];
   onDocUpload?: (docId: string, filename: string) => void;
+  citations?: Citation[];
 };
 
 export default function WorkspacePage() {
@@ -35,6 +47,7 @@ export default function WorkspacePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
   const [activeCitation, setActiveCitation] = useState<number | null>(null);
+  const [citationsByPage, setCitationsByPage] = useState<Map<number, Citation[]>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Load documents ──────────────────────────────────────────────────
@@ -93,7 +106,17 @@ export default function WorkspacePage() {
     async (file: File) => {
       try {
         const res = await uploadDocument(file);
-        setDocuments((prev) => [...prev, res]);
+        setDocuments((prev) => [
+          ...prev,
+          {
+            doc_id: res.doc_id,
+            filename: res.filename,
+            upload_date: res.upload_date || new Date().toISOString(),
+            page_count: res.page_count ?? res.pages,
+            language_hint: res.language_hint,
+            status: res.status || "ready",
+          },
+        ]);
         setActiveDocId(res.doc_id);
         if (fileInputRef.current) fileInputRef.current.value = "";
       } catch (e) {
@@ -136,7 +159,7 @@ export default function WorkspacePage() {
 
   // ── Citation click → navigate to page + highlight ──────────────────
   const handleCitationClick = useCallback(
-    (citation: { page: number; excerpt: string }) => {
+    (citation: Citation) => {
       setActiveCitation(citation.page);
       // If we have viewer pages, find the page and try to scroll into view
       const pageEl = document.getElementById(`page-${citation.page}`);
@@ -146,6 +169,19 @@ export default function WorkspacePage() {
     },
     []
   );
+
+  // ── Build citations-by-page map from explanation ───────────────────
+  useEffect(() => {
+    const map = new Map<number, Citation[]>();
+    if (explanation?.citations) {
+      for (const c of explanation.citations) {
+        const list = map.get(c.page) || [];
+        list.push(c);
+        map.set(c.page, list);
+      }
+    }
+    setCitationsByPage(map);
+  }, [explanation]);
 
   // ── Clear highlight ─────────────────────────────────────────────────
   const clearHighlight = useCallback(() => {
@@ -419,7 +455,7 @@ export default function WorkspacePage() {
                       <div style={styles.docItemInfo}>
                         <span style={styles.docItemName}>{doc.filename}</span>
                         <span style={styles.docItemMeta}>
-                          {doc.pages} pages · {doc.chunks} chunks
+                          {doc.page_count != null ? `${doc.page_count} pages` : "pages unknown"}
                         </span>
                       </div>
                       <div style={styles.docItemActions}>
@@ -992,6 +1028,8 @@ const styles: Record<string, React.CSSProperties> = {
   docItemMeta: {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-tertiary)",
+    // doc.page_count is from the backend; chunks info not surfaced in list yet
+    content: "attr(data-pages)",
   } as React.CSSProperties,
   docItemActions: {
     display: "flex",

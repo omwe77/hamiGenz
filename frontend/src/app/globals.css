@@ -23,6 +23,7 @@
   --color-border: #e5e2dc;
   --color-border-soft: #f0ede8;
   --color-highlight: #fef9c3;
+  --color-highlight-soft: #fefce8;
   --color-evidence: #e0f2fe;
   --color-evidence-border: #7dd3fc;
   --color-nepal-red: #c8102e;
@@ -30,6 +31,12 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  /* Devanagari / Nepali script font stack — falls back through system fonts that
+     ship Devanagari glyphs. On Windows this resolves to Mangal / Kokila / Noto
+     Sans Devanagari if installed; on Android to Noto Sans Devanagari; on macOS
+     to San Francisco Devanagari. The LLM already returns Devanagari text, so this
+     is purely a rendering concern. */
+  --font-devanagari: 'Noto Sans Devanagari', 'Mangal', 'Kokila', 'Kalinga', 'Kohinoor Devanagari', 'Kumbh Sans', sans-serif;
   --text-xs: 0.75rem; --text-sm: 0.875rem; --text-base: 1rem;
   --text-lg: 1.125rem; --text-xl: 1.25rem; --text-2xl: 1.5rem;
   --text-3xl: 1.875rem; --text-4xl: 2.25rem; --text-5xl: 3rem;

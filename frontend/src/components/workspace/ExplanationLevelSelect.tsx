@@ -11,7 +11,7 @@ const OPTIONS = [
   { value: "original", label: "Original", hint: "Preserve formal wording, explain meaning faithfully" },
   { value: "simple", label: "Simple", hint: "Everyday language, exact meaning preserved" },
   { value: "very_simple", label: "Very Simple", hint: "Short sentences, every term explained inline" },
-];
+] as const;
 
 export default function ExplanationLevelSelect({ value, onChange }: Props) {
   return (

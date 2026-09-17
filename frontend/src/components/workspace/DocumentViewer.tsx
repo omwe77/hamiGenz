@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { ViewerPage, Citation } from "@/lib/types";
+import CitationChip from "./CitationChip";
 
 type Props = {
   docId: string;
@@ -12,10 +13,12 @@ type Props = {
   citationsByPage: Map<number, Citation[]>;
 };
 
-export default function DocumentViewer({ docId, pages, onTextHighlight, activeCitation, onCitationClick }: Props) {
+export default function DocumentViewer({ docId, pages, onTextHighlight, activeCitation, onCitationClick, citationsByPage }: Props) {
   const [selectedPage, setSelectedPage] = useState<number | null>(
     activeCitation || (pages.length > 0 ? pages[0].page_num : null)
   );
+
+  const activeCitations = citationsByPage.get(activeCitation || 0) || [];
 
   if (pages.length === 0) {
     return (
@@ -86,9 +89,12 @@ export default function DocumentViewer({ docId, pages, onTextHighlight, activeCi
           )}
         </div>
 
-        {/* Extracted text with clickable highlights */}
+        {/* Extracted text with clickable highlights and active citation highlighting */}
         <div
-          style={styles.pageText}
+          style={{
+            ...styles.pageText,
+            ...(activeCitations.length > 0 ? styles.pageTextHighlighted : {}),
+          }}
           onMouseUp={(e) => {
             const sel = window.getSelection();
             if (sel && sel.toString().trim().length > 0) {
@@ -96,17 +102,42 @@ export default function DocumentViewer({ docId, pages, onTextHighlight, activeCi
             }
           }}
         >
-          {page.text.split("\n").map((para, i) => (
-            <p key={i} style={styles.pagePara}>
-              {para}
-            </p>
-          ))}
+          {page.text.split("\n").map((para, i) => {
+            // If there are active citations, check whether this paragraph
+            // contains any of their excerpts and wrap those excerpts in a highlight span.
+            if (activeCitations.length > 0 && para.trim()) {
+              let processed = para;
+              const highlights: { start: number; end: number }[] = [];
+              for (const c of activeCitations) {
+                const idx = processed.toLowerCase().indexOf(c.excerpt.toLowerCase());
+                if (idx !== -1) {
+                  highlights.push({ start: idx, end: idx + c.excerpt.length });
+                }
+              }
+              if (highlights.length > 0) {
+                // Sort and build highlighted string (simple approach: wrap first match)
+                highlights.sort((a, b) => a.start - b.start);
+                const h = highlights[0];
+                const before = processed.slice(0, h.start);
+                const match = processed.slice(h.start, h.end);
+                const after = processed.slice(h.end);
+                return (
+                  <p key={i} style={styles.pagePara}>
+                    {before}
+                    <span style={styles.highlight}>{match}</span>
+                    {after}
+                  </p>
+                );
+              }
+            }
+            return <p key={i} style={styles.pagePara}>{para}</p>;
+          })}
         </div>
 
         {/* Citation chips for this page */}
-        {page.citations && page.citations.length > 0 && (
+        {citationsByPage.has(page.page_num) && citationsByPage.get(page.page_num)!.length > 0 && (
           <div style={styles.citationRow}>
-            {page.citations.map((c, i) => (
+            {citationsByPage.get(page.page_num)!.map((c, i) => (
               <CitationChip
                 key={i}
                 citation={c}
@@ -215,13 +246,23 @@ const styles = {
     borderRadius: "var(--radius-sm)",
   } as React.CSSProperties,
   pageText: {
-    fontFamily: "var(--font-sans)",
+    fontFamily: "var(--font-devanagari)",
     fontSize: "var(--text-sm)",
     lineHeight: 1.7,
     color: "var(--color-text-primary)",
     whiteSpace: "pre-wrap",
     maxHeight: "400px",
     overflowY: "auto",
+  } as React.CSSProperties,
+  pageTextHighlighted: {
+    background: "var(--color-highlight-soft)",
+    borderRadius: "var(--radius-sm)",
+  } as React.CSSProperties,
+  highlight: {
+    padding: "2px 4px",
+    background: "var(--color-accent-soft)",
+    borderRadius: "2px",
+    cursor: "pointer",
   } as React.CSSProperties,
   pagePara: {
     margin: "var(--space-2) 0",

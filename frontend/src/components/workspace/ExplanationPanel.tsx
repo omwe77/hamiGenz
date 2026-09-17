@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import type { ExplainResponse, GroundingReport } from "@/lib/types";
+import ProvenanceBadge from "./ProvenanceBadge";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type Props = {
@@ -49,7 +51,7 @@ function renderAnswer(answer: string): React.ReactNode {
             key={j}
             style={{
               margin: "var(--space-1) 0",
-              padding: isBullet ? "0 var(--space-3)",
+              padding: isBullet ? "0 var(--space-3)" : "0",
               fontSize: "var(--text-sm)",
               lineHeight: 1.6,
               color: "var(--color-text-secondary)",
@@ -71,7 +73,8 @@ export default function ExplanationPanel({
   onClearCitation,
   docId,
 }: Props) {
-  const { explanation: expData, citations, provenance, language_used, grounding } = explanation;
+  const { explanation: expData, citations, provenance, language_used } = explanation;
+  const grounding = explanation.grounding;
 
   return (
     <div style={styles.container}>
@@ -226,6 +229,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto",
   } as React.CSSProperties,
   answer: {
+    fontFamily: "var(--font-devanagari)",
     fontSize: "var(--text-sm)",
     lineHeight: 1.7,
     color: "var(--color-text-primary)",
