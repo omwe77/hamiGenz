@@ -2,6 +2,23 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Security (development-phase hardening)
+- Upload hardening: magic-byte content validation (declared MIME ignored),
+  user filenames never touch disk (`<uuid>.<sanitized-ext>`), page-count
+  limit (200) with rollback, malformed documents fail with a clean 400
+- Path containment: document routes verify stored filepaths resolve inside
+  the upload directory; page numbers bounds-checked; doc_id validated
+  before vector retrieval
+- Rate limiting: dependency-free per-IP sliding-window limiter on /upload,
+  /ask, /explain, /ask-general, search-text (env-configurable, 429 +
+  Retry-After)
+- Prompt-injection defense: evidence sanitized + wrapped in untrusted-data
+  delimiters; system preamble enforces instruction hierarchy (documents
+  are data, never instructions) — PR-042
+- CORS moved to an explicit origin allowlist (no wildcard + credentials)
+- LLM outages return a clean 503 instead of leaking errors
+- docs/SECURITY.md tracks implemented vs planned hardening
+
 ### Fixed
 - **Test teardown no longer deletes `data/`**: `TestFullPipeline` previously walked
   the shared `data/` directory in teardown and removed tracked tessdata models and
