@@ -1,0 +1,18 @@
+{
+  "source_id": "nrc",
+  "fetched_date": "2026-09-17",
+  "fetched_url": "https://nidwc.gov.np",
+  "note": "Snapshot of official national ID information. Re-fetch before relying on any fee or deadline shown here.",
+  "documents": [
+    {
+      "title": "National identity card (राष्ट्रिय परिचयपत्र) enrollment",
+      "page": 1,
+      "text": "National ID card enrollment is free of charge at ward-level local government offices. Required documents: citizenship certificate, birth registration certificate, and a passport-size photograph. Biometrics (fingerprints, iris, photo) are captured during enrollment. The 11-digit national ID number is issued after verification. Enrollment is mandatory for citizens 16 years and above per the National Identity Card and Civil Registration Act 2076."
+    },
+    {
+      "title": "Birth registration (जन्म दर्ता)",
+      "page": 1,
+      "text": "Birth registration must be done within 35 days of birth at the local ward office, free of charge. Late registration requires a letter from the ward office and may need additional verification. Documents: hospital birth notification or ward recommendation, parents' citizenship certificates, and marriage registration certificate of parents where applicable."
+    }
+  ]
+}

@@ -24,6 +24,7 @@ from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
 from form_understanding import FormUnderstandingService
 import source_registry
+from official_answer import OfficialAnswerService
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
@@ -80,6 +81,9 @@ async def lifespan(app: FastAPI):
     app.state.explainer = ExplanationEngine(app.state.ollama)
     app.state.action_extractor = ActionExtractor(app.state.ollama)
     app.state.form_service = FormUnderstandingService(app.state.ollama)
+    app.state.official_answer = OfficialAnswerService(
+        app.state.ollama, app.state.verification
+    )
 
     # Check Ollama connectivity
     try:
@@ -1001,48 +1005,19 @@ async def ask_general_question(
 ):
     """
     Ask a general Nepal-specific question without uploading a document.
-    Uses Ollama with Nepal-focused instructions.
+
+    Official-information questions (fees, procedures, laws, …) are answered
+    from VERIFIED REGISTRY SOURCES via the local knowledge cache, with a
+    freshness check and per-source authority labels. If no verified source
+    covers the question, we say so plainly — model memory is never presented
+    as verified official information.
     """
     import time
     start = time.time()
 
-    detector = LanguageDetector()
-    detected_lang = detector.detect(question)
-    response_lang = language if language != "auto" else detected_lang
-
-    llm = app.state.ollama
-
-    # Nepal-focused general question prompt
-    general_prompt = f"""You are hamiGenZ, Nepal's AI information assistant.
-
-The user asked: {question}
-
-INSTRUCTIONS:
-1. Answer based on your knowledge of Nepal, its government, laws, procedures, and services.
-2. If the question is about current fees, deadlines, procedures, eligibility, or official requirements,
-   be careful. State that information should be verified with official sources.
-3. Always mention the type of official source the user should check.
-4. Use simple, clear language in {response_lang}.
-5. If the question is in Romanized Nepali, understand it naturally.
-6. If you are not sure about something, say so rather than guessing confidently.
-7. For government procedures, outline the general steps but advise confirming current details
-   with the relevant department.
-
-Response in {response_lang}:
-"""
-    answer = llm.generate(general_prompt)
-
-    elapsed = int((time.time() - start) * 1000)
-
-    return {
-        "question": question,
-        "answer": answer,
-        "citations": [],
-        "grounding_note": "This is a general answer based on AI knowledge. Verify important details with official sources.",
-        "evidence_pages": [],
-        "language_used": response_lang,
-        "processing_time_ms": elapsed,
-    }
+    result = app.state.official_answer.answer(question, lang=language)
+    result["processing_time_ms"] = int((time.time() - start) * 1000)
+    return result
 
 
 @app.get("/")
