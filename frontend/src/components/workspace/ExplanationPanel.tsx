@@ -11,6 +11,7 @@ type Props = {
   activeCitation: number | null;
   onClearCitation: () => void;
   docId?: string;
+  sourceUnavailable?: boolean;
 };
 
 // Render a markdown-ish text block into JSX-ish HTML
@@ -72,6 +73,7 @@ export default function ExplanationPanel({
   activeCitation,
   onClearCitation,
   docId,
+  sourceUnavailable,
 }: Props) {
   const { explanation: expData, citations, provenance, language_used } = explanation;
   const grounding = explanation.grounding;
@@ -133,16 +135,16 @@ export default function ExplanationPanel({
       )}
 
       {/* Grounding / verification note */}
-      {(grounding?.warning || grounding?.recommendation) && (
+      {grounding && (
         <div style={styles.groundingSection}>
           <h3 style={styles.sectionTitle}>
-            {grounding?.contradiction_found ? "⚠️ Verification warning" : "Verification"}
+            {grounding.contradiction_found ? "⚠️ Verification warning" : "Verification"}
           </h3>
-          {grounding?.contradiction_found && (
+          {grounding.contradiction_found && (
             <div style={styles.contradictionWarning}>
               <strong>This answer contains claims that conflict with the document evidence.</strong>
               <p style={styles.contradictionDetail}>
-                {grounding?.contradiction_claims?.map((c, i) => (
+                {grounding.contradiction_claims?.map((c, i) => (
                   <span key={i} style={styles.contradictionClaim}>
                     • "{c}"
                   </span>
@@ -150,10 +152,10 @@ export default function ExplanationPanel({
               </p>
             </div>
           )}
-          {grounding?.recommendation && (
+          {grounding.recommendation && (
             <p style={styles.recommendation}>{grounding.recommendation}</p>
           )}
-          {grounding?.confidence_band && (
+          {grounding.confidence_band && (
             <div style={styles.confidenceRow}>
               <span style={styles.confidenceLabel}>Confidence:</span>
               <span style={{
@@ -161,21 +163,29 @@ export default function ExplanationPanel({
                 ...(grounding.confidence_band === "HIGH" ? styles.confidenceHigh : {}),
                 ...(grounding.confidence_band === "MEDIUM" ? styles.confidenceMedium : {}),
                 ...(grounding.confidence_band === "LOW" ? styles.confidenceLow : {}),
+                ...(grounding.confidence_band === "UNKNOWN" ? styles.confidenceUnknown : {}),
               }}>
-                {grounding.confidence_band}
-                {grounding.confidence_score != null && ` (${grounding.confidence_score})`}
+                {grounding.confidence_band === "UNKNOWN" && !grounding.confidence_score
+                  ? "Not verified"
+                  : `${grounding.confidence_band}${grounding.confidence_score != null ? ` (${grounding.confidence_score})` : ""}`}
               </span>
             </div>
           )}
-          {grounding?.warning && (
+          {grounding.warning && (
             <p style={styles.groundingWarningText}>⚠️ {grounding.warning}</p>
+          )}
+          {grounding.overall_confidence === "LOW" && !grounding.contradiction_found && (
+            <p style={styles.lowEvidenceNote}>
+              This answer could not be fully verified from the available source.
+              Important details may be missing or imprecise — check the original source.
+            </p>
           )}
         </div>
       )}
 
       {/* Provenance badge */}
       <div style={{ marginTop: "var(--space-3)" }}>
-        <ProvenanceBadge provenance={provenance} grounding={grounding} />
+        <ProvenanceBadge provenance={provenance} grounding={grounding} sourceUnavailable={sourceUnavailable} />
       </div>
     </div>
   );
@@ -352,6 +362,10 @@ const styles: Record<string, React.CSSProperties> = {
   } as React.CSSProperties,
   confidenceLow: {
     color: "#dc2626",
+  } as React.CSSProperties,
+  confidenceUnknown: {
+    color: "#8a8a8a",
+    fontStyle: "italic",
   } as React.CSSProperties,
   groundingWarningText: {
     fontSize: "var(--text-sm)",

@@ -64,3 +64,4 @@ frontend/.env.local
 
 # Testing scratch data
 tests/data/
+tests/ocr_tests/

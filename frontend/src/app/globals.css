@@ -183,6 +183,41 @@ a:hover { color: var(--color-accent-hover); }
   100% { background-position: 200% 0; }
 }
 
+@keyframes ws-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Workspace responsive grids ──────────────────────────────── */
+.ws-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+}
+
+.ws-grid-3 {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  gap: var(--space-6);
+}
+
+@media (max-width: 1100px) {
+  .ws-grid-3 {
+    grid-template-columns: 240px 1fr;
+  }
+  .ws-grid-3 > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 820px) {
+  .ws-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .ws-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
 .skeleton {
   background: linear-gradient(90deg, var(--color-border) 25%, var(--color-bg-alt) 50%, var(--color-border) 75%);
   background-size: 200% 100%;

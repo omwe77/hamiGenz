@@ -1,24 +1,170 @@
 "use client";
 
-import React, { useState } from "react";
-import { ViewerPage, Citation } from "@/lib/types";
-import CitationChip from "./CitationChip";
+import React, { useCallback } from "react";
+import { ViewerPage, Citation, SearchMatch } from "@/lib/types";
 
 type Props = {
   docId: string;
   pages: ViewerPage[];
   onTextHighlight: (text: string) => void;
-  activeCitation: number | null;
-  onCitationClick: (c: Citation) => void;
   citationsByPage: Map<number, Citation[]>;
+  searchMatches: SearchMatch[];
+  /** Page currently holding the active citation highlight */
+  activeCitationPage: number | null;
+  /** Index of the active search match (into `searchMatches`) */
+  activeSearchMatchIdx: number | null;
+  onActiveSearchMatchChange: (idx: number | null) => void;
 };
 
-export default function DocumentViewer({ docId, pages, onTextHighlight, activeCitation, onCitationClick, citationsByPage }: Props) {
-  const [selectedPage, setSelectedPage] = useState<number | null>(
-    activeCitation || (pages.length > 0 ? pages[0].page_num : null)
+type Segment =
+  | { kind: "text"; text: string }
+  | { kind: "cite"; text: string }
+  | { kind: "match"; text: string };
+
+type Range = { start: number; end: number; kind: "cite" | "match" };
+
+/**
+ * Find the best highlightable occurrence of a citation excerpt inside a
+ * paragraph. Chunk text is whitespace-normalized on the backend, so long
+ * excerpts rarely appear verbatim in raw page text — fall back to
+ * progressively shorter word-boundary snippets so the user still gets
+ * a useful highlight.
+ */
+function findExcerptRange(para: string, excerpt: string): Range | null {
+  const lowerPara = para.toLowerCase();
+  let snippet = excerpt.toLowerCase().trim();
+  if (!snippet) return null;
+  while (snippet.length >= 12) {
+    const idx = lowerPara.indexOf(snippet);
+    if (idx !== -1) {
+      return { start: idx, end: idx + snippet.length, kind: "cite" };
+    }
+    // Shrink to ~60% and cut at a word boundary to avoid mid-word fragments
+    let next = snippet.slice(0, Math.floor(snippet.length * 0.6));
+    const cut = next.lastIndexOf(" ");
+    if (cut > 0) next = next.slice(0, cut);
+    if (next === snippet) break;
+    snippet = next;
+  }
+  return null;
+}
+
+/**
+ * Split one paragraph into text/cite/match segments for rendering.
+ * `excerpts` are citation excerpts to highlight (case-insensitive).
+ * `match` is the active search match: `highlight_start/end` are offsets into
+ * `match.text` (a context window). We align by locating the matched term
+ * itself inside the paragraph, which is robust to window/paragraph drift.
+ */
+export function buildSegments(
+  para: string,
+  excerpts: string[],
+  match: SearchMatch | null
+): Segment[] {
+  const ranges: Range[] = [];
+
+  for (const ex of excerpts) {
+    const r = findExcerptRange(para, ex);
+    if (r) ranges.push(r);
+  }
+
+  if (match && match.page != null) {
+    const mText = match.text ?? "";
+    if (
+      match.highlight_start >= 0 &&
+      match.highlight_end > match.highlight_start &&
+      match.highlight_end <= mText.length
+    ) {
+      const term = mText.slice(match.highlight_start, match.highlight_end).trim();
+      if (term) {
+        const lowerPara = para.toLowerCase();
+        const termLower = term.toLowerCase();
+        let idx = lowerPara.indexOf(termLower);
+        while (idx !== -1) {
+          ranges.push({ start: idx, end: idx + termLower.length, kind: "match" });
+          idx = lowerPara.indexOf(termLower, idx + termLower.length);
+        }
+      }
+    }
+  }
+
+  if (ranges.length === 0) return [{ kind: "text", text: para }];
+
+  // Sort by start; on ties, matches come first (they take precedence)
+  ranges.sort((a, b) => a.start - b.start || (a.kind === "match" ? -1 : 1));
+
+  const merged: Range[] = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r.start < last.end) {
+      if (r.kind === "match" && last.kind === "cite") {
+        // Split the cite range around the match
+        if (last.start < r.start) {
+          merged[merged.length - 1] = { ...last, end: r.start };
+          merged.push({ ...r });
+          if (last.end > r.end) merged.push({ start: r.end, end: last.end, kind: "cite" });
+        } else {
+          merged.push({ ...r });
+        }
+      } else {
+        last.end = Math.max(last.end, r.end);
+      }
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  merged.sort((a, b) => a.start - b.start);
+
+  const segments: Segment[] = [];
+  let pos = 0;
+  for (const r of merged) {
+    if (r.start > pos) segments.push({ kind: "text", text: para.slice(pos, r.start) });
+    segments.push({ kind: r.kind, text: para.slice(r.start, r.end) });
+    pos = r.end;
+  }
+  if (pos < para.length) segments.push({ kind: "text", text: para.slice(pos) });
+  return segments;
+}
+
+export default function DocumentViewer({
+  docId,
+  pages,
+  onTextHighlight,
+  citationsByPage,
+  searchMatches,
+  activeCitationPage,
+  activeSearchMatchIdx,
+  onActiveSearchMatchChange,
+}: Props) {
+  const activeMatch =
+    activeSearchMatchIdx != null
+      ? searchMatches[activeSearchMatchIdx] ?? null
+      : null;
+
+  // Scroll the active search match into view whenever the ref attaches.
+  const scrollToMatch = useCallback(
+    (el: HTMLElement | null) => {
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    },
+    []
   );
 
-  const activeCitations = citationsByPage.get(activeCitation || 0) || [];
+  const handleMouseUp = useCallback(() => {
+    const sel = window.getSelection();
+    const text = sel?.toString().trim();
+    if (text && text.length > 1) {
+      onTextHighlight(text);
+    }
+  }, [onTextHighlight]);
+
+  const goToMatch = useCallback(
+    (idx: number) => {
+      if (idx >= 0 && idx < searchMatches.length) {
+        onActiveSearchMatchChange(idx);
+      }
+    },
+    [searchMatches.length, onActiveSearchMatchChange]
+  );
 
   if (pages.length === 0) {
     return (
@@ -28,230 +174,153 @@ export default function DocumentViewer({ docId, pages, onTextHighlight, activeCi
     );
   }
 
-  const page = pages.find((p) => p.page_num === selectedPage) || pages[0];
-
   return (
     <div style={styles.viewer}>
-      {/* Page navigation */}
-      <div style={styles.pageNav}>
-        <button
-          style={styles.pageBtn}
-          disabled={selectedPage === 1}
-          onClick={() => setSelectedPage((p) => (p !== null ? Math.max(1, p - 1) : 1))}
-        >
-          ← Prev
-        </button>
-        <span style={styles.pageIndicator}>
-          Page {selectedPage} of {pages.length}
-        </span>
-        <button
-          style={styles.pageBtn}
-          disabled={selectedPage === pages.length}
-          onClick={() =>
-            setSelectedPage((p) =>
-              p !== null ? Math.min(pages.length, p + 1) : pages.length
-            )
-          }
-        >
-          Next →
-        </button>
-      </div>
+      {pages.map((page) => {
+        const pageCitations = citationsByPage.get(page.page_num) ?? [];
+        const excerpts = pageCitations.map((c) => c.excerpt);
+        const isCitedPage = activeCitationPage === page.page_num;
+        const pageMatch =
+          activeMatch && activeMatch.page === page.page_num ? activeMatch : null;
 
-      {/* Page tabs (quick jump) */}
-      <div style={styles.pageTabs}>
-        {pages.map((p) => (
-          <button
-            key={p.page_num}
-            style={{
-              ...styles.pageTab,
-              ...(selectedPage === p.page_num ? styles.pageTabActive : {}),
-            }}
-            onClick={() => setSelectedPage(p.page_num)}
-          >
-            Pg {p.page_num}
-          </button>
-        ))}
-      </div>
+        return (
+          <div key={page.page_num} style={styles.pageWrapper}>
+            <div
+              id={`page-${page.page_num}`}
+              style={{
+                ...styles.pageContent,
+                ...(isCitedPage ? styles.pageContentActive : {}),
+              }}
+            >
+              <div style={styles.pageHeader}>
+                <span style={styles.pageLabel}>Page {page.page_num}</span>
+                <span style={styles.pageWords}>{page.word_count} words</span>
+                {page.has_image && page.image_url && (
+                  <span style={styles.pageHasImage}>scanned page</span>
+                )}
+              </div>
 
-      {/* Page content */}
-      <div
-        id={`page-${page.page_num}`}
-        style={{
-          ...styles.pageContent,
-          ...(selectedPage === activeCitation ? styles.pageContentActive : {}),
-        }}
-      >
-        <div style={styles.pageHeader}>
-          <span style={styles.pageLabel}>Page {page.page_num}</span>
-          <span style={styles.pageWords}>{page.word_count} words</span>
-          {page.has_image && (
-            <span style={styles.pageHasImage}>has scanned image</span>
-          )}
-        </div>
+              {page.has_image && page.image_url && (
+                <img
+                  src={page.image_url}
+                  alt={`Page ${page.page_num} scanned image`}
+                  style={styles.pageImage}
+                  loading="lazy"
+                />
+              )}
 
-        {/* Extracted text with clickable highlights and active citation highlighting */}
-        <div
-          style={{
-            ...styles.pageText,
-            ...(activeCitations.length > 0 ? styles.pageTextHighlighted : {}),
-          }}
-          onMouseUp={(e) => {
-            const sel = window.getSelection();
-            if (sel && sel.toString().trim().length > 0) {
-              onTextHighlight(sel.toString().trim());
-            }
-          }}
-        >
-          {page.text.split("\n").map((para, i) => {
-            // If there are active citations, check whether this paragraph
-            // contains any of their excerpts and wrap each in a highlight span.
-            if (activeCitations.length > 0 && para.trim()) {
-              const lowerPara = para.toLowerCase();
-              // Collect all matches with their citation index so we can
-              // render each one. Use a set of ranges to avoid overlapping.
-              const ranges: { start: number; end: number; citationIdx: number }[] = [];
-              for (let ci = 0; ci < activeCitations.length; ci++) {
-                const c = activeCitations[ci];
-                const excerptLower = c.excerpt.toLowerCase();
-                let idx = 0;
-                while (true) {
-                  idx = lowerPara.indexOf(excerptLower, idx);
-                  if (idx === -1) break;
-                  ranges.push({ start: idx, end: idx + c.excerpt.length, citationIdx: ci });
-                  idx += excerptLower.length;
-                }
-              }
-              if (ranges.length > 0) {
-                ranges.sort((a, b) => a.start - b.start);
-                // Merge overlapping ranges (keep first citation's index for the merged span)
-                const merged: { start: number; end: number; citationIdx: number }[] = [];
-                for (const r of ranges) {
-                  if (merged.length > 0 && r.start <= merged[merged.length - 1].end) {
-                    merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
-                  } else {
-                    merged.push({ ...r });
-                  }
-                }
-                // Build the paragraph with highlighted spans
-                let result: React.ReactNode[] = [];
-                let pos = 0;
-                for (const m of merged) {
-                  if (m.start > pos) {
-                    result.push(<span key={`t-${pos}`}>{para.slice(pos, m.start)}</span>);
-                  }
-                  const highlightedText = para.slice(m.start, m.end);
-                  result.push(
+              <div
+                style={{
+                  ...styles.pageText,
+                  ...(isCitedPage ? styles.pageTextHighlighted : {}),
+                }}
+                onMouseUp={handleMouseUp}
+              >
+                {page.text
+                  ? page.text.split("\n").map((para, i) => {
+                      if (!para.trim()) return null;
+                      const segments = buildSegments(para, excerpts, pageMatch);
+                      return (
+                        <p key={i} style={styles.pagePara}>
+                          {segments.map((seg, j) => {
+                            if (seg.kind === "cite") {
+                              return (
+                                <mark
+                                  key={j}
+                                  style={styles.citeHighlight}
+                                  title="Evidence from your document"
+                                >
+                                  {seg.text}
+                                </mark>
+                              );
+                            }
+                            if (seg.kind === "match") {
+                              return (
+                                <mark key={j} ref={scrollToMatch} style={styles.searchHighlight}>
+                                  {seg.text}
+                                </mark>
+                              );
+                            }
+                            return <span key={j}>{seg.text}</span>;
+                          })}
+                        </p>
+                      );
+                    })
+                  : page.has_image
+                    ? "(Scanned page — see image above. OCR found no extractable text.)"
+                    : "(No text on this page.)"}
+              </div>
+
+              {pageCitations.length > 0 && (
+                <div style={styles.citationRow}>
+                  {pageCitations.map((c, i) => (
                     <span
-                      key={`h-${m.start}-${m.citationIdx}`}
-                      style={styles.highlight}
-                      onMouseUp={(e) => {
-                        e.stopPropagation();
-                        const sel = window.getSelection();
-                        if (sel) sel.removeAllRanges();
-                        onTextHighlight(highlightedText);
-                      }}
+                      key={i}
+                      style={styles.citationNote}
+                      title={c.excerpt.slice(0, 160)}
                     >
-                      {highlightedText}
+                      {c.excerpt.slice(0, 80)}
+                      {c.excerpt.length > 80 ? "…" : ""}
                     </span>
-                  );
-                  pos = m.end;
-                }
-                if (pos < para.length) {
-                  result.push(<span key={`t-${pos}`}>{para.slice(pos)}</span>);
-                }
-                return <p key={i} style={styles.pagePara}>{result}</p>;
-              }
-            }
-            return <p key={i} style={styles.pagePara}>{para}</p>;
-          })}
-        </div>
+                  ))}
+                </div>
+              )}
 
-        {/* Citation chips for this page */}
-        {citationsByPage.has(page.page_num) && citationsByPage.get(page.page_num)!.length > 0 && (
-          <div style={styles.citationRow}>
-            {citationsByPage.get(page.page_num)!.map((c, i) => (
-              <CitationChip
-                key={i}
-                citation={c}
-                active={activeCitation === c.page}
-                onClick={() => onCitationClick(c)}
-              />
-            ))}
+              {pageMatch && activeSearchMatchIdx != null && (
+                <div style={styles.searchNav}>
+                  <button
+                    style={styles.searchNavBtn}
+                    onClick={() => goToMatch((activeSearchMatchIdx ?? 0) - 1)}
+                    disabled={activeSearchMatchIdx === 0}
+                  >
+                    ← Prev match
+                  </button>
+                  <span style={styles.searchNavInfo}>
+                    Match {activeSearchMatchIdx + 1} of {searchMatches.length}
+                  </span>
+                  <button
+                    style={styles.searchNavBtn}
+                    onClick={() => goToMatch((activeSearchMatchIdx ?? 0) + 1)}
+                    disabled={activeSearchMatchIdx === searchMatches.length - 1}
+                  >
+                    Next match →
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }
 
-const styles = {
+const styles: Record<string, React.CSSProperties> = {
   empty: {
     padding: "var(--space-8)",
     textAlign: "center",
     color: "var(--color-text-tertiary)",
     fontSize: "var(--text-sm)",
-  } as React.CSSProperties,
+  },
   viewer: {
     display: "flex",
     flexDirection: "column",
-    gap: "var(--space-3)",
-    background: "var(--color-surface)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-xl)",
-    padding: "var(--space-4)",
-    minHeight: "300px",
-  } as React.CSSProperties,
-  pageNav: {
+    gap: "var(--space-4)",
+  },
+  pageWrapper: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "var(--space-3)",
-  } as React.CSSProperties,
-  pageBtn: {
-    padding: "var(--space-1) var(--space-4)",
-    background: "var(--color-bg-alt)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-md)",
-    fontSize: "var(--text-sm)",
-    color: "var(--color-text-secondary)",
-    cursor: "pointer",
-  } as React.CSSProperties,
-  pageIndicator: {
-    fontSize: "var(--text-sm)",
-    fontWeight: "var(--font-medium)",
-    color: "var(--color-text-primary)",
-  } as React.CSSProperties,
-  pageTabs: {
-    display: "flex",
-    gap: "var(--space-1)",
-    flexWrap: "wrap",
-    justifyContent: "center",
-  } as React.CSSProperties,
-  pageTab: {
-    padding: "var(--space-1) var(--space-3)",
-    background: "var(--color-bg-alt)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-sm)",
-    fontSize: "var(--text-xs)",
-    fontWeight: "var(--font-medium)",
-    color: "var(--color-text-secondary)",
-    cursor: "pointer",
-  } as React.CSSProperties,
-  pageTabActive: {
-    background: "var(--color-accent)",
-    color: "white",
-    borderColor: "var(--color-accent)",
-  } as React.CSSProperties,
+    flexDirection: "column",
+  },
   pageContent: {
-    padding: "var(--space-4)",
     background: "var(--color-bg)",
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-lg)",
-  } as React.CSSProperties,
+    padding: "var(--space-4)",
+  },
   pageContentActive: {
     borderColor: "var(--color-accent)",
-    background: "var(--color-accent-soft)",
-  } as React.CSSProperties,
+    boxShadow: "0 0 0 2px var(--color-accent-soft)",
+  },
   pageHeader: {
     display: "flex",
     alignItems: "center",
@@ -260,45 +329,57 @@ const styles = {
     paddingBottom: "var(--space-2)",
     borderBottom: "1px solid var(--color-border)",
     flexWrap: "wrap",
-  } as React.CSSProperties,
+  },
   pageLabel: {
     fontSize: "var(--text-base)",
     fontWeight: "var(--font-semibold)",
     color: "var(--color-text-primary)",
-  } as React.CSSProperties,
+  },
   pageWords: {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-tertiary)",
-  } as React.CSSProperties,
+  },
   pageHasImage: {
     fontSize: "var(--text-xs)",
     color: "var(--color-info)",
     background: "var(--color-evidence)",
     padding: "2px 6px",
     borderRadius: "var(--radius-sm)",
-  } as React.CSSProperties,
+  },
+  pageImage: {
+    width: "100%",
+    height: "auto",
+    maxHeight: "600px",
+    objectFit: "contain",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-md)",
+    marginBottom: "var(--space-3)",
+    background: "white",
+  },
   pageText: {
     fontFamily: "var(--font-devanagari)",
     fontSize: "var(--text-sm)",
     lineHeight: 1.7,
     color: "var(--color-text-primary)",
     whiteSpace: "pre-wrap",
-    maxHeight: "400px",
-    overflowY: "auto",
-  } as React.CSSProperties,
+  },
   pageTextHighlighted: {
     background: "var(--color-highlight-soft)",
     borderRadius: "var(--radius-sm)",
-  } as React.CSSProperties,
-  highlight: {
-    padding: "2px 4px",
-    background: "var(--color-accent-soft)",
-    borderRadius: "2px",
-    cursor: "pointer",
-  } as React.CSSProperties,
+  },
   pagePara: {
     margin: "var(--space-2) 0",
-  } as React.CSSProperties,
+  },
+  citeHighlight: {
+    background: "var(--color-highlight)",
+    borderRadius: "2px",
+    padding: "1px 0",
+  },
+  searchHighlight: {
+    background: "var(--color-accent-soft)",
+    outline: "1px solid var(--color-accent)",
+    borderRadius: "2px",
+  },
   citationRow: {
     display: "flex",
     flexWrap: "wrap",
@@ -306,5 +387,38 @@ const styles = {
     marginTop: "var(--space-3)",
     paddingTop: "var(--space-3)",
     borderTop: "1px solid var(--color-border)",
-  } as React.CSSProperties,
+  },
+  citationNote: {
+    fontSize: "var(--text-xs)",
+    color: "var(--color-text-tertiary)",
+    background: "var(--color-bg-alt)",
+    padding: "4px 8px",
+    borderRadius: "var(--radius-sm)",
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  searchNav: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "var(--space-3)",
+    marginTop: "var(--space-3)",
+    paddingTop: "var(--space-3)",
+    borderTop: "1px solid var(--color-border)",
+  },
+  searchNavBtn: {
+    padding: "var(--space-1) var(--space-3)",
+    background: "var(--color-bg-alt)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-sm)",
+    fontSize: "var(--text-xs)",
+    color: "var(--color-text-secondary)",
+    cursor: "pointer",
+  },
+  searchNavInfo: {
+    fontSize: "var(--text-xs)",
+    color: "var(--color-text-tertiary)",
+  },
 };

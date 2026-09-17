@@ -22,35 +22,56 @@ import DocumentViewer from "./DocumentViewer";
 import ProvenanceBadge from "./ProvenanceBadge";
 
 // ── Types ──────────────────────────────────────────────────────────────
-type Props = {
-  docId?: string;
-  pages?: ViewerPage[];
-  onDocUpload?: (docId: string, filename: string) => void;
-  citations?: Citation[];
-};
+type ExplainLevel = "original" | "simple" | "very_simple";
+type TargetLang = "auto" | "nepali" | "english" | "romanized_nepali";
+
+const LOADING_STAGES = [
+  "Reading your text...",
+  "Understanding the meaning...",
+  "Finding the right words...",
+  "Checking supporting evidence...",
+  "Preparing your explanation...",
+];
+
+const EXAMPLE_PROMPTS = [
+  "यो सूचनामा वास्तवमा के भन्न खोजिएको हो?",
+  "yo notice ko simple meaning ke ho?",
+  "passport banauna k k chainxa?",
+  "What do I need to submit?",
+];
 
 export default function WorkspacePage() {
-  // ── State ───────────────────────────────────────────────────────────
+  // ── Explain state ───────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"explain" | "document">("explain");
-  const [explainLevel, setExplainLevel] = useState<"original" | "simple" | "very_simple">("simple");
-  const [targetLang, setTargetLang] = useState<"auto" | "nepali" | "english" | "romanized_nepali">("auto");
+  const [explainLevel, setExplainLevel] = useState<ExplainLevel>("simple");
+  const [targetLang, setTargetLang] = useState<TargetLang>("auto");
   const [inputText, setInputText] = useState("");
   const [question, setQuestion] = useState("");
   const [explanation, setExplanation] = useState<ExplainResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStage, setLoadingStage] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Document state ──────────────────────────────────────────────────
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
   const [viewerPages, setViewerPages] = useState<ViewerPage[]>([]);
+  const [viewerLoading, setViewerLoading] = useState(false);
   const [selectedText, setSelectedText] = useState("");
+
+  // ── Search state ────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
-  const [activeCitation, setActiveCitation] = useState<number | null>(null);
-  const [citationsByPage, setCitationsByPage] = useState<Map<number, Citation[]>>(new Map());
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeSearchMatchIdx, setActiveSearchMatchIdx] = useState<number | null>(null);
 
-  // ── Load documents ──────────────────────────────────────────────────
+  // ── Citation/highlight state ────────────────────────────────────────
+  const [citationsByPage, setCitationsByPage] = useState<Map<number, Citation[]>>(new Map());
+  const [highlightPage, setHighlightPage] = useState<number | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Load documents once ─────────────────────────────────────────────
   useEffect(() => {
     listDocuments().then(setDocuments).catch(() => {});
   }, []);
@@ -59,81 +80,137 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (!activeDocId) {
       setViewerPages([]);
-      setSearchResults([]);
       return;
     }
+    setViewerLoading(true);
     getDocumentViewer(activeDocId)
       .then((v) => setViewerPages(v.pages))
-      .catch(() => setViewerPages([]));
+      .catch(() => setViewerPages([]))
+      .finally(() => setViewerLoading(false));
   }, [activeDocId]);
 
-  // ── Search on active doc ────────────────────────────────────────────
+  // ── Debounced search on active doc ──────────────────────────────────
   useEffect(() => {
     if (!activeDocId || !searchQuery.trim()) {
       setSearchResults([]);
+      setActiveSearchMatchIdx(null);
       return;
     }
-    searchDocumentText(activeDocId, searchQuery)
-      .then((r) => setSearchResults(r.matches))
-      .catch(() => setSearchResults([]));
+    const t = setTimeout(() => {
+      searchDocumentText(activeDocId, searchQuery.trim())
+        .then((r) => {
+          setSearchResults(r.matches);
+          setActiveSearchMatchIdx(null);
+        })
+        .catch(() => setSearchResults([]));
+    }, 300);
+    return () => clearTimeout(t);
   }, [activeDocId, searchQuery]);
 
-  // ── Explain (direct text) ───────────────────────────────────────────
-  const handleExplain = useCallback(async () => {
-    if (!inputText.trim()) return;
-    setLoading(true);
-    setError(null);
-    setLoadingStage(1);
-    const stageTimer = setInterval(() => {
-      setLoadingStage((prev) => {
-        if (prev >= LOADING_STAGES.length) return prev;
-        return prev + 1;
-      });
-    }, 700);
-    try {
-      const docId = activeDocId || undefined;
-      const res = await explainText(
-        inputText.trim(),
-        explainLevel,
-        targetLang,
-        question.trim() || undefined,
-        docId
-      );
-      setExplanation(res);
-    } catch (e) {
-      setError(String(e));
-      setExplanation(null);
-    } finally {
-      clearInterval(stageTimer);
-      setLoading(false);
-      setLoadingStage(0);
+  // ── Build citations-by-page map when explanation changes ───────────
+  useEffect(() => {
+    const map = new Map<number, Citation[]>();
+    if (explanation?.citations) {
+      for (const c of explanation.citations) {
+        const list = map.get(c.page) || [];
+        list.push(c);
+        map.set(c.page, list);
+      }
     }
-  }, [inputText, explainLevel, targetLang, question, activeDocId]);
+    setCitationsByPage(map);
+  }, [explanation]);
 
-  // ── Upload ──────────────────────────────────────────────────────────
-  const handleFile = useCallback(
-    async (file: File) => {
+  // ── Clear stage timer on unmount ────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (stageTimerRef.current) clearInterval(stageTimerRef.current);
+    };
+  }, []);
+
+  // ── Core explain runner ─────────────────────────────────────────────
+  const runExplain = useCallback(
+    async (
+      text: string,
+      level: ExplainLevel,
+      lang: TargetLang,
+      q: string | undefined,
+      docId: string | undefined
+    ) => {
+      setLoading(true);
+      setError(null);
+      setExplanation(null);
+      setLoadingStage(1);
+      if (stageTimerRef.current) clearInterval(stageTimerRef.current);
+      stageTimerRef.current = setInterval(() => {
+        setLoadingStage((prev) =>
+          prev >= LOADING_STAGES.length ? prev : prev + 1
+        );
+      }, 900);
       try {
-        const res = await uploadDocument(file);
-        setDocuments((prev) => [
-          ...prev,
-          {
-            doc_id: res.doc_id,
-            filename: res.filename,
-            upload_date: res.upload_date || new Date().toISOString(),
-            page_count: res.page_count ?? res.pages,
-            language_hint: res.language_hint,
-            status: res.status || "ready",
-          },
-        ]);
-        setActiveDocId(res.doc_id);
-        if (fileInputRef.current) fileInputRef.current.value = "";
+        const res = await explainText(text, level, lang, q, docId);
+        setExplanation(res);
       } catch (e) {
-        setError(String(e));
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (stageTimerRef.current) clearInterval(stageTimerRef.current);
+        stageTimerRef.current = null;
+        setLoading(false);
+        setLoadingStage(0);
       }
     },
     []
   );
+
+  const handleExplain = useCallback(() => {
+    if (!inputText.trim() || loading) return;
+    runExplain(
+      inputText.trim(),
+      explainLevel,
+      targetLang,
+      question.trim() || undefined,
+      activeDocId || undefined
+    );
+  }, [inputText, loading, explainLevel, targetLang, question, activeDocId, runExplain]);
+
+  // ── Explain the selected text directly (fresh values, no stale state) ──
+  const explainFromSelection = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
+      setActiveTab("explain");
+      setInputText(text);
+      runExplain(
+        text,
+        explainLevel,
+        targetLang,
+        question.trim() || undefined,
+        activeDocId || undefined
+      );
+    },
+    [explainLevel, targetLang, question, activeDocId, runExplain]
+  );
+
+  // ── Upload ──────────────────────────────────────────────────────────
+  const handleFile = useCallback(async (file: File) => {
+    try {
+      const res = await uploadDocument(file);
+      setDocuments((prev) => [
+        ...prev,
+        {
+          doc_id: res.doc_id,
+          filename: res.filename,
+          upload_date: res.upload_date || new Date().toISOString(),
+          page_count: res.page_count ?? res.pages,
+          language_hint: res.language_hint,
+          status: res.status || "ready",
+        },
+      ]);
+      setActiveDocId(res.doc_id);
+      setActiveTab("document");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -148,54 +225,67 @@ export default function WorkspacePage() {
       try {
         await deleteDocument(docId);
         setDocuments((prev) => prev.filter((d) => d.doc_id !== docId));
-        if (activeDocId === docId) setActiveDocId(null);
+        if (activeDocId === docId) {
+          setActiveDocId(null);
+          setViewerPages([]);
+          setSelectedText("");
+          setSearchQuery("");
+          setSearchResults([]);
+        }
       } catch (e) {
-        setError(String(e));
+        setError(e instanceof Error ? e.message : String(e));
       }
     },
     [activeDocId]
   );
 
-  // ── Highlight text from viewer ──────────────────────────────────────
-  const handleTextHighlight = useCallback(
-    (text: string) => {
-      setSelectedText(text);
-      setInputText(text);
-      setActiveTab("explain");
-    },
-    []
-  );
+  // ── Text selected in viewer → offer to explain ──────────────────────
+  const handleTextHighlight = useCallback((text: string) => {
+    setSelectedText(text);
+  }, []);
 
-  // ── Citation click → navigate to page + highlight ──────────────────
-  const handleCitationClick = useCallback(
-    (citation: Citation) => {
-      setActiveCitation(citation.page);
-      // If we have viewer pages, find the page and try to scroll into view
+  // ── Citation click → jump to page + highlight evidence ─────────────
+  const handleCitationClick = useCallback((citation: Citation) => {
+    setActiveTab("document");
+    setHighlightPage(citation.page);
+    setActiveSearchMatchIdx(null);
+    // Wait for the document tab to render, then scroll
+    setTimeout(() => {
       const pageEl = document.getElementById(`page-${citation.page}`);
-      if (pageEl) {
-        pageEl.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    },
-    []
-  );
+      pageEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }, []);
 
-  // ── Build citations-by-page map from explanation ───────────────────
-  useEffect(() => {
-    const map = new Map<number, Citation[]>();
-    if (explanation?.citations) {
-      for (const c of explanation.citations) {
-        const list = map.get(c.page) || [];
-        list.push(c);
-        map.set(c.page, list);
-      }
+  // ── Search match click → jump to that match ────────────────────────
+  const handleSearchMatchClick = useCallback((idx: number) => {
+    setActiveSearchMatchIdx(idx);
+    const page = searchResults[idx]?.page;
+    if (page) {
+      setTimeout(() => {
+        document
+          .getElementById(`page-${page}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 60);
     }
-    setCitationsByPage(map);
-  }, [explanation]);
+  }, [searchResults]);
 
-  // ── Clear highlight ─────────────────────────────────────────────────
-  const clearHighlight = useCallback(() => {
-    setActiveCitation(null);
+  const goToMatch = useCallback((idx: number | null) => {
+    setActiveSearchMatchIdx(idx);
+  }, []);
+
+  // ── Clear highlights ────────────────────────────────────────────────
+  const clearHighlights = useCallback(() => {
+    setHighlightPage(null);
     setSelectedText("");
+    setActiveSearchMatchIdx(null);
+  }, []);
+
+  // ── Page jump ───────────────────────────────────────────────────────
+  const jumpToPage = useCallback((pageNum: number) => {
+    setHighlightPage(null);
+    document
+      .getElementById(`page-${pageNum}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
   // ── Keyboard shortcut: Ctrl+Enter → explain ────────────────────────
@@ -209,57 +299,49 @@ export default function WorkspacePage() {
     [handleExplain]
   );
 
-  // ── Loading stage management ─────────────────────────────────────────
-  const [loadingStage, setLoadingStage] = useState(0);
+  const activeDoc = documents.find((d) => d.doc_id === activeDocId);
+  const loadingStageText =
+    loadingStage > 0 && loadingStage <= LOADING_STAGES.length
+      ? LOADING_STAGES[loadingStage - 1]
+      : "";
 
-  const LOADING_STAGES = [
-    "Reading your text...",
-    "Understanding the meaning...",
-    "Finding the right words...",
-    "Checking supporting evidence...",
-    "Preparing your explanation...",
-  ];
-
-  const loadingStageText = loadingStage > 0 && loadingStage <= LOADING_STAGES.length
-    ? LOADING_STAGES[loadingStage - 1]
-    : "";
   return (
     <div style={styles.wrap}>
       {/* ── Header ──────────────────────────────────────────────────── */}
       <header style={styles.header}>
         <div style={styles.headerInner}>
-          <div style={styles.brand}>
-            <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+          <a href="/" style={styles.brand} aria-label="hamiGenZ home">
+            <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
               <rect width="32" height="32" rx="7" fill="#c8520b" />
               <path d="M9 10h14M9 16h14M9 22h10" stroke="white" strokeWidth="2" strokeLinecap="round" />
               <circle cx="24" cy="22" r="3.5" fill="white" fillOpacity="0.9" />
             </svg>
             <span style={styles.brandName}>hamiGenZ</span>
-          </div>
-          <div style={styles.tabs}>
+          </a>
+          <nav style={styles.tabs} aria-label="Workspace mode">
             <button
               style={{ ...styles.tab, ...(activeTab === "explain" ? styles.tabActive : {}) }}
               onClick={() => setActiveTab("explain")}
+              aria-pressed={activeTab === "explain"}
             >
               Understand text
             </button>
             <button
               style={{ ...styles.tab, ...(activeTab === "document" ? styles.tabActive : {}) }}
               onClick={() => setActiveTab("document")}
+              aria-pressed={activeTab === "document"}
             >
               Document
             </button>
-          </div>
+          </nav>
         </div>
-        <div style={styles.headerDesc}>
-          Don&apos;t understand it? Ask hamiGenZ.
-        </div>
+        <div style={styles.headerDesc}>Don&apos;t understand it? Ask hamiGenZ.</div>
       </header>
 
       {/* ── Main panel ───────────────────────────────────────────────── */}
       <main style={styles.main}>
         {activeTab === "explain" && (
-          <div style={styles.explainLayout}>
+          <div className="ws-grid-2" style={styles.explainLayout}>
             {/* Left: input panel */}
             <div style={styles.inputPanel}>
               <div style={styles.panelHeader}>
@@ -272,13 +354,12 @@ export default function WorkspacePage() {
               {activeDocId && (
                 <div style={styles.docBadge}>
                   <span style={styles.docBadgeLabel}>Active document:</span>
-                  <span style={styles.docBadgeName}>
-                    {documents.find((d) => d.doc_id === activeDocId)?.filename}
-                  </span>
+                  <span style={styles.docBadgeName}>{activeDoc?.filename}</span>
                   <button
                     style={styles.docBadgeClear}
                     onClick={() => setActiveDocId(null)}
                     title="Switch to direct text"
+                    aria-label="Clear active document"
                   >
                     ×
                   </button>
@@ -286,21 +367,21 @@ export default function WorkspacePage() {
               )}
 
               {/* Explanation level selector */}
-              <div style={styles.levelRow}>
-                <span style={styles.levelLabel}>Explain as:</span>
-                <ExplanationLevelSelect
-                  value={explainLevel}
-                  onChange={setExplainLevel}
-                />
+              <div style={styles.row}>
+                <span style={styles.rowLabel}>Explain as:</span>
+                <ExplanationLevelSelect value={explainLevel} onChange={setExplainLevel} />
               </div>
 
               {/* Target language */}
-              <div style={styles.langRow}>
-                <span style={styles.langLabel}>Answer in:</span>
+              <div style={styles.row}>
+                <label style={styles.rowLabel} htmlFor="target-lang">
+                  Answer in:
+                </label>
                 <select
+                  id="target-lang"
                   style={styles.select}
                   value={targetLang}
-                  onChange={(e) => setTargetLang(e.target.value as any)}
+                  onChange={(e) => setTargetLang(e.target.value as TargetLang)}
                 >
                   <option value="auto">Auto-detect</option>
                   <option value="nepali">Nepali</option>
@@ -312,41 +393,68 @@ export default function WorkspacePage() {
               {/* Text input */}
               <textarea
                 style={styles.textarea}
-                placeholder="Paste difficult text here...
-    Example: नेपाल सरकारको पासपोर्ट विभागले यस वेबसाइटमार्फत नागरिकहरूलाई अनलाइन मार्फत
-    पासपोर्ट सम्बन्धी सेवाहरूको विस्तृत जानकारी प्रदान गर्दछ..."
+                placeholder="Paste difficult text here..."
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={handleKeyDown}
                 rows={8}
+                aria-label="Text to explain"
               />
 
+              {/* Clickable examples (empty-state teaching) */}
+              {!inputText && (
+                <div style={styles.examplesRow}>
+                  {EXAMPLE_PROMPTS.map((ex) => (
+                    <button
+                      key={ex}
+                      style={styles.exampleChip}
+                      onClick={() => setInputText(ex)}
+                    >
+                      {ex}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {selectedText && (
+                <div style={styles.selectedSource}>
+                  <span style={styles.selectedSourceLabel}>
+                    Selected from document: “{selectedText.slice(0, 60)}
+                    {selectedText.length > 60 ? "…" : ""}”
+                  </span>
+                  <button
+                    style={styles.selectedSourceClear}
+                    onClick={() => {
+                      setSelectedText("");
+                      setInputText("");
+                    }}
+                  >
+                    Clear selection
+                  </button>
+                </div>
+              )}
+
               {/* Optional question */}
-              <div style={styles.questionRow}>
-                <input
-                  style={styles.questionInput}
-                  placeholder="Optional: ask a specific question..."
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                />
-              </div>
+              <input
+                style={styles.questionInput}
+                placeholder="Optional: ask a specific question..."
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleKeyDown}
+                aria-label="Optional question"
+              />
 
               {/* Action buttons */}
               <div style={styles.actions}>
                 <button
                   style={{
                     ...styles.explainBtn,
-                    ...(loading ? styles.explainBtnLoading : {}),
+                    ...(loading || !inputText.trim() ? styles.explainBtnDisabled : {}),
                   }}
                   disabled={loading || !inputText.trim()}
                   onClick={handleExplain}
                 >
-                  {loading ? (
-                    <span style={styles.spinner} />
-                  ) : (
-                    "Understand"
-                  )}
+                  {loading ? <span style={styles.spinner} aria-hidden="true" /> : "Understand"}
                 </button>
                 <button
                   style={styles.clearBtn}
@@ -355,23 +463,23 @@ export default function WorkspacePage() {
                     setQuestion("");
                     setExplanation(null);
                     setError(null);
+                    setSelectedText("");
                   }}
                 >
                   Clear
                 </button>
               </div>
 
-              {loading && (
-                <p style={styles.loadingHint}>
-                  {loadingStageText}
-                </p>
-              )}
+              <div aria-live="polite">
+                {loading && loadingStageText && (
+                  <p style={styles.loadingHint}>{loadingStageText}</p>
+                )}
+              </div>
 
-              {error && <div style={styles.error}>{error}</div>}
+              {error && <div style={styles.errorBox}>{error}</div>}
 
-              {/* Keyboard hint */}
               <p style={styles.hint}>
-                Ctrl+Enter to explain · Select text in Document tab to explain
+                Ctrl+Enter to explain · Select text in the Document tab to explain it
               </p>
             </div>
 
@@ -380,7 +488,7 @@ export default function WorkspacePage() {
               {!explanation ? (
                 <div style={styles.emptyState}>
                   <div style={styles.emptyIcon}>
-                    <svg width="48" height="48" viewBox="0 0 32 32" fill="none">
+                    <svg width="48" height="48" viewBox="0 0 32 32" fill="none" aria-hidden="true">
                       <rect width="32" height="32" rx="7" fill="#c8520b" fillOpacity="0.15" />
                       <path
                         d="M9 10h14M9 16h14M9 22h10"
@@ -393,7 +501,8 @@ export default function WorkspacePage() {
                   </div>
                   <h3 style={styles.emptyTitle}>Your explanation will appear here</h3>
                   <p style={styles.emptySubtitle}>
-                    Paste difficult text and click &quot;Understand&quot; to see a simple explanation.
+                    Paste difficult text and click &quot;Understand&quot; to see a simple
+                    explanation.
                   </p>
                   <div style={styles.emptyLevels}>
                     <div style={styles.emptyLevel}>
@@ -420,9 +529,12 @@ export default function WorkspacePage() {
                 <ExplanationPanel
                   explanation={explanation}
                   onCitationClick={handleCitationClick}
-                  activeCitation={activeCitation}
-                  onClearCitation={clearHighlight}
+                  activeCitation={highlightPage}
+                  onClearCitation={clearHighlights}
                   docId={activeDocId || undefined}
+                  sourceUnavailable={
+                    !explanation.citations?.length && explanation.provenance !== "general_ai"
+                  }
                 />
               )}
             </div>
@@ -430,41 +542,34 @@ export default function WorkspacePage() {
         )}
 
         {activeTab === "document" && (
-          <div style={styles.docLayout}>
+          <div className="ws-grid-3" style={styles.docLayout}>
             {/* Left: document list + upload */}
             <div style={styles.docListPanel}>
               <div style={styles.panelHeader}>
                 <h2 style={styles.panelTitle}>Your Documents</h2>
               </div>
 
-              {/* Upload */}
-              <div style={styles.uploadArea}>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif"
-                  style={{ display: "none" }}
-                  onChange={handleFileSelect}
-                  id="doc-upload"
-                />
-                <label
-                  style={styles.uploadLabel}
-                  htmlFor="doc-upload"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M12 4v12m0 0l-4-4m4 4l4-4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  Upload document (PDF, image)
-                </label>
-              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif"
+                style={{ display: "none" }}
+                onChange={handleFileSelect}
+                id="doc-upload"
+              />
+              <label style={styles.uploadLabel} htmlFor="doc-upload">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 4v12m0 0l-4-4m4 4l4-4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Upload document (PDF, image)
+              </label>
 
-              {/* Document list */}
               {documents.length === 0 ? (
                 <div style={styles.noDocs}>
                   <p>No documents yet.</p>
@@ -489,19 +594,37 @@ export default function WorkspacePage() {
                       <div style={styles.docItemActions}>
                         <button
                           style={styles.docItemOpen}
-                          onClick={() => setActiveDocId(doc.doc_id)}
+                          onClick={() => {
+                            setActiveDocId(doc.doc_id);
+                            clearHighlights();
+                          }}
                         >
                           {activeDocId === doc.doc_id ? "Viewing" : "Open"}
                         </button>
                         <button
                           style={styles.docItemDelete}
                           onClick={() => handleDeleteDoc(doc.doc_id)}
+                          aria-label={`Delete ${doc.filename}`}
+                          title="Delete document"
                         >
                           ×
                         </button>
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Provenance note for last explanation */}
+              {explanation && (
+                <div style={styles.sideSection}>
+                  <ProvenanceBadge
+                    provenance={explanation.provenance}
+                    grounding={explanation.grounding}
+                    sourceUnavailable={
+                      !explanation.citations?.length && explanation.provenance !== "general_ai"
+                    }
+                  />
                 </div>
               )}
             </div>
@@ -516,59 +639,62 @@ export default function WorkspacePage() {
                     extracted text.
                   </p>
                 </div>
+              ) : viewerLoading ? (
+                <div style={styles.emptyState}>
+                  <p style={styles.emptySubtitle}>Loading document viewer...</p>
+                </div>
               ) : (
-                <div style={styles.viewerInner}>
-                  {/* Page navigation */}
-                  <div style={styles.pageNav}>
+                <>
+                  <div style={styles.viewerToolbar}>
                     <span style={styles.pageNavLabel}>
-                      Page {activeCitation || 1} of {viewerPages.length}
+                      {viewerPages.length} page{viewerPages.length !== 1 ? "s" : ""}
+                      {activeDoc ? ` · ${activeDoc.filename}` : ""}
                     </span>
-                    <div style={styles.pageNavButtons}>
-                      <button
-                        style={styles.pageNavBtn}
-                        disabled={!activeCitation}
-                        onClick={() => setActiveCitation(null)}
-                      >
-                        Clear highlight
-                      </button>
+                    <div style={styles.viewerToolbarRight}>
+                      {viewerPages.length > 1 && (
+                        <select
+                          style={styles.select}
+                          value=""
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (n) jumpToPage(n);
+                          }}
+                          aria-label="Jump to page"
+                        >
+                          <option value="">Jump to page…</option>
+                          {viewerPages.map((p) => (
+                            <option key={p.page_num} value={p.page_num}>
+                              Page {p.page_num}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {(highlightPage || selectedText || activeSearchMatchIdx !== null) && (
+                        <button style={styles.pageNavBtn} onClick={clearHighlights}>
+                          Clear highlights
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  {/* Page selector tabs */}
-                  <div style={styles.pageTabs}>
-                    {viewerPages.map((page) => (
-                      <button
-                        key={page.page_num}
-                        style={{
-                          ...styles.pageTab,
-                          ...(activeCitation === page.page_num ? styles.pageTabActive : {}),
-                        }}
-                        onClick={() => setActiveCitation(page.page_num)}
-                      >
-                        Pg {page.page_num}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Page content */}
-                  {viewerPages.map((page) => (
+                  <div style={styles.viewerScroll}>
                     <DocumentViewer
-                      key={page.page_num}
-                      docId={activeDocId!}
-                      pages={[page]}
+                      docId={activeDocId}
+                      pages={viewerPages}
                       onTextHighlight={handleTextHighlight}
-                      activeCitation={activeCitation}
-                      onCitationClick={handleCitationClick}
                       citationsByPage={citationsByPage}
+                      searchMatches={searchResults}
+                      activeCitationPage={highlightPage}
+                      activeSearchMatchIdx={activeSearchMatchIdx}
+                      onActiveSearchMatchChange={goToMatch}
                     />
-                  ))}
-                </div>
+                  </div>
+                </>
               )}
             </div>
 
             {/* Right: search + selected text explain */}
             <div style={styles.docSidePanel}>
-              {/* Search */}
               <div style={styles.sideSection}>
                 <h3 style={styles.sideTitle}>Search document</h3>
                 <div style={styles.searchRow}>
@@ -577,90 +703,70 @@ export default function WorkspacePage() {
                     placeholder="Search text..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    aria-label="Search document text"
                   />
-                  {searchResults.length > 0 && (
-                    <button
-                      style={styles.searchClear}
-                      onClick={() => setSearchQuery("")}
-                    >
+                  {searchQuery && (
+                    <button style={styles.searchClear} onClick={() => setSearchQuery("")}>
                       Clear
                     </button>
                   )}
                 </div>
                 {searchQuery.trim() !== "" && searchResults.length === 0 && (
                   <div style={styles.searchNoResults}>
-                    No matches found for "{searchQuery}"
+                    No matches found for “{searchQuery}”
                   </div>
                 )}
                 {searchResults.length > 0 && (
-                  <div style={styles.searchResultsInfo}>
-                    <span style={styles.searchResultsCount}>
-                      {searchResults.length} match{searchResults.length !== 1 ? "es" : ""}
-                    </span>
-                    <button
-                      style={styles.searchClear}
-                      onClick={() => setSearchQuery("")}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                )}
-                {searchResults.length > 0 && (
-                  <div style={styles.searchResults}>
-                    {searchResults.map((m, i) => (
-                      <div
-                        key={i}
-                        style={styles.searchMatch}
-                        onClick={() => {
-                          setActiveCitation(m.page);
-                          setSearchQuery("");
-                        }}
-                      >
-                        <span style={styles.searchMatchPage}>Page {m.page}</span>
-                        <span style={styles.searchMatchText}>
-                          {m.text.slice(0, 120)}...
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    <div style={styles.searchResultsInfo}>
+                      <span style={styles.searchResultsCount}>
+                        {searchResults.length} match{searchResults.length !== 1 ? "es" : ""}
+                      </span>
+                    </div>
+                    <div style={styles.searchResults}>
+                      {searchResults.map((m, i) => (
+                        <button
+                          key={i}
+                          style={{
+                            ...styles.searchMatch,
+                            ...(activeSearchMatchIdx === i ? styles.searchMatchActive : {}),
+                          }}
+                          onClick={() => handleSearchMatchClick(i)}
+                        >
+                          <span style={styles.searchMatchPage}>Page {m.page}</span>
+                          <span style={styles.searchMatchText}>
+                            {m.text.slice(0, 120)}…
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
 
-              {/* Selected text explain */}
               <div style={styles.sideSection}>
                 <h3 style={styles.sideTitle}>Explain selected text</h3>
                 {selectedText ? (
                   <div style={styles.selectedBox}>
-                    <div style={styles.selectedText}>
-                      <em>"{selectedText}"</em>
+                    <div style={styles.selectedTextQuoted}>
+                      “{selectedText.slice(0, 200)}
+                      {selectedText.length > 200 ? "…" : ""}”
                     </div>
                     <button
                       style={styles.explainSelectedBtn}
-                      onClick={() => {
-                        setInputText(selectedText);
-                        setActiveTab("explain");
-                        handleExplain();
-                      }}
+                      onClick={() => explainFromSelection(selectedText)}
+                      disabled={loading}
                     >
                       Explain this
                     </button>
                   </div>
                 ) : (
                   <p style={styles.sideHint}>
-                    Highlight text in the document viewer to explain it.
+                    Highlight text in the document viewer, then explain it in Simple,
+                    Very Simple, or Original style.
                   </p>
                 )}
               </div>
-
-              {/* Provenance note */}
-              {explanation && (
-                <div style={styles.sideSection}>
-                  <ProvenanceBadge
-                    provenance={explanation.provenance}
-                    grounding={explanation.grounding}
-                  />
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -669,9 +775,7 @@ export default function WorkspacePage() {
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <footer style={styles.footer}>
         <span style={styles.footerBrand}>hamiGenZ</span>
-        <span style={styles.footerTagline}>
-          Don&apos;t understand it? Ask hamiGenZ.
-        </span>
+        <span style={styles.footerTagline}>Don&apos;t understand it? Ask hamiGenZ.</span>
       </footer>
     </div>
   );
@@ -685,11 +789,11 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "100vh",
     background: "var(--color-bg)",
     fontFamily: "var(--font-sans)",
-  } as React.CSSProperties,
+  },
   header: {
     borderBottom: "1px solid var(--color-border)",
     background: "var(--color-surface)",
-  } as React.CSSProperties,
+  },
   headerInner: {
     maxWidth: "1200px",
     margin: "0 auto",
@@ -698,25 +802,26 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: "var(--space-4)",
-  } as React.CSSProperties,
+  },
   brand: {
     display: "flex",
     alignItems: "center",
     gap: "var(--space-2)",
-  } as React.CSSProperties,
+    textDecoration: "none",
+  },
   brandName: {
     fontWeight: "var(--font-bold)",
     fontSize: "var(--text-lg)",
     color: "#c8520b",
     letterSpacing: "-0.02em",
-  } as React.CSSProperties,
+  },
   tabs: {
     display: "flex",
     gap: "var(--space-1)",
     background: "var(--color-bg-alt)",
     borderRadius: "var(--radius-md)",
     padding: "2px",
-  } as React.CSSProperties,
+  },
   tab: {
     padding: "var(--space-2) var(--space-4)",
     border: "none",
@@ -727,57 +832,55 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--color-text-secondary)",
     cursor: "pointer",
     transition: "all 0.15s ease",
-  } as React.CSSProperties,
+  },
   tabActive: {
     background: "var(--color-accent)",
     color: "white",
-  } as React.CSSProperties,
+  },
   headerDesc: {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-tertiary)",
-    textAlign: "right",
-  } as React.CSSProperties,
+    textAlign: "center",
+    paddingBottom: "var(--space-2)",
+  },
   main: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
-  } as React.CSSProperties,
+  },
 
   // ── Explain layout ──────────────────────────────────────────────────
   explainLayout: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "var(--space-6)",
     flex: 1,
     maxWidth: "1200px",
     margin: "0 auto",
     width: "100%",
     padding: "var(--space-6)",
-  } as React.CSSProperties,
+  },
   inputPanel: {
     display: "flex",
     flexDirection: "column",
     gap: "var(--space-4)",
-  } as React.CSSProperties,
+  },
   outputPanel: {
     display: "flex",
     flexDirection: "column",
     minHeight: "400px",
-  } as React.CSSProperties,
+  },
   panelHeader: {
     marginBottom: "var(--space-2)",
-  } as React.CSSProperties,
+  },
   panelTitle: {
     fontSize: "var(--text-xl)",
     fontWeight: "var(--font-semibold)",
     color: "var(--color-text-primary)",
     margin: 0,
-  } as React.CSSProperties,
+  },
   panelSubtitle: {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-secondary)",
     margin: "var(--space-1) 0 0 0",
-  } as React.CSSProperties,
+  },
 
   // ── Document badge ──────────────────────────────────────────────────
   docBadge: {
@@ -791,16 +894,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-sm)",
     color: "var(--color-accent)",
     width: "fit-content",
-  } as React.CSSProperties,
+    maxWidth: "100%",
+  },
   docBadgeLabel: {
     fontWeight: "var(--font-medium)",
-  } as React.CSSProperties,
+    whiteSpace: "nowrap",
+  },
   docBadgeName: {
-    flex: 1,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-  } as React.CSSProperties,
+  },
   docBadgeClear: {
     background: "none",
     border: "none",
@@ -809,31 +913,51 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-lg)",
     padding: "0 2px",
     lineHeight: 1,
-  } as React.CSSProperties,
+  },
+  selectedSource: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "var(--space-3)",
+    padding: "var(--space-2) var(--space-3)",
+    background: "var(--color-evidence)",
+    border: "1px solid var(--color-evidence-border)",
+    borderRadius: "var(--radius-md)",
+    fontSize: "var(--text-xs)",
+    color: "var(--color-info)",
+  },
+  selectedSourceLabel: {
+    fontWeight: "var(--font-medium)",
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  selectedSourceClear: {
+    background: "none",
+    border: "1px solid var(--color-evidence-border)",
+    color: "var(--color-info)",
+    borderRadius: "var(--radius-sm)",
+    padding: "2px 8px",
+    fontSize: "var(--text-xs)",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
 
-  // ── Level / language rows ───────────────────────────────────────────
-  levelRow: {
+  // ── Rows / selects ──────────────────────────────────────────────────
+  row: {
     display: "flex",
     alignItems: "center",
     gap: "var(--space-3)",
-  } as React.CSSProperties,
-  levelLabel: {
+    flexWrap: "wrap",
+  },
+  rowLabel: {
     fontSize: "var(--text-sm)",
     fontWeight: "var(--font-medium)",
     color: "var(--color-text-secondary)",
     whiteSpace: "nowrap",
-  } as React.CSSProperties,
-  langRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "var(--space-3)",
-  } as React.CSSProperties,
-  langLabel: {
-    fontSize: "var(--text-sm)",
-    fontWeight: "var(--font-medium)",
-    color: "var(--color-text-secondary)",
-    whiteSpace: "nowrap",
-  } as React.CSSProperties,
+  },
   select: {
     padding: "var(--space-2) var(--space-3)",
     background: "var(--color-surface)",
@@ -842,9 +966,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-primary)",
     cursor: "pointer",
-  } as React.CSSProperties,
+  },
 
-  // ── Textarea ────────────────────────────────────────────────────────
+  // ── Inputs ──────────────────────────────────────────────────────────
   textarea: {
     width: "100%",
     padding: "var(--space-4)",
@@ -856,29 +980,37 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--color-text-primary)",
     resize: "vertical",
     fontFamily: "var(--font-sans)",
-    boxSizing: "border-box",
-  } as React.CSSProperties,
-  questionRow: {
-    display: "flex",
-    gap: "var(--space-2)",
-    alignItems: "center",
-  } as React.CSSProperties,
+  },
   questionInput: {
-    flex: 1,
+    width: "100%",
     padding: "var(--space-2) var(--space-3)",
     background: "var(--color-bg-alt)",
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-md)",
     fontSize: "var(--text-sm)",
     color: "var(--color-text-primary)",
-  } as React.CSSProperties,
+  },
+  examplesRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "var(--space-2)",
+  },
+  exampleChip: {
+    padding: "var(--space-1) var(--space-3)",
+    background: "var(--color-bg-alt)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-full)",
+    fontSize: "var(--text-xs)",
+    color: "var(--color-text-secondary)",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+  },
 
   // ── Actions ─────────────────────────────────────────────────────────
   actions: {
     display: "flex",
     gap: "var(--space-2)",
-    marginTop: "var(--space-2)",
-  } as React.CSSProperties,
+  },
   explainBtn: {
     flex: 1,
     padding: "var(--space-3) var(--space-6)",
@@ -894,11 +1026,11 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: "var(--space-2)",
     transition: "background 0.15s ease",
-  } as React.CSSProperties,
+  },
   explainBtnDisabled: {
     opacity: 0.6,
     cursor: "wait",
-  } as React.CSSProperties,
+  },
   clearBtn: {
     padding: "var(--space-3) var(--space-4)",
     background: "var(--color-surface)",
@@ -907,29 +1039,41 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius-lg)",
     fontSize: "var(--text-sm)",
     cursor: "pointer",
-  } as React.CSSProperties,
+  },
   spinner: {
     width: "16px",
     height: "16px",
     border: "2px solid rgba(255,255,255,0.3)",
     borderTopColor: "white",
     borderRadius: "50%",
-    animation: "spin 0.6s linear infinite",
-  } as React.CSSProperties,
-  error: {
+    display: "inline-block",
+    animation: "ws-spin 0.6s linear infinite",
+  },
+  errorBox: {
     padding: "var(--space-3)",
-    background: "var(--color-evidence)",
-    border: "1px solid var(--color-evidence-border)",
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
     borderRadius: "var(--radius-md)",
     fontSize: "var(--text-sm)",
+    color: "#991b1b",
+    wordBreak: "break-word",
+  },
+  loadingHint: {
+    fontSize: "var(--text-xs)",
+    fontWeight: "var(--font-medium)",
     color: "var(--color-info)",
-  } as React.CSSProperties,
+    background: "var(--color-evidence)",
+    padding: "6px 10px",
+    borderRadius: "var(--radius-md)",
+    textAlign: "center",
+    margin: "0",
+  },
   hint: {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-tertiary)",
     textAlign: "center",
     margin: 0,
-  } as React.CSSProperties,
+  },
 
   // ── Empty state ─────────────────────────────────────────────────────
   emptyState: {
@@ -944,22 +1088,22 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-xl)",
     gap: "var(--space-3)",
-  } as React.CSSProperties,
+  },
   emptyIcon: {
     marginBottom: "var(--space-2)",
-  } as React.CSSProperties,
+  },
   emptyTitle: {
     fontSize: "var(--text-lg)",
     fontWeight: "var(--font-semibold)",
     color: "var(--color-text-primary)",
     margin: 0,
-  } as React.CSSProperties,
+  },
   emptySubtitle: {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-secondary)",
     margin: 0,
     maxWidth: "300px",
-  } as React.CSSProperties,
+  },
   emptyLevels: {
     display: "flex",
     flexDirection: "column",
@@ -967,7 +1111,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     maxWidth: "320px",
     marginTop: "var(--space-4)",
-  } as React.CSSProperties,
+  },
   emptyLevel: {
     display: "flex",
     alignItems: "center",
@@ -975,7 +1119,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "var(--space-2) var(--space-3)",
     background: "var(--color-bg-alt)",
     borderRadius: "var(--radius-md)",
-  } as React.CSSProperties,
+  },
   emptyLevelBadge: {
     padding: "2px 8px",
     background: "var(--color-accent)",
@@ -984,38 +1128,33 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-xs)",
     fontWeight: "var(--font-semibold)",
     whiteSpace: "nowrap",
-  } as React.CSSProperties,
+  },
   emptyLevelDesc: {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-secondary)",
     flex: 1,
-  } as React.CSSProperties,
+    textAlign: "left",
+  },
 
   // ── Document layout ──────────────────────────────────────────────────
   docLayout: {
-    display: "grid",
-    gridTemplateColumns: "280px 1fr 280px",
-    gap: "var(--space-6)",
     flex: 1,
     maxWidth: "1400px",
     margin: "0 auto",
     width: "100%",
     padding: "var(--space-6)",
     minHeight: "500px",
-  } as React.CSSProperties,
+  },
   docListPanel: {
     display: "flex",
     flexDirection: "column",
     gap: "var(--space-4)",
-  } as React.CSSProperties,
-  uploadArea: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "var(--space-2)",
-  } as React.CSSProperties,
+    minWidth: 0,
+  },
   uploadLabel: {
     display: "flex",
     alignItems: "center",
+    justifyContent: "center",
     gap: "var(--space-2)",
     padding: "var(--space-4)",
     background: "var(--color-surface)",
@@ -1026,7 +1165,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     textAlign: "center",
     transition: "all 0.15s ease",
-  } as React.CSSProperties,
+  },
   noDocs: {
     padding: "var(--space-6)",
     background: "var(--color-surface)",
@@ -1035,14 +1174,14 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "center",
     fontSize: "var(--text-sm)",
     color: "var(--color-text-secondary)",
-  } as React.CSSProperties,
+  },
   docList: {
     display: "flex",
     flexDirection: "column",
     gap: "var(--space-2)",
     overflowY: "auto",
-    maxHeight: "500px",
-  } as React.CSSProperties,
+    maxHeight: "400px",
+  },
   docItem: {
     display: "flex",
     alignItems: "center",
@@ -1052,17 +1191,18 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-md)",
     gap: "var(--space-2)",
-  } as React.CSSProperties,
+  },
   docItemActive: {
     borderColor: "var(--color-accent)",
     background: "var(--color-accent-soft)",
-  } as React.CSSProperties,
+  },
   docItemInfo: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
     minWidth: 0,
-  } as React.CSSProperties,
+    flex: 1,
+  },
   docItemName: {
     fontSize: "var(--text-sm)",
     fontWeight: "var(--font-medium)",
@@ -1070,18 +1210,16 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-  } as React.CSSProperties,
+  },
   docItemMeta: {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-tertiary)",
-    // doc.page_count is from the backend; chunks info not surfaced in list yet
-    content: "attr(data-pages)",
-  } as React.CSSProperties,
+  },
   docItemActions: {
     display: "flex",
     gap: "var(--space-1)",
     flexShrink: 0,
-  } as React.CSSProperties,
+  },
   docItemOpen: {
     padding: "var(--space-1) var(--space-3)",
     background: "var(--color-accent)",
@@ -1091,7 +1229,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-xs)",
     fontWeight: "var(--font-medium)",
     cursor: "pointer",
-  } as React.CSSProperties,
+  },
   docItemDelete: {
     width: "24px",
     height: "24px",
@@ -1106,9 +1244,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-base)",
     padding: 0,
     lineHeight: 1,
-  } as React.CSSProperties,
+  },
 
-  // ── Document viewer panel ────────────────────────────────────────────
+  // ── Viewer panel ─────────────────────────────────────────────────────
   docViewerPanel: {
     display: "flex",
     flexDirection: "column",
@@ -1119,28 +1257,28 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius-xl)",
     padding: "var(--space-4)",
     overflow: "hidden",
-  } as React.CSSProperties,
-  viewerInner: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "var(--space-3)",
-    flex: 1,
-    overflow: "auto",
-  } as React.CSSProperties,
-  pageNav: {
+    minWidth: 0,
+  },
+  viewerToolbar: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-  } as React.CSSProperties,
+    gap: "var(--space-2)",
+    flexWrap: "wrap",
+  },
+  viewerToolbarRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--space-2)",
+  },
   pageNavLabel: {
     fontSize: "var(--text-sm)",
     fontWeight: "var(--font-medium)",
     color: "var(--color-text-primary)",
-  } as React.CSSProperties,
-  pageNavButtons: {
-    display: "flex",
-    gap: "var(--space-2)",
-  } as React.CSSProperties,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   pageNavBtn: {
     padding: "var(--space-1) var(--space-3)",
     background: "var(--color-bg-alt)",
@@ -1149,117 +1287,38 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-secondary)",
     cursor: "pointer",
-  } as React.CSSProperties,
-  pageTabs: {
-    display: "flex",
-    gap: "var(--space-1)",
-    flexWrap: "wrap",
-  } as React.CSSProperties,
-  pageTab: {
-    padding: "var(--space-1) var(--space-3)",
-    background: "var(--color-bg-alt)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-sm)",
-    fontSize: "var(--text-xs)",
-    fontWeight: "var(--font-medium)",
-    color: "var(--color-text-secondary)",
-    cursor: "pointer",
-  } as React.CSSProperties,
-  pageTabActive: {
-    background: "var(--color-accent)",
-    color: "white",
-    borderColor: "var(--color-accent)",
-  } as React.CSSProperties,
-  pageContent: {
-    padding: "var(--space-4)",
-    background: "var(--color-bg)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-lg)",
-  } as React.CSSProperties,
-  pageContentActive: {
-    borderColor: "var(--color-accent)",
-    background: "var(--color-accent-soft)",
-  } as React.CSSProperties,
-  pageHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: "var(--space-3)",
-    marginBottom: "var(--space-3)",
-    paddingBottom: "var(--space-2)",
-    borderBottom: "1px solid var(--color-border)",
-    flexWrap: "wrap",
-  } as React.CSSProperties,
-  pageLabel: {
-    fontSize: "var(--text-base)",
-    fontWeight: "var(--font-semibold)",
-    color: "var(--color-text-primary)",
-  } as React.CSSProperties,
-  pageWords: {
-    fontSize: "var(--text-xs)",
-    color: "var(--color-text-tertiary)",
-  } as React.CSSProperties,
-  pageHasImage: {
-    fontSize: "var(--text-xs)",
-    color: "var(--color-info)",
-    background: "var(--color-evidence)",
-    padding: "2px 6px",
-    borderRadius: "var(--radius-sm)",
-  } as React.CSSProperties,
-  searchInfo: {
-    fontSize: "var(--text-sm)",
-    color: "var(--color-warning)",
-    background: "var(--color-highlight)",
-    padding: "var(--space-1) var(--space-2)",
-    borderRadius: "var(--radius-sm)",
-    marginBottom: "var(--space-2)",
-  } as React.CSSProperties,
-  pageText: {
-    fontFamily: "var(--font-sans)",
-    fontSize: "var(--text-sm)",
-    lineHeight: 1.7,
-    color: "var(--color-text-primary)",
-    whiteSpace: "pre-wrap",
-    maxHeight: "400px",
+    whiteSpace: "nowrap",
+  },
+  viewerScroll: {
+    flex: 1,
     overflowY: "auto",
-  } as React.CSSProperties,
-  pageTextHighlighted: {
-    backgroundColor: "var(--color-highlight)",
-    borderRadius: "var(--radius-md)",
-  } as React.CSSProperties,
-  pagePara: {
-    margin: "var(--space-2) 0",
-  } as React.CSSProperties,
-  highlight: {
-    padding: "2px 0",
-    borderRadius: "2px",
-    cursor: "pointer",
-  } as React.CSSProperties,
-  searchGap: {
-    height: "var(--space-2)",
-  } as React.CSSProperties,
+    maxHeight: "calc(100vh - 220px)",
+    paddingRight: "var(--space-1)",
+  },
 
-  // ── Doc side panel ──────────────────────────────────────────────────
+  // ── Side panel ──────────────────────────────────────────────────────
   docSidePanel: {
     display: "flex",
     flexDirection: "column",
     gap: "var(--space-4)",
-  } as React.CSSProperties,
+    minWidth: 0,
+  },
   sideSection: {
     padding: "var(--space-4)",
     background: "var(--color-surface)",
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-lg)",
-  } as React.CSSProperties,
+  },
   sideTitle: {
     fontSize: "var(--text-sm)",
     fontWeight: "var(--font-semibold)",
     color: "var(--color-text-primary)",
     margin: "0 0 var(--space-3) 0",
-  } as React.CSSProperties,
+  },
   searchRow: {
     display: "flex",
     gap: "var(--space-2)",
-  } as React.CSSProperties,
+  },
   searchInput: {
     flex: 1,
     padding: "var(--space-2) var(--space-3)",
@@ -1268,7 +1327,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius-md)",
     fontSize: "var(--text-sm)",
     color: "var(--color-text-primary)",
-  } as React.CSSProperties,
+    minWidth: 0,
+  },
   searchClear: {
     padding: "var(--space-2) var(--space-3)",
     background: "var(--color-bg-alt)",
@@ -1277,31 +1337,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-secondary)",
     cursor: "pointer",
-  } as React.CSSProperties,
-  searchResults: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "var(--space-2)",
-    maxHeight: "200px",
-    overflowY: "auto",
-  } as React.CSSProperties,
-  searchMatch: {
-    padding: "var(--space-2)",
-    background: "var(--color-bg-alt)",
-    borderRadius: "var(--radius-sm)",
-    cursor: "pointer",
-    fontSize: "var(--text-xs)",
-    lineHeight: 1.4,
-  } as React.CSSProperties,
-  searchMatchPage: {
-    fontWeight: "var(--font-semibold)",
-    color: "var(--color-accent)",
-    display: "block",
-    marginBottom: "2px",
-  } as React.CSSProperties,
-  searchMatchText: {
-    color: "var(--color-text-secondary)",
-  } as React.CSSProperties,
+  },
   searchNoResults: {
     padding: "var(--space-3)",
     background: "var(--color-bg-alt)",
@@ -1309,41 +1345,64 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-sm)",
     color: "var(--color-text-tertiary)",
     textAlign: "center",
-  } as React.CSSProperties,
+    marginTop: "var(--space-2)",
+  },
   searchResultsInfo: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
+    marginTop: "var(--space-2)",
     marginBottom: "var(--space-2)",
-  } as React.CSSProperties,
+  },
   searchResultsCount: {
     fontSize: "var(--text-xs)",
     fontWeight: "var(--font-medium)",
     color: "var(--color-accent)",
-  } as React.CSSProperties,
-  loadingHint: {
+  },
+  searchResults: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--space-2)",
+    maxHeight: "260px",
+    overflowY: "auto",
+  },
+  searchMatch: {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    padding: "var(--space-2)",
+    background: "var(--color-bg-alt)",
+    border: "1px solid transparent",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
     fontSize: "var(--text-xs)",
-    fontWeight: "var(--font-medium)",
-    color: "var(--color-info)",
-    background: "var(--color-evidence)",
-    padding: "6px 10px",
-    borderRadius: "var(--radius-md)",
-    textAlign: "center",
-    margin: "8px 0 4px",
-  } as React.CSSProperties,
+    lineHeight: 1.4,
+  },
+  searchMatchActive: {
+    borderColor: "var(--color-accent)",
+    background: "var(--color-accent-soft)",
+  },
+  searchMatchPage: {
+    fontWeight: "var(--font-semibold)",
+    color: "var(--color-accent)",
+    display: "block",
+    marginBottom: "2px",
+  },
+  searchMatchText: {
+    color: "var(--color-text-secondary)",
+  },
   selectedBox: {
     display: "flex",
     flexDirection: "column",
     gap: "var(--space-2)",
-  } as React.CSSProperties,
-  selectedText: {
+  },
+  selectedTextQuoted: {
     padding: "var(--space-2) var(--space-3)",
     background: "var(--color-bg-alt)",
     borderRadius: "var(--radius-sm)",
     fontSize: "var(--text-sm)",
     color: "var(--color-text-primary)",
     fontStyle: "italic",
-  } as React.CSSProperties,
+    maxHeight: "120px",
+    overflowY: "auto",
+  },
   explainSelectedBtn: {
     padding: "var(--space-2) var(--space-4)",
     background: "var(--color-accent)",
@@ -1354,13 +1413,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: "var(--font-medium)",
     cursor: "pointer",
     alignSelf: "flex-start",
-  } as React.CSSProperties,
+  },
+  explainSelectedBtnDisabled: {
+    opacity: 0.6,
+    cursor: "wait",
+  },
   sideHint: {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-tertiary)",
     margin: 0,
     lineHeight: 1.5,
-  } as React.CSSProperties,
+  },
 
   // ── Footer ──────────────────────────────────────────────────────────
   footer: {
@@ -1371,12 +1434,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     fontSize: "var(--text-xs)",
-  } as React.CSSProperties,
+  },
   footerBrand: {
     fontWeight: "var(--font-bold)",
     color: "#c8520b",
-  } as React.CSSProperties,
+  },
   footerTagline: {
     color: "var(--color-text-tertiary)",
-  } as React.CSSProperties,
+  },
 };
