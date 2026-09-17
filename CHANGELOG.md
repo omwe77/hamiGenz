@@ -2,6 +2,27 @@
 
 ## Unreleased (fix/ocr-integration-tests)
 
+### Added — Official-source answering (PR-012)
+- `/ask-general` now answers official-information questions (fees,
+  procedures, laws, deadlines) from VERIFIED REGISTRY SOURCES via a local
+  knowledge cache — evidence comes only from curated sources, never
+  arbitrary URL fetches (SSRF-safe), and never from model memory dressed
+  up as official
+- Full flow: intent detection (EN/NP/romanized) → category → registry
+  source → cached evidence retrieval → freshness check (verification age,
+  cache age, current/outdated status) → grounded generation →
+  VerificationLayer re-check → answer + authority-labeled sources
+- Honest states: no cached source → "could not verify" + the official
+  source to consult; LLM down → raw official evidence shown unprocessed;
+  retrieval failure → degrades safely (no fake-official answers)
+- UI: OFFICIAL SOURCE provenance badge + OfficialSourcesCard showing
+  organization, authority, excerpt, content date, and stale/unknown
+  freshness warnings in plain language
+- Seed knowledge cache: passport fees/documents/appointment, driving
+  license procedure/fees, national ID + birth registration
+- 27 new tests (authority, freshness, claims, provenance, failures);
+  121 passed / 1 skipped total; live-verified end to end
+
 ### Added — Official source registry (PR-011 foundation)
 - Curated registry of 10 authoritative Nepali sources (passport, national
   ID/civil registration, immigration, traffic, laws via Nepal Law
