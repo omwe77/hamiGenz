@@ -1,5 +1,7 @@
 // API client for hamiGenZ backend
-const BASE = "http://localhost:8000";
+// Resolve API base at build time via NEXT_PUBLIC_API_BASE_URL (staging/production)
+// or fall back to localhost for development.
+const BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
 export async function explainText(
   text: string,
@@ -22,8 +24,8 @@ export async function explainText(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`/explain failed (${res.status}): ${text}`);
+    const errText = await res.text();
+    throw new Error(`/explain failed (${res.status}): ${errText}`);
   }
   return res.json();
 }
@@ -36,8 +38,8 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
     body: form,
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`/upload failed (${res.status}): ${text}`);
+    const errText = await res.text();
+    throw new Error(`/upload failed (${res.status}): ${errText}`);
   }
   return res.json();
 }
