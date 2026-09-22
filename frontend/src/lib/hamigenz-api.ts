@@ -146,6 +146,24 @@ export async function explainFormField(
   return res.json();
 }
 
+export async function submitFeedback(
+  question: string,
+  rating: number,
+  docId?: string,
+  comment?: string
+): Promise<FeedbackResponse> {
+  const res = await fetch(`${BASE}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, rating, doc_id: docId, comment }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`/feedback failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
 // Shared types for hamiGenZ backend API responses
 // Kept in sync with backend Pydantic models
 import type {
@@ -158,4 +176,5 @@ import type {
   FormDetectResponse,
   FieldExplanation,
   AskGeneralResponse,
+  FeedbackResponse,
 } from "./types";

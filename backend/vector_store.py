@@ -256,6 +256,20 @@ class VectorStore:
         all_results.sort(key=lambda x: x["score"], reverse=True)
         return all_results[:top_k]
 
+    def get_chunk_texts(self, doc_id: str) -> list[str]:
+        """Return the stored text for every chunk of a document.
+
+        Used by the hybrid retriever to rebuild the BM25 index without
+        re-reading the original upload file.
+        """
+        meta_path = self.vectors_dir / f"{doc_id}_meta.json"
+        if not meta_path.exists():
+            return []
+        import json
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        return [m.get("text", "") or "" for m in meta]
+
     def remove_document(self, doc_id: str) -> None:
         """Remove a document's index and metadata."""
         if doc_id in self._doc_indices:

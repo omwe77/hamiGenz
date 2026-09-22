@@ -1,8 +1,89 @@
 # hamiGenZ Changelog
 
-## Unreleased (fix/ocr-integration-tests)
+## Unreleased (main)
 
-### Improved — Live explanation evaluation + checker linguistics (PR-014)
+### Added — Hybrid retrieval: BM25 + dense + RRF fusion + two-stage reranking
+- Two-stage hybrid retrieval replacing single-index dense-only search:
+  dense (FAISS + sentence-transformers) + sparse (BM25 via rank-bm25) fused
+  with Reciprocal Rank Fusion (k=60), then re-ranked with a lexical overlap
+  scorer (IDF-weighted, position-boosted, length-normalized)
+- Improves precision on exact keywords, serial numbers, legal terms, and
+  domain vocabulary that embeddings alone blur — the dominant failure mode
+  in naive RAG (reference: BM25-to-Corrective-RAG benchmark, arXiv 2604.01733;
+  hybrid RAG benchmarks 2025–2026; DeNA LLM Study Part 4)
+- BM25 indexes rebuilt from stored chunk metadata on startup and after every
+  upload — no original file needed, keeps sparse index in sync automatically
+- Pipeline.query routed through HybridRetriever transparently — all existing
+  endpoints (/ask, /explain, /actions, /forms) benefit without endpoint changes
+- New backend module `backend/hybrid_retriever.py` with:
+  HybridRetriever class, LexicalReranker (plug-compatible with neural
+  CrossEncoder such as BAAI/bge-reranker-base), RRF fusion utility,
+  Devanagari-aware tokenizer
+- New `requirements.txt` dependency: rank-bm25==0.2.2
+
+### Added — User feedback loop (thumbs up / down)
+- `POST /feedback` endpoint: record a -1 (thumbs down) or 1 (thumbs up) rating
+  on any AI-generated answer, with optional free-text comment
+- `GET /feedback/stats?doc_id=` endpoint: aggregate stats (total, up, down,
+  up_rate %) scoped to a document or globally
+- Feedback stored in SQLite (`data/feedback.db`) via new `backend/feedback_store.py`
+- Frontend: thumbs-up / thumbs-down buttons appear under every explanation in
+  the workspace output panel; after rating, shows "Thanks" confirmation + live
+  aggregate stats (helpful / not helpful counts, % helpful)
+- Best-effort submission — never blocks the UX on network failure
+- Reference: ADT-RAG feedback mechanism; DeepLearning.AI RAG evaluation guide
+  (thumbs up/down as cheapest meaningful quality signal); PatchRAG (arXiv 2604.06647)
+  — feedback adaptation as a measurable RAG dimension
+
+### Improved — README: tech-enhancement section
+- Added "What's New (Technology Enhancements)" section documenting hybrid
+  retrieval, user feedback, contextual chunking, modern Nepali OCR path
+  (PaddleOCR devanagari_PP-v5 + TrOCR paudelanil/trocr-devanagari-2), and
+  multimodal RAG readiness — each with research references
+
+### Added — Contextual chunking readiness
+- `VectorStore.get_chunk_texts(doc_id)` exposed for hybrid retriever
+  BM25 rebuild; chunk metadata JSON already carries per-chunk text, page,
+  source_type, and filename — sufficient for document-context-aware retrieval
+
+### Documentation — Modern Nepali OCR path noted
+- README documents the four-stage Devanagari OCR architecture (PaddleOCR
+  devanagari_PP-v5 for printed labels + TrOCR paudelanil/trocr-devanagari-2
+  for handwritten values + SpaCy NER) as the modern alternative to Tesseract,
+  with links to Sandip Acharya's engineering write-up and the HuggingFace model
+
+### Fixed
+- Test teardown no longer deletes `data/`: `TestFullPipeline` previously walked
+  the shared `data/` directory in teardown and removed tracked tessdata models and
+  test PDFs. It now runs in an isolated temp directory.
+- `/endpoints` route crashed (untyped `request` parameter, wrong return annotation);
+  it now renders the live route index correctly with endpoint docstrings.
+- `/documents/{doc_id}/search-text` was POST but the frontend called GET — unified
+  on GET.
+- Removed wildcard `allow_origins=["*"]` combined with `allow_credentials=True`
+  (invalid/unsafe combination); CORS is now an explicit origin allowlist
+  (`FRONTEND_ORIGIN`, localhost variants, optional `CORS_EXTRA_ORIGINS`).
+- Removed dead `backend/admin_routes.py` (imported nonexistent `get_pipeline` /
+  `_session_dirs`, never registered).
+- Removed duplicate `contextlib`/`pathlib` imports and unused `_get_session_id`.
+- Document viewer: rendered one pager per page (each with its own navigation);
+  now a single continuous viewer with page anchors.
+- Citation excerpts never matched raw page text (backend chunks are
+  whitespace-normalized); highlighting now falls back to progressively shorter
+  word-boundary snippets.
+- Search-match highlights were applied in the wrong coordinate space (context-window
+  offsets vs page text); now aligns on the matched term itself.
+- "Explain this" used a stale `handleExplain` closure (ran the previous input);
+  now explains the current selection directly.
+- Workspace loading stages were declared after use and never visible; fixed state
+  order and made progress announcements screen-reader friendly (`aria-live`).
+
+### Added
+- Scanned-page images now display inside the document viewer (was metadata-only).
+- Search: debounced queries, match navigation (prev/next), active match scrolling.
+- Clickable example prompts in the explain empty state (empty-state teaching).
+- Responsive workspace grids (`ws-grid-2`, `ws-grid-3`) with tablet/mobile
+  breakpoints; accessible labels on icon-only buttons.
 - First live `--live` run of the explanation evaluator (qwen3:8b, 17 gold
   cases): facts 0.88 / hallucination-free 1.00 / script 1.00 / pass 0.88 —
   failures are omissions, never fabrications or negation flips
