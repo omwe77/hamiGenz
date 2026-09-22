@@ -9,6 +9,7 @@ import {
   getDocumentViewer,
   searchDocumentText,
   extractActions,
+  submitFeedback,
 } from "@/lib/hamigenz-api";
 import type {
   ViewerPage,
@@ -17,6 +18,7 @@ import type {
   SearchMatch,
   Citation,
   ActionsResponse,
+  FeedbackResponse,
 } from "@/lib/types";
 import ExplanationLevelSelect from "./ExplanationLevelSelect";
 import ExplanationPanel from "./ExplanationPanel";
@@ -76,6 +78,13 @@ export default function WorkspacePage() {
   const [actions, setActions] = useState<ActionsResponse | null>(null);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionsError, setActionsError] = useState<string | null>(null);
+
+  // ── Feedback state (thumbs up/down on explanations) ────────────────────
+  const [feedback, setFeedback] = useState<{
+    rating: number | null;
+    confirmed: boolean;
+    aggregate: FeedbackResponse["aggregate"] | null;
+  }>({ rating: null, confirmed: false, aggregate: null });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -311,6 +320,28 @@ export default function WorkspacePage() {
       )
       .finally(() => setActionsLoading(false));
   }, [actionsLoading, inputText, activeDocId, question]);
+
+  // ── Submit a thumbs up/down rating for the current explanation ─────────
+  const handleFeedback = useCallback(
+    async (rating: number) => {
+      if (!explanation || feedback.confirmed) return;
+      try {
+        const res = await submitFeedback(
+          explanation.explanation.question,
+          rating,
+          activeDocId || undefined
+        );
+        setFeedback({
+          rating,
+          confirmed: true,
+          aggregate: res.aggregate,
+        });
+      } catch {
+        // Feedback is best-effort; never block the UX on it.
+      }
+    },
+    [explanation, activeDocId, feedback.confirmed]
+  );
 
   // Keyboard shortcut: Ctrl+Enter → explain ────────────────────────
   const handleKeyDown = useCallback(
@@ -566,16 +597,74 @@ export default function WorkspacePage() {
                   </div>
                 </div>
               ) : (
-                <ExplanationPanel
-                  explanation={explanation}
-                  onCitationClick={handleCitationClick}
-                  activeCitation={highlightPage}
-                  onClearCitation={clearHighlights}
-                  docId={activeDocId || undefined}
-                  sourceUnavailable={
-                    !explanation.citations?.length && explanation.provenance !== "general_ai"
-                  }
-                />
+                <>
+                  <ExplanationPanel
+                    explanation={explanation}
+                    onCitationClick={handleCitationClick}
+                    activeCitation={highlightPage}
+                    onClearCitation={clearHighlights}
+                    docId={activeDocId || undefined}
+                    sourceUnavailable={
+                      !explanation.citations?.length && explanation.provenance !== "general_ai"
+                    }
+                  />
+                  {/* User feedback: thumbs up / thumbs down on the explanation */}
+                  {explanation && (
+                    <div style={styles.feedbackRow}>
+                      <span style={styles.feedbackLabel}>
+                        Was this helpful?
+                      </span>
+                      {!feedback.confirmed ? (
+                        <div style={styles.feedbackBtns}>
+                          <button
+                            style={{
+                              ...styles.feedbackBtn,
+                              ...(feedback.rating === 1 ? styles.feedbackBtnActive : {}),
+                            }}
+                            onClick={() => handleFeedback(1)}
+                            aria-label="Thumbs up"
+                            title="Thumbs up"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <path d="M14 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm4-12.5c-2.3 0-4.3 1.5-5.1 3.5-.8 2-.3 4.2 1.2 5.6 3.2 2.8 8.3 2.8 11.5 0 1.5-1.4 1.9-3.6 1.2-5.6-.8-2-2.8-3.5-5.1-3.5h-.5zm-2 5.5c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-6 0c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm8 0c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2z" fill="currentColor" />
+                            </svg>
+                          </button>
+                          <button
+                            style={{
+                              ...styles.feedbackBtn,
+                              ...(feedback.rating === -1 ? styles.feedbackBtnActive : {}),
+                            }}
+                            onClick={() => handleFeedback(-1)}
+                            aria-label="Thumbs down"
+                            title="Thumbs down"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <path d="M16 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-8 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm4-12.5c-2.3 0-4.3 1.5-5.1 3.5-.8 2-.3 4.2 1.2 5.6 3.2 2.8 8.3 2.8 11.5 0 1.5-1.4 1.9-3.6 1.2-5.6-.8-2-2.8-3.5-5.1-3.5h-.5zm-2 5.5c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-6 0c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm8 0c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2z" fill="currentColor" />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={styles.feedbackConfirmed}>
+                          <span style={styles.feedbackConfirmedIcon}>
+                            {feedback.rating === 1 ? "👍" : "👎"}
+                          </span>
+                          <span style={styles.feedbackConfirmedText}>
+                            Thanks — your rating helps hamiGenZ get better.
+                          </span>
+                          {feedback.aggregate && (
+                            <span style={styles.feedbackAggregate}>
+                              So far: {feedback.aggregate.up} helpful /
+                              {feedback.aggregate.down} not helpful
+                              {feedback.aggregate.up_rate !== null
+                                ? ` (${Math.round(feedback.aggregate.up_rate * 100)}% helpful)`
+                                : ""}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1493,5 +1582,63 @@ const styles: Record<string, React.CSSProperties> = {
   },
   footerTagline: {
     color: "var(--color-text-tertiary)",
+  },
+
+  // ── User feedback (thumbs up / down on explanations) ─────────────────────
+  feedbackRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--space-3)",
+    marginTop: "var(--space-4)",
+    padding: "var(--space-3)",
+    background: "var(--color-bg-alt)",
+    borderRadius: "var(--radius-md)",
+  },
+  feedbackLabel: {
+    fontSize: "var(--text-xs)",
+    color: "var(--color-text-tertiary)",
+    fontWeight: "var(--font-medium)",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+  },
+  feedbackBtns: {
+    display: "flex",
+    gap: "var(--space-2)",
+  },
+  feedbackBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "34px",
+    height: "34px",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-md)",
+    background: "var(--color-surface)",
+    color: "var(--color-text-secondary)",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+  },
+  feedbackBtnActive: {
+    background: "var(--color-accent)",
+    borderColor: "var(--color-accent)",
+    color: "white",
+  },
+  feedbackConfirmed: {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--space-2)",
+    fontSize: "var(--text-sm)",
+    color: "var(--color-text-secondary)",
+  },
+  feedbackConfirmedIcon: {
+    fontSize: "16px",
+  },
+  feedbackConfirmedText: {
+    color: "var(--color-text-primary)",
+  },
+  feedbackAggregate: {
+    fontSize: "var(--text-xs)",
+    color: "var(--color-text-tertiary)",
+    marginLeft: "var(--space-2)",
   },
 };

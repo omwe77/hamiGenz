@@ -23,6 +23,8 @@ from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
 from form_understanding import FormUnderstandingService
+from hybrid_retriever import HybridRetriever
+from feedback_store import FeedbackStore
 import source_registry
 from official_answer import OfficialAnswerService
 
@@ -126,6 +128,34 @@ async def lifespan(app: FastAPI):
     app.state.official_answer = OfficialAnswerService(
         app.state.ollama, app.state.verification
     )
+
+    # ── Hybrid retrieval layer (BM25 + dense + RRF + rerank) ──────────────
+    # Rebuilds per-document BM25 indexes from stored chunk metadata on startup.
+    # After each upload the upload endpoint calls rebuild_all_bm25() so the
+    # sparse index stays in sync without touching the original upload files.
+    app.state.hybrid = HybridRetriever(
+        vector_store=app.state.vector_store,
+        metadata_store=app.state.metadata,
+        embedder=app.state.embedder,
+        vectors_dir=str(VECTORS_DIR),
+    )
+    rebuilt = app.state.hybrid.rebuild_all_bm25()
+    print(f"[hamigenz] Hybrid BM25 rebuilt {len(rebuilt)} doc index(es): "
+          f"{', '.join(f'{k}={v}' for k, v in list(rebuilt.items())[:5])}"
+          f"{' ...' if len(rebuilt) > 5 else ''}")
+
+    # Override Pipeline.query to route through the hybrid retriever.
+    # The hybrid retriever internally calls FAISS (dense) + BM25 (sparse),
+    # fuses with RRF, and re-ranks with a lexical overlap scorer.
+    _orig_query = app.state.pipeline.query
+
+    def _hybrid_query(doc_id, question, top_k=5, min_score=0.10):
+        return app.state.hybrid.search(doc_id, question, top_k=top_k)
+
+    app.state.pipeline.query = _hybrid_query
+
+    # ── User feedback store ────────────────────────────────────────────────
+    app.state.feedback = FeedbackStore(DATA_DIR / "feedback.db")
 
     # Check Ollama connectivity
     try:
@@ -420,6 +450,12 @@ async def upload_document(
         language_hint=result["language_hint"],
         message=f"Document processed successfully. {result['chunks']} chunks indexed.",
     )
+
+    # Update hybrid BM25 index for the newly uploaded document
+    try:
+        app.state.hybrid.rebuild_all_bm25()
+    except Exception as e:
+        print(f"[hamigenz] Warning: hybrid BM25 rebuild failed after upload: {e}")
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -1082,6 +1118,59 @@ async def ask_general_question(
     result = app.state.official_answer.answer(question, lang=language)
     result["processing_time_ms"] = int((time.time() - start) * 1000)
     return result
+
+
+# ─── /feedback: user rating on AI answers ──────────────────────────
+
+class FeedbackRecord(BaseModel):
+    question: str
+    rating: int                      # -1 (thumbs down) or 1 (thumbs up)
+    doc_id: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    status: str
+    rating: int
+    feedback_id: int
+    aggregate: dict
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+async def record_feedback(
+    body: FeedbackRecord,
+    _rl: None = Depends(rate_limit("search")),
+):
+    """
+    Record a user rating on an AI-generated answer.
+
+    rating must be -1 (thumbs down) or 1 (thumbs up).  Optional comment for
+    qualitative context.  Returns updated aggregate stats so the frontend can
+    show running satisfaction numbers without a second request.
+    """
+    if body.rating not in (-1, 1):
+        raise HTTPException(400, "rating must be -1 or 1")
+    if len(body.question) > 2000:
+        raise HTTPException(400, "question too long")
+    fid = app.state.feedback.add(
+        doc_id=body.doc_id,
+        question=body.question,
+        rating=body.rating,
+        comment=body.comment,
+    )
+    agg = app.state.feedback.aggregate(doc_id=body.doc_id)
+    return FeedbackResponse(
+        status="recorded",
+        rating=body.rating,
+        feedback_id=fid,
+        aggregate=agg,
+    )
+
+
+@app.get("/feedback/stats")
+async def feedback_stats(doc_id: Optional[str] = Query(None)):
+    """Return aggregate feedback stats, optionally scoped to one document."""
+    return app.state.feedback.aggregate(doc_id=doc_id)
 
 
 @app.get("/")

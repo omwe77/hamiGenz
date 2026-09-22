@@ -217,3 +217,15 @@ export interface FieldExplanation {
   sample_markers: string[];
   meta: { status: "llm" | "hints_only" | "error"; note?: string };
 }
+
+export interface FeedbackResponse {
+  status: string;
+  rating: number;
+  feedback_id: number;
+  aggregate: {
+    total: number;
+    up: number;
+    down: number;
+    up_rate: number | null;
+  };
+}
