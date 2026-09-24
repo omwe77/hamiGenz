@@ -23,10 +23,10 @@ from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
 from form_understanding import FormUnderstandingService
-from hybrid_retriever import HybridRetriever
 from feedback_store import FeedbackStore
 import source_registry
 from official_answer import OfficialAnswerService
+from okf_bundle import OKFBundle, classify_query
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
@@ -129,30 +129,18 @@ async def lifespan(app: FastAPI):
         app.state.ollama, app.state.verification
     )
 
-    # ── Hybrid retrieval layer (BM25 + dense + RRF + rerank) ──────────────
-    # Rebuilds per-document BM25 indexes from stored chunk metadata on startup.
-    # After each upload the upload endpoint calls rebuild_all_bm25() so the
-    # sparse index stays in sync without touching the original upload files.
-    app.state.hybrid = HybridRetriever(
-        vector_store=app.state.vector_store,
-        metadata_store=app.state.metadata,
-        embedder=app.state.embedder,
-        vectors_dir=str(VECTORS_DIR),
-    )
-    rebuilt = app.state.hybrid.rebuild_all_bm25()
-    print(f"[hamigenz] Hybrid BM25 rebuilt {len(rebuilt)} doc index(es): "
-          f"{', '.join(f'{k}={v}' for k, v in list(rebuilt.items())[:5])}"
-          f"{' ...' if len(rebuilt) > 5 else ''}")
-
-    # Override Pipeline.query to route through the hybrid retriever.
-    # The hybrid retriever internally calls FAISS (dense) + BM25 (sparse),
-    # fuses with RRF, and re-ranks with a lexical overlap scorer.
-    _orig_query = app.state.pipeline.query
-
-    def _hybrid_query(doc_id, question, top_k=5, min_score=0.10):
-        return app.state.hybrid.search(doc_id, question, top_k=top_k)
-
-    app.state.pipeline.query = _hybrid_query
+    # ── OKF knowledge bundle ──────────────────────────────────────────────
+    # Loads curated Nepal document knowledge as markdown concept files.
+    # Replaces the RAG hybrid retriever for structured knowledge queries.
+    # Use via app.state.okf.search(question) or app.state.okf.get_relevant_concepts().
+    _okf_dir = BASE_DIR / "data" / "okf"
+    app.state.okf = OKFBundle(str(_okf_dir))
+    okf_count = app.state.okf.load()
+    print(f"[hamigenz] OKF bundle loaded: {okf_count} concepts, "
+          f"{len(app.state.okf.types)} types, {len(app.state.okf.tags)} tags")
+    if okf_count == 0:
+        print(f"[hamigenz] WARNING: OKF bundle directory not found at {_okf_dir} "
+              f"— curated knowledge queries will return no results")
 
     # ── User feedback store ────────────────────────────────────────────────
     app.state.feedback = FeedbackStore(DATA_DIR / "feedback.db")
@@ -451,12 +439,6 @@ async def upload_document(
         message=f"Document processed successfully. {result['chunks']} chunks indexed.",
     )
 
-    # Update hybrid BM25 index for the newly uploaded document
-    try:
-        app.state.hybrid.rebuild_all_bm25()
-    except Exception as e:
-        print(f"[hamigenz] Warning: hybrid BM25 rebuild failed after upload: {e}")
-
 
 @app.post("/ask", response_model=AskResponse)
 async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
@@ -481,17 +463,47 @@ async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
     else:
         response_lang = req.language
 
-    # Retrieve evidence
-    evidence = pipeline.query(req.doc_id, req.question, top_k=5)
+    # ── Knowledge routing: OKF (curated) vs document search vs general ──
+    # OKF handles structured knowledge questions about Nepal document types,
+    # fields, form-filling, and OCR rules — things that should be exact and
+    # curated, not reconstructed from chunks every time.
+    # Vector search handles questions about a specific uploaded document.
+    # Official answer handles general Nepal government/legal questions.
+    evidence: list[dict] = []
+    okf_concepts: list[dict] = []
 
-    if not evidence:
+    if req.doc_id:
+        # Document-specific question — search the uploaded document
+        evidence = pipeline.query(req.doc_id, req.question, top_k=5)
+    else:
+        # No specific document — classify the query
+        query_class = classify_query(req.question)
+        if query_class == "okf":
+            # Curated knowledge question → search OKF bundle
+            okf_concepts = app.state.okf.get_relevant_concepts(req.question)
+            if okf_concepts:
+                # Convert OKF concepts to evidence format for the LLM prompt
+                for c in okf_concepts:
+                    evidence.append({
+                        "page_num": 0,
+                        "text": f"[{c.concept_id}] {c.title or c.type}\n{c.body[:1500]}",
+                        "source_type": "okf",
+                        "filename": c.concept_id,
+                    })
+        elif query_class == "document":
+            # Question references an uploaded document but no doc_id given —
+            # fall through to vector search across all documents
+            evidence = pipeline.query(None, req.question, top_k=5)
+        # else: general query — evidence stays empty, handled by general path below
+
+    if not evidence and not okf_concepts:
         return AskResponse(
             question=req.question,
             answer=(f"I could not find relevant information about \"{req.question}\" "
-                    f"in the uploaded documents. Try uploading a relevant document or "
-                    f"asking a different question."),
+                    f"in my knowledge base or uploaded documents. Try uploading a "
+                    f"relevant document or asking a different question."),
             citations=[],
-            grounding_note="No evidence retrieved from documents.",
+            grounding_note="No evidence retrieved from documents or knowledge base.",
             evidence_pages=[],
             language_used=response_lang,
             processing_time_ms=int((time.time() - start) * 1000),
@@ -570,6 +582,15 @@ Respond with the answer directly.
         "recommendation": verification["recommendation"],
     })
 
+    # Build grounding note — mention OKF when curated knowledge was used
+    grounding_note = ""
+    if okf_concepts and not evidence:
+        grounding_note = ("Answered from hamiGenZ's curated knowledge base "
+                          "(Open Knowledge Format) — structured, reviewed knowledge "
+                          "about Nepal documents. Sources are listed in the citations.")
+    elif evidence:
+        grounding_note = "Answered from retrieved document content."
+
     # If contradictions found, attempt a corrected answer
     final_answer = raw_answer
     if verification.get("contradiction_found"):
@@ -604,6 +625,9 @@ Respond with the answer directly.
     # format_answer returns 'language'; the response model requires
     # 'language_used' (both carry the same value).
     formatted["language_used"] = formatted.get("language", response_lang)
+    # Override grounding_note with OKF-aware version when curated knowledge was used
+    if grounding_note:
+        formatted["grounding_note"] = grounding_note
 
     return AskResponse(**formatted)
 
