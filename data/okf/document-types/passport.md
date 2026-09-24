@@ -1,11 +1,15 @@
 ---
 type: DocumentType
 title: Nepal Ordinary Passport
-description: Structure, fields, and pages of the Nepal ordinary passport (लामो रahदानी). 32-page and 64-page versions exist.
+description: "Structure, fields, and pages of the Nepal ordinary passport (लामो राहदानी). 32-page and 64-page versions exist."
 resource: https://nepalpassport.gov.np
 tags: [nepal, identity, international-travel, official-id, passport, blue-passport, राहदानी, नेपाली, प्रवासी, डाटा पृष्ठ]
-status: current
-verified: true
+status: stable
+generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+sources:
+  - {title: "Nepal Department of Passports", url: "https://nepalpassport.gov.np", retrieved_at: "2025-09-24T00:00:00Z"}
 owner: "Passport Department, Ministry of Foreign Affairs"
 ---
 
@@ -25,7 +29,7 @@ This is the most important page. It contains the holder's personal information i
 
 - **Passport No.** (पासपोर्ट नम्बर) — A unique alphanumeric identifier, usually starting with a letter followed by numbers (e.g., `A-123456` or `AB-1234567`). Located at the top.
 - **Photo** — Passport-sized photograph of the holder, usually on the right side of the data page.
-- **Surname / Last Name** (द_last नाम) — In the Devanagari and English sections.
+- **Surname / Last Name** (उपनाम / नाम) — In the Devanagari and English sections.
 - **Given Names / First Name** (थर / नाम) — Full name in Devanagari and English.
 - **Nationality** (राहदानी धारी / नागरिकता) — "Nepali" / "नेपाली"
 - **Date of Birth** (जप्म मिति) — In DD/MM/YYYY format, in both scripts.
@@ -33,7 +37,7 @@ This is the most important page. It contains the holder's personal information i
 - **Gender** (लिंग) — Male / Female / Other (नपुंसक / महिला / अन्य).
 - **Issue Date** (जारी मिति) — When the passport was issued.
 - **Expiry Date** (समाप्त मिति) — Usually 5 years or 10 years from issue date depending on passport type.
-- **Date of Issue / Place of Issue** (जारी करने वाला ठेगाना) — The issuing authority office.
+- **Date of Issue / Place of Issue** (जारी गर्ने ठेगाना) — The issuing authority office.
 - **Authority** (अनुमति/अधिकारी) — Signature/stamp of issuing authority.
 - **MRZ (Machine Readable Zone)** — The two or three lines of machine-readable text at the bottom of the data page, containing encoded passport data. Used for automated border control.
 
@@ -79,6 +83,6 @@ Passport numbers in Nepal typically follow patterns like:
 - Nepali and English text appear side by side on the data page.
 - The MRZ at the bottom uses a standardized format (TD3 passport format) — 2 lines of 44 characters each.
 - OCR should handle both Devanagari and Latin scripts on the same page.
-- See [[fields/field-meanings]] for what each field on the data page means.
-- See [[forms/fill-guidelines]] for how to apply for a passport.
+- See [Field meanings](../fields/field-meanings.md) for what each field on the data page means.
+- See [How to apply](../forms/fill-guidelines.md) for how to apply for a passport.
 - The photo page should NOT be confused with visa pages — check the "नेपाल राहदानी" header.

@@ -3,8 +3,9 @@ type: FormGuide
 title: Nepal Official Form Filling Guidelines
 description: General guidelines for filling out Nepal government forms, application forms, and official documents.
 tags: [forms, filling, guidelines, nepali, official-documents, application, भर्नु, कसरी, बुझ्न, प्रक्रिया]
-status: current
-verified: true
+status: stable
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
 owner: "hamiGenZ curated knowledge"
 ---
 

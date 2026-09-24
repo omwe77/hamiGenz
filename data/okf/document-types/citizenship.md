@@ -1,11 +1,15 @@
 ---
 type: DocumentType
 title: Nepal Citizenship Certificate (नागरिकता प्रमाणपत्र)
-description: Structure and fields of the Nepal Citizenship Certificate — the primary proof of Nepali citizenship.
+description: "Structure and fields of the Nepal Citizenship Certificate — the primary proof of Nepali citizenship."
 resource: https://nepal.gov.np
 tags: [nepal, citizenship, identity, official-id, citizenship-certificate, नागरिकता, नेपाली, प्रमाणपत्र, नागरिक]
-status: current
-verified: true
+status: stable
+generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+sources:
+  - {title: "Ministry of Home Affairs, Nepal", url: "https://mhom.gov.np", retrieved_at: "2025-09-24T00:00:00Z"}
 owner: "District Administration Office, Ministry of Home Affairs"
 ---
 
@@ -19,7 +23,7 @@ The Nepal Citizenship Certificate (नागरिकता प्रमाण�
 
 ### Front side (पुस्ता १)
 
-- **नेपाल गण-thousand** (Header) — "नेपाल" with national emblem/emblem-like seal at top.
+- **नेपाल गणराज्य** (Header) — "नेपाल" with national emblem/seal at top.
 - **नागरिकता प्रमाणपत्र** — Title: "Citizenship Certificate" in Nepali.
 - **Serial number / प्रमाणपत्र नम्बर** — A unique certificate number, usually in format `XXXX/XXX` or similar.
 - **Photo** — Passport-sized photograph of the holder.
@@ -39,12 +43,9 @@ The Nepal Citizenship Certificate (नागरिकता प्रमाण�
 - Security stamp/seal.
 - May have renewal/endorsement information.
 
-## Citizenship types
+## Citizenship categories
 
-- **ब Chiron Nepal** (Citizenship by Birth) — Birthright citizenship.
-- **ब Vina Nepali** (Naturalized Citizenship) — For foreign nationals who naturalize.
-- **ब Deshya Nepali** (Nepali Origin / Foreign National of Nepali Origin) — For people of Nepali origin living abroad.
-- Recurring/temporary citizenship categories (विरलब disequilibrium etc.) may appear depending on the issuance year.
+The Citizenship Certificate is issued under the Citizenship Act. Categories include citizenship by birth, naturalized citizenship, and citizenship for persons of Nepali origin. The specific category is indicated on the certificate.
 
 ## Verification notes
 
