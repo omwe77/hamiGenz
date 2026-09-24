@@ -6,14 +6,38 @@ Nepal's AI document understanding platform — fully local, free, offline-capabl
 
 ## What's New (Technology Enhancements)
 
-### Hybrid Retrieval (BM25 + Dense + RRF Fusion)
-Traditional RAG uses only vector embeddings for search, which fails on exact keywords, serial numbers, legal terms, and domain-specific vocabulary. We now use **hybrid retrieval**:
-- **Dense vector search** (FAISS + sentence-transformers) for semantic meaning
-- **BM25 keyword search** for exact term matching (Nepali legal terms, passport numbers, fees)
-- **Reciprocal Rank Fusion (RRF)** to combine both scores — proven 26-31% precision improvement in 2025-2026 benchmarks
-- **Two-stage reranking** with lexical overlap scorer (position-aware, IDF-weighted, length-normalized) — plug-compatible with neural cross-encoders like BAAI/bge-reranker-base
+### OKF Knowledge Layer (Open Knowledge Format)
 
-*Reference: "From BM25 to Corrective RAG" (arXiv 2604.01733), "Hybrid RAG" benchmarks (2025-2026), DeNA LLM Study Part 4 (2025)*
+** replaces the old hybrid RAG retriever ** — instead of chunking documents into
+vector-searchable fragments and losing structure, hamiGenZ now uses a curated
+knowledge layer based on the Open Knowledge Format (OKF) spec (Google Cloud, June 2026).
+
+OKF treats knowledge as durable, readable facts — not as a haystack to search.
+For Nepal documents this matters: a passport's page-1 data and page-N disclaimer
+are one document, but RAG slices them into disconnected chunks. OKF keeps them
+
+- **Markdown concept files** — one file per knowledge concept (document type,
+  form guide, OCR rule, field definition), with YAML frontmatter
+- **Explicit cross-links** — concepts link to each other with `[[concept-id]]`,
+  forming a traversable knowledge graph instead of a bag of chunks
+- **Git-native** — version-controlled, diffable, reviewable in PRs
+- **Deterministic lookup** — type/tag/keyword search, not cosine-similarity lottery
+- **Provenance** — each concept has `verified`, `status`, `owner`, `resource` fields
+- **Devanagari-first** — tags and body content in Nepali script, not just English
+
+**Routing:** user queries are classified into three buckets:
+- `okf` — curated knowledge question (e.g. "passport के हो", "कसरी भर्ने") → OKF bundle
+- `document` — question about a specific uploaded document → vector search
+- `general` — Nepal info / chit-chat → official_answer service or LLM
+
+**Concept types in hamiGenZ's OKF bundle:**
+- `DocumentType` — Nepal passport, citizenship certificate, NID card, voter ID
+- `FormGuide` — official form-filling guidelines
+- `OCRRule` — post-processing rules for Tesseract/EasyOCR/TrOCR output
+- `FieldDefinition` — what each field on Nepal documents means
+
+**Knowledge files:** `data/okf/` — 7 concept files, 4 types, cross-linked,
+with Devanagari + English tags, all verified, owned by hamiGenZ curated knowledge.
 
 ### User Feedback Loop
 Thumbs up/down buttons on every explanation, stored in SQLite. This closes the loop:
@@ -32,6 +56,7 @@ Each stored chunk carries its document-level context, improving retrieval releva
 Documented alternative to Tesseract for Devanagari:
 - **PaddleOCR devanagari_PP-v5** — purpose-built for printed Devanagari, runs on CPU, no fine-tuning needed
 - **TrOCR fine-tuned for Nepali (paudelanil/trocr-devanagari-2)** — for handwritten field values
+- **EasyOCR** (`ne` model) — secondary OCR engine with native Devanagari support, used alongside Tesseract for comparison
 - Four-stage pipeline: detection → PaddleOCR (printed labels) + TrOCR (handwritten values) → SpaCy NER → form fill
 
 *Reference: Sandip Acharya "Why Nepali OCR is Brutally Hard" (Medium 2026), paudelanil/trocr-devanagari-2 on HuggingFace, nepOCR project*
@@ -48,17 +73,29 @@ hamigenz/
 │   ├── document_processor.py  # PDF/image extraction, chunking
 │   ├── vector_store.py        # FAISS + sentence-transformers
 │   ├── llm_service.py         # Ollama + grounding + verification
-│   ├── hybrid_retriever.py    # NEW: BM25 + dense + RRF + rerank
-│   ├── feedback_store.py      # NEW: user ratings SQLite store
+│   ├── okf_bundle.py          # NEW: Open Knowledge Format bundle loader + router
+│   ├── ocr_engines.py         # NEW: EasyOCR + TrOCR extended OCR engines
+│   ├── feedback_store.py      # user ratings SQLite store
 │   ├── action_extractor.py    # Requirements/deadlines/fees extraction
 │   ├── form_understanding.py  # Form field detection + explanation
 │   ├── official_answer.py     # Curated official-source answering
 │   └── source_registry.py     # Curated authoritative Nepali sources
+├── data/
+│   ├── okf/          # NEW: OKF knowledge bundle (markdown concept files)
+│   │   ├── index.md
+│   │   ├── document-types/   # Nepal document type definitions
+│   │   ├── forms/            # Form-filling guidelines
+│   │   ├── ocr/              # OCR post-processing rules
+│   │   └── fields/           # Field meaning reference
+│   ├── uploads/      # Uploaded documents
+│   ├── vectors/      # FAISS vector indexes
+│   ├── knowledge/    # Official source knowledge cache
+│   ├── feedback.db   # User feedback SQLite
+│   └── hamigenz.db   # Document metadata + chunk registry
 ├── frontend/         # Next.js + React
 │   └── src/
 │       ├── components/workspace/   # Explain/document UI
 │       └── lib/hamigenz-api.ts    # API client
-├── data/             # Uploads, vectors, knowledge base, feedback.db
 ├── tests/            # Test suite
 └── docs/             # Architecture, evaluation, security docs
 ```
@@ -68,11 +105,13 @@ hamigenz/
 - File upload (PDF, PNG, JPG, TIFF)
 - PDF text extraction (pdfplumber + PyMuPDF)
 - OCR for scanned documents (Tesseract, Nepali + English)
-- **NEW: Hybrid retrieval (BM25 + dense + RRF fusion + lexical reranking)**
-- **NEW: User feedback loop (thumbs up/down)**
+- Extended OCR engines: EasyOCR + TrOCR for Devanagari and handwriting
+- **OKF Knowledge Layer** — curated Nepal document knowledge (Open Knowledge Format),
+  replacing chunking-based hybrid RAG retriever
+- **User feedback loop (thumbs up/down)** — SQLite-backed, best-effort submission
 - Sentence-level chunking with overlap
 - Local embeddings (sentence-transformers paraphrase-multilingual-MiniLM-L12-v2)
-- FAISS vector storage per document
+- FAISS vector storage per document (for user-uploaded document search)
 - Ollama LLM (qwen3:8b)
 - Grounding validation (claim extraction vs evidence)
 - Verification layer (contradiction detection, confidence scoring 0-100)
@@ -89,9 +128,9 @@ hamigenz/
 - **Backend:** Python 3.11 + FastAPI + Uvicorn
 - **LLM:** Ollama + qwen3:8b (local)
 - **Embeddings:** sentence-transformers (paraphrase-multilingual-MiniLM-L12-v2)
-- **Hybrid retrieval:** FAISS (dense) + rank-bm25 (sparse) + RRF fusion + lexical reranker
-- **Vector DB:** FAISS (local, no server needed)
-- **OCR:** pytesseract + Tesseract OCR (nepali traineddata)
+- **Knowledge layer:** OKF (Open Knowledge Format) — markdown + YAML, git-native
+- **Document search:** FAISS (dense) for uploaded user documents
+- **OCR:** pytesseract + Tesseract OCR (nepali traineddata) + EasyOCR + TrOCR
 - **PDF:** pdfplumber + PyMuPDF (fitz)
 - **Frontend:** Next.js + React
 - **DB:** SQLite (metadata + feedback), FAISS (vectors)
@@ -100,9 +139,9 @@ hamigenz/
 
 ```bash
 # Activate venv
-.\.venv\Scripts\Activate.ps1   # PowerShell
+.\\.venv\\Scripts\\Activate.ps1   # PowerShell
 # or
-.venv\Scripts\activate.bat      # CMD
+.venv\\Scripts\\activate.bat      # CMD
 
 # Start backend (Ollama must be running with qwen3:8b loaded)
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
@@ -124,7 +163,7 @@ Or use the provided scripts:
 |--------|------|-------------|
 | GET | /health | Service health + model info |
 | POST | /upload | Upload document (PDF/image) for analysis |
-| POST | /ask | Ask question about documents |
+| POST | /ask | Ask question — routes to OKF knowledge, document search, or general |
 | POST | /explain | Explain text in simple language |
 | POST | /actions | Extract requirements, deadlines, fees |
 | POST | /forms/detect | Detect form fields in text |
@@ -132,13 +171,26 @@ Or use the provided scripts:
 | POST | /ask-general | Ask Nepal-info question without document |
 | GET | /knowledge/sources | List curated official sources |
 | GET | /knowledge/classify | Classify a URL against registry |
-| **POST** | **/feedback** | **NEW: Record thumbs up/down rating** |
-| **GET** | **/feedback/stats** | **NEW: Aggregate feedback stats** |
+| **POST** | **/feedback** | **Record thumbs up/down rating** |
+| **GET** | **/feedback/stats** | **Aggregate feedback stats** |
 | GET | /documents | List uploaded documents |
 | DELETE | /documents/{doc_id} | Delete a document |
 | GET | /documents/{doc_id}/viewer | Per-page text viewer |
 | GET | /documents/{doc_id}/search-text | Search document text |
 | GET | /endpoints | Live HTML API reference |
+
+## OKF Knowledge Bundle
+
+The OKF bundle lives in `data/okf/` and is loaded at startup. You can extend it
+by adding new `.md` concept files — no code changes needed.
+
+**Adding a new document type:**
+1. Create `data/okf/document-types/<name>.md`
+2. Add YAML frontmatter with `type: DocumentType` and tags
+3. Write the body in markdown with page-by-page structure
+4. Restart the backend — the bundle auto-loads
+
+**OKF spec reference:** https://cloud.google.com/open-knowledge-format
 
 ## Accuracy Priority
 
@@ -149,12 +201,12 @@ Over: confident but unsupported answer.
 
 ## Development Phases
 
-1. **Phase 1 — MVP:** Core document RAG pipeline, local/free, publicly usable ✅
+1. **Phase 1 — MVP:** Core document understanding pipeline, local/free, publicly usable ✅
 2. **Phase 2 — Official Nepal Knowledge:** Curated KB (passport, NID, traffic, govt services) ✅
 3. **Phase 3 — Action Features:** Checklists, deadline/fee extraction, form filling ✅
 4. **Phase 4 — Strong Verification:** Contradiction detection, confidence scoring ✅
 5. **Phase 5 — Expansion:** PWA, camera scanning, voice, API, multi-language
-6. **Phase 6 — Tech Enhancement:** Hybrid retrieval, user feedback, modern OCR path ✅ (current)
+6. **Phase 6 — Tech Enhancement:** OKF knowledge layer, user feedback, extended OCR ✅ (current)
 
 ## License
 

@@ -2,24 +2,41 @@
 
 ## Unreleased (main)
 
-### Added — Hybrid retrieval: BM25 + dense + RRF fusion + two-stage reranking
-- Two-stage hybrid retrieval replacing single-index dense-only search:
-  dense (FAISS + sentence-transformers) + sparse (BM25 via rank-bm25) fused
-  with Reciprocal Rank Fusion (k=60), then re-ranked with a lexical overlap
-  scorer (IDF-weighted, position-boosted, length-normalized)
-- Improves precision on exact keywords, serial numbers, legal terms, and
-  domain vocabulary that embeddings alone blur — the dominant failure mode
-  in naive RAG (reference: BM25-to-Corrective-RAG benchmark, arXiv 2604.01733;
-  hybrid RAG benchmarks 2025–2026; DeNA LLM Study Part 4)
-- BM25 indexes rebuilt from stored chunk metadata on startup and after every
-  upload — no original file needed, keeps sparse index in sync automatically
-- Pipeline.query routed through HybridRetriever transparently — all existing
-  endpoints (/ask, /explain, /actions, /forms) benefit without endpoint changes
-- New backend module `backend/hybrid_retriever.py` with:
-  HybridRetriever class, LexicalReranker (plug-compatible with neural
-  CrossEncoder such as BAAI/bge-reranker-base), RRF fusion utility,
-  Devanagari-aware tokenizer
-- New `requirements.txt` dependency: rank-bm25==0.2.2
+### Added — OKF Knowledge Layer (Open Knowledge Format)
+
+Replaces the hybrid RAG retriever (BM25 + dense + RRF fusion) with a curated
+knowledge layer based on the Open Knowledge Format spec (Google Cloud, June 2026).
+
+OKF stores knowledge as markdown concept files with YAML frontmatter — one concept
+per file, cross-linked with `[[concept-id]]` references, git-native and diffable.
+This fixes the core weakness the user identified: RAG shreds documents into
+disconnected chunks, losing structure and relationships (e.g. passport page-1 data
+vs page-N disclaimer become separate chunks with no connection).
+
+**Knowledge routing in /ask:**
+- `okf` — curated knowledge question → OKF bundle search (type/tag/keyword match)
+- `document` — question about uploaded document → FAISS vector search
+- `general` — Nepal info / chit-chat → official_answer or LLM
+
+**OKF concept types in hamiGenZ:**
+- `DocumentType` — Nepal passport, citizenship, NID card, voter ID (page structure)
+- `FormGuide` — official form-filling guidelines
+- `OCRRule` — post-processing rules for Tesseract/EasyOCR/TrOCR output
+- `FieldDefinition` — what each field on Nepal documents means
+
+**Bundle contents:** `data/okf/` — 7 concept files, 4 types, cross-linked,
+Devanagari + English tags, verified flags, owner metadata, resource links.
+
+**Files changed:**
+- New `backend/okf_bundle.py` — OKFBundle loader, OKFConcept, classify_query router
+- New `data/okf/` — 7 markdown concept files with frontmatter + body + cross-links
+- Removed `backend/hybrid_retriever.py` (BM25 + dense + RRF + neural reranker)
+- Removed `backend/neural_reranker.py` (cross-encoder reranker, only used by hybrid)
+- Removed `tests/hybrid_retriever_test.py` (tested deleted module)
+- Updated `backend/main.py` — replace hybrid retriever lifespan with OKF loading;
+  add knowledge routing in /ask; OKF-aware grounding notes; fallback message
+- Added `backend/ocr_engines.py` — EasyOCR + TrOCR extended OCR engines
+- Frontend: reset feedback state on workspace clear
 
 ### Added — User feedback loop (thumbs up / down)
 - `POST /feedback` endpoint: record a -1 (thumbs down) or 1 (thumbs up) rating
