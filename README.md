@@ -211,3 +211,10 @@ Over: confident but unsupported answer.
 ## License
 
 MIT — built for Nepal, open for everyone.
+
+## Connect
+
+- **GitHub:** https://github.com/omwe77/hamiGenZ
+- **Developer:** Om (omwe77) — London Metropolitan University
+- **Mailing list / feedback:** Open a GitHub issue
+
