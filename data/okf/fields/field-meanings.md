@@ -3,8 +3,9 @@ type: FieldDefinition
 title: Nepal Document Field Meanings — Reference
 description: What common fields on Nepal official documents mean, what belongs there, and what to watch for.
 tags: [fields, document-fields, meanings, nepali, identity-documents, reference, क्षेत्र, अर्थ, नेपाली, फेल्ड, पासपोर्ट]
-status: current
-verified: true
+status: stable
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
 owner: "hamiGenZ curated knowledge"
 ---
 
@@ -99,7 +100,7 @@ This concept explains what common fields on Nepal official documents (passports,
 - Often required on citizenship certificates, passports, and many government forms.
 
 **Watch for:**
-- For women, sometimes husband's name (सにとってको नाम) appears instead or additionally.
+- For women, sometimes husband's name (सपत्नीको नाम) appears instead or additionally.
 - OCR errors on father's name are common because Devanagari names are long and contain rare characters.
 
 ### आमाको नाम / Mother's Name

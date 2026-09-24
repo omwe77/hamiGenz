@@ -1,3 +1,15 @@
+---
+type: Index
+title: hamiGenZ Knowledge Bundle
+description: "Curated knowledge about Nepal official documents, identity cards, and form-filling processes."
+tags: [hamigenz, knowledge-bundle, nepal, official-documents]
+status: stable
+okf_version: "0.2"
+generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+---
+
 # hamiGenZ Knowledge Bundle
 
 This bundle contains curated knowledge about Nepal official documents,
@@ -7,7 +19,7 @@ identity cards, and form-filling processes.
 
 - Each concept is a single markdown file with YAML frontmatter.
 - Concepts are organized by directory: `document-types/`, `forms/`, `ocr/`, `fields/`.
-- Cross-reference concepts using [[concept-id]] links.
+- Cross-reference concepts using standard Markdown links: `[text](path/to/concept.md)`.
 - The bundle is version-controlled in git — changes are diffable and reviewable.
 
 ## Concept types used in this bundle

@@ -3,8 +3,9 @@ type: OCRRule
 title: Nepal Document OCR Post-Processing Rules
 description: Rules for cleaning and correcting OCR output from Nepal official documents scanned with Tesseract.
 tags: [ocr, post-processing, nepali, tesseract, correction, cleanup]
-status: current
-verified: true
+status: stable
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
 owner: "hamiGenZ document processing pipeline"
 ---
 

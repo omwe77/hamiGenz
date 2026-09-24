@@ -1,11 +1,15 @@
 ---
 type: DocumentType
 title: Nepal Voter Identity Card (नेपाली मतदान परिचय पत्र / Voter ID)
-description: Nepal Voter ID card issued by the Election Commission of Nepal (नेपाल निर्वाचन आयोग). Used for voter identification and as a photo ID.
+description: "Nepal Voter ID card issued by the Election Commission of Nepal (नेपाल निर्वाचन आयोग). Used for voter identification and as a photo ID."
 resource: https://election.gov.np
-tags: [nepal, voter-id, election-commission, identity, official-id, voting]
-status: current
-verified: true
+tags: [nepal, voter-id, election-commission, identity, official-id, voting, मतदान-परिचय-पत्र, नेपाली]
+status: stable
+generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+verified:
+  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+sources:
+  - {title: "Election Commission of Nepal", url: "https://election.gov.np", retrieved_at: "2025-09-24T00:00:00Z"}
 owner: "Election Commission of Nepal / नेपाल निर्वाचन आयोग"
 ---
 
@@ -25,7 +29,7 @@ The voter ID is typically a printed card/document with the following elements:
 - **मतदान परिचय पत्र** — Title: "Voter Identity Card".
 - **Photo** — Passport-sized photograph of the voter.
 - **Name (नाम)** — Full name in Devanagari script.
-- **Father's Name / Husband's Name (बाबुको नाम / सrichmentको नाम)** — Parent or spouse name.
+- **Father's Name / Spouse's Name (बाबुको नाम / सपत्नीको नाम)** — Parent or spouse name.
 - **Citizenship Number (नागरिकता नम्बर)** — Referenced citizenship number.
 - **Voter ID Number (मतदान ID नम्बर)** — Unique voter registration number.
 - **Polling Station / Constituency (निर्वाचन क्षेत्र / मतदान केन्द्र)** — Electoral constituency and polling station details.
