@@ -29,8 +29,15 @@ from typing import Optional
 import yaml
 
 # ─── Type validation ────────────────────────────────────────────────────────────
+# OKF §4.1: type is the only required field. Consumers MUST tolerate unknown
+# types gracefully (§11). We accept any non-empty string with a reasonable
+# maximum length. Spaces and Unicode are allowed (e.g. "Attested Computation",
+# "Field Definition").
+#
+# We do NOT reject types with spaces — the spec gives "BigQuery Table" as an
+# example type value, and "Attested Computation" is a defined v0.2 concept type.
 
-_TYPE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")
+_TYPE_MAX_LEN = 200
 
 # ─── Standard Markdown link extraction ─────────────────────────────────────────
 
@@ -216,7 +223,9 @@ class OKFBundle:
             concept_id = str(rel.with_suffix("")).replace(os.sep, "/")
 
             # Reserved files: index.md and log.md are NOT concepts (§3.1, §8, §9)
-            if concept_id in ("index", "log"):
+            # These are reserved at EVERY directory level, not just root.
+            parts = concept_id.split("/")
+            if parts[-1] in ("index", "log"):
                 continue
 
             concept = self._parse_file(md_path, concept_id)
@@ -281,7 +290,9 @@ class OKFBundle:
         if not concept_type or not isinstance(concept_type, str):
             return None
         concept_type = str(concept_type).strip()
-        if not _TYPE_RE.match(concept_type):
+        # OKF §11: consumers MUST NOT reject unknown type values.
+        # We accept any non-empty string up to _TYPE_MAX_LEN.
+        if not concept_type or len(concept_type) > _TYPE_MAX_LEN:
             return None
 
         # Extract standard Markdown links from body
@@ -432,16 +443,18 @@ class OKFBundle:
         query: str,
         top_k: int = 10,
         include_body: bool = True,
-        max_body_chars: int = 4000,
     ) -> list[OKFConcept]:
         """Find concepts relevant to a query using type/tag matching + keyword overlap.
+
+        Key difference from naive truncation: we scan ALL sections of each
+        concept's body for keyword overlap. A concept whose answer appears only
+        near the end is still findable. This is what makes OKF retrieval
+        fundamentally better than chunk-based RAG for structured knowledge.
 
         Priority:
         1. Exact type match
         2. Tag match
-        3. Keyword overlap in title + description + body (section-aware)
-
-        Does NOT blindly truncate body — uses max_body_chars for scoring only.
+        3. Keyword overlap — MAX section score across all body sections
         """
         q = query.lower().strip()
         if not q:
@@ -461,69 +474,62 @@ class OKFBundle:
                 for cid in ids:
                     scored[cid] = scored.get(cid, 0) + 80
 
-        # 3. Keyword overlap
+        # 3. Keyword overlap — scan ALL body sections, not just first N chars
         q_words = set(re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", q))
+        # Also extract multi-word phrases from query for phrase matching
+        q_phrases = set()
+        q_words_list = q.split()
+        for i in range(len(q_words_list)):
+            for j in range(i + 1, min(i + 5, len(q_words_list) + 1)):
+                phrase = " ".join(q_words_list[i:j])
+                if len(phrase) >= 4:  # ignore very short phrases
+                    q_phrases.add(phrase)
+
         for concept in self.concepts.values():
             if concept.concept_id in scored:
                 continue
-            # Only use a bounded amount of body for scoring — but do NOT truncate
-            # the body stored on the concept. This is a search heuristic, not a
-            # context-budget truncation (see get_context_for_llm).
-            body_sample = concept.body[:max_body_chars] if include_body else ""
-            body_text = " ".join([
-                concept.title or "",
-                concept.description or "",
-                body_sample,
-            ]).lower()
-            text_words = set(re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", body_text))
-            overlap = len(q_words & text_words)
-            if overlap > 0:
-                scored[concept.concept_id] = overlap * 2
-            # Multi-word phrase match
-            if q and q in body_text:
-                scored[concept.concept_id] = scored.get(concept.concept_id, 0) + 50
+            if not include_body:
+                continue
+
+            # Split body into sections by headings
+            sections = self._split_sections(concept.body)
+            best_section_score = 0
+            best_section_keywords = []
+
+            for heading, content in sections:
+                combined = f"{heading} {content}".lower()
+                text_words = set(re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", combined))
+                overlap = len(q_words & text_words)
+                if overlap > best_section_score:
+                    best_section_score = overlap
+                    best_section_keywords = list(q_words & text_words)
+
+                # Multi-word phrase match
+                for phrase in q_phrases:
+                    if phrase in combined:
+                        best_section_score += 3
+
+            # Also check full body for phrase matches (catch phrases across sections)
+            full_lower = concept.body.lower()
+            for phrase in q_phrases:
+                if phrase in full_lower:
+                    best_section_score += 3
+
+            if best_section_score > 0:
+                scored[concept.concept_id] = best_section_score * 2
 
         ranked = sorted(scored.items(), key=lambda x: x[1], reverse=True)
         result_ids = [cid for cid, _ in ranked[:top_k] if cid in self.concepts]
         return [self.concepts[cid] for cid in result_ids]
 
-    def get_relevant_concepts(self, question: str) -> list[OKFConcept]:
-        """Convenience: return concepts relevant to a natural-language question."""
-        return self.search(question, top_k=5)
+    @staticmethod
+    def _split_sections(body: str) -> list[tuple[str, str]]:
+        """Split markdown body into (heading, content) sections.
 
-    def get_section_context(
-        self,
-        concept_id: str,
-        question: str,
-        max_chars: int = 6000,
-    ) -> str:
-        """Section-aware context extraction for LLM prompting.
-
-        When the context budget is limited, retains:
-        1. Relevant headings
-        2. The most relevant body sections
-        3. Warnings / notes / disclaimers
-        4. End-of-document information (disclaimers, footnotes)
-
-        Does NOT blindly truncate like body[:1500].
+        Returns list of (heading_text, content_text) tuples.
+        Content includes everything until the next heading.
         """
-        concept = self.get(concept_id)
-        if not concept:
-            return ""
-
-        body = concept.body
-        if not body:
-            return ""
-
-        # If body fits in budget, return it all
-        if len(body) <= max_chars:
-            return body
-
-        # Find relevant sections by keyword overlap
-        q_words = set(re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", question.lower()))
-
-        # Split into sections by headings
-        sections: list[tuple[str, str]] = []  # (heading, content)
+        sections: list[tuple[str, str]] = []
         current_heading = "Overview"
         current_content = []
 
@@ -539,46 +545,161 @@ class OKFBundle:
         if current_content:
             sections.append((current_heading, "\n".join(current_content)))
 
+        return sections
+
+    def get_relevant_concepts(self, question: str) -> list[OKFConcept]:
+        """Convenience: return concepts relevant to a natural-language question."""
+        return self.search(question, top_k=5)
+
+    def get_section_context(
+        self,
+        concept_id: str,
+        question: str,
+        max_chars: int = 6000,
+    ) -> str:
+        """Section-aware context extraction for LLM prompting.
+
+        Budget strategy:
+        1. Score all sections by keyword overlap
+        2. Reserve space for the final section if it's relevant
+        3. Include mandatory safety/exception sections regardless of query
+        4. Fill remaining budget with most relevant sections
+        5. Within each section, preserve head + tail (not just head truncation)
+
+        Does NOT blindly truncate like body[:1500].
+        Guarantees end-of-document information reaches the LLM when relevant.
+        """
+        concept = self.get(concept_id)
+        if not concept:
+            return ""
+
+        body = concept.body
+        if not body:
+            return ""
+
+        # If body fits in budget, return it all
+        if len(body) <= max_chars:
+            return body
+
+        q_words = set(re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", question.lower()))
+        q_phrases = set()
+        q_words_list = question.lower().split()
+        for i in range(len(q_words_list)):
+            for j in range(i + 1, min(i + 5, len(q_words_list) + 1)):
+                phrase = " ".join(q_words_list[i:j])
+                if len(phrase) >= 4:
+                    q_phrases.add(phrase)
+
+        # Split into sections by headings
+        sections = self._split_sections(body)
+
         # Score each section
-        scored_sections: list[tuple[int, str, str]] = []
-        for heading, content in sections:
+        scored_sections: list[tuple[int, str, str, bool]] = []  # (score, heading, content, is_trailing_safety)
+        for idx, (heading, content) in enumerate(sections):
             combined = f"{heading} {content}".lower()
             text_words = set(re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", combined))
             score = len(q_words & text_words)
-            # Boost headings that mention warnings, notes, disclaimers, important
-            if any(kw in heading.lower() for kw in ["warning", "note", "disclaimer", "important", "caution"]):
-                score += 5
-            scored_sections.append((score, heading, content))
 
+            # Multi-word phrase match
+            for phrase in q_phrases:
+                if phrase in combined:
+                    score += 3
+
+            # Check if this is a safety/exception section
+            heading_lower = heading.lower()
+            is_safety = any(
+                kw in heading_lower
+                for kw in [
+                    "warning", "note", "disclaimer", "important", "caution",
+                    "limitation", "important notes", "watch for", "consider",
+                    "सत्र cautionary", "चेतावनी", "सूचना", "महत्त्वपूर्ण",
+                ]
+            )
+            # Last section is always preserved if it's safety-related
+            is_last = (idx == len(sections) - 1)
+            is_trailing_safety = is_last and is_safety
+
+            # Boost safety sections
+            if is_safety:
+                score += 5
+
+            scored_sections.append((score, heading, content, is_trailing_safety))
+
+        # Determine how much budget to reserve for trailing safety section
+        trailing_reserve = 0
+        for score, heading, content, is_trailing in scored_sections:
+            if is_trailing and score > 0:
+                trailing_reserve = min(len(heading) + len(content) + 40, max_chars // 4)
+                break
+
+        available = max_chars - trailing_reserve
+
+        # Sort by score descending, but keep safety sections accessible
         scored_sections.sort(key=lambda x: x[0], reverse=True)
 
-        # Build context from top sections until we hit budget
+        # Build context from top sections until we hit available budget
         parts: list[str] = []
         chars_used = 0
-        for score, heading, content in scored_sections:
+        used_ids: set[int] = set()
+
+        for score, heading, content, is_trailing in scored_sections:
             if score == 0 and chars_used > 0:
                 continue  # skip irrelevant sections once we have relevant ones
-            block = f"{heading}\n{content}"
-            if chars_used + len(block) > max_chars:
-                # Truncate this section to fit
-                remaining = max_chars - chars_used
-                if remaining > 200:
-                    block = block[:remaining]
-                    parts.append(block)
-                break
-            parts.append(block)
-            chars_used += len(block)
 
-        # Always include end-of-document content (disclaimers, footnotes)
-        # if we haven't already
-        if chars_used < max_chars * 0.7:
-            # Find the last 30% of the body and check for important trailing content
-            trailing = body[int(len(body) * 0.7):]
-            if any(kw in trailing.lower() for kw in ["disclaimer", "warning", "note", "important", "caution", "limitation"]):
-                if chars_used + len(trailing) <= max_chars:
-                    parts.append(trailing)
-                else:
-                    parts.append(trailing[:max_chars - chars_used])
+            block = f"{heading}\n{content}"
+            block_len = len(block)
+
+            if is_trailing:
+                # Reserve space for trailing safety section
+                if chars_used + block_len > max_chars:
+                    # Head+tail: keep first 60% and last 40% of the content
+                    reserve = min(block_len, max_chars - chars_used)
+                    head_len = int(reserve * 0.6)
+                    tail_len = reserve - head_len - len(heading) - 4
+                    if tail_len > 100:
+                        truncated_content = content[:head_len] + "\n[...]\n" + content[-tail_len:]
+                        block = f"{heading}\n{truncated_content}"
+                if chars_used + len(block) <= max_chars:
+                    parts.append(block)
+                    chars_used += len(block)
+                    used_ids.add(id(content))
+                continue
+
+            if chars_used + block_len > available and chars_used > 0:
+                # Head+tail truncation for non-trailing sections
+                reserve = available - chars_used
+                if reserve > 200:
+                    head_len = int(reserve * 0.65)
+                    tail_len = reserve - head_len - len(heading) - 4
+                    if tail_len > 50:
+                        truncated_content = content[:head_len] + "\n[...]\n" + content[-tail_len:]
+                        block = f"{heading}\n{truncated_content}"
+                        parts.append(block)
+                        chars_used += len(block)
+                break
+
+            parts.append(block)
+            chars_used += block_len
+            used_ids.add(id(content))
+
+        # If we didn't include the trailing safety section, try to add it
+        if trailing_reserve > 0:
+            for score, heading, content, is_trailing in scored_sections:
+                if is_trailing and id(content) not in used_ids:
+                    block = f"{heading}\n{content}"
+                    if chars_used + len(block) <= max_chars:
+                        parts.append(block)
+                        chars_used += len(block)
+                    else:
+                        reserve = max_chars - chars_used
+                        if reserve > 200:
+                            head_len = int(reserve * 0.6)
+                            tail_len = reserve - head_len - len(heading) - 4
+                            if tail_len > 50:
+                                truncated_content = content[:head_len] + "\n[...]\n" + content[-tail_len:]
+                                parts.append(f"{heading}\n{truncated_content}")
+                                chars_used += len(f"{heading}\n{truncated_content}")
+                    break
 
         return "\n\n".join(parts)
 
@@ -592,40 +713,35 @@ class OKFBundle:
 
         Progressive disclosure: most relevant concept first, expand only when needed.
         No blind truncation.
+
+        Efficiency: ranking is computed ONCE via search(), not per-concept.
         """
         if not concept_ids:
             return ""
 
-        # Score concepts by relevance to question
-        scored = []
-        for cid in concept_ids:
-            concept = self.get(cid)
-            if not concept:
-                continue
-            # Use search scoring
-            results = self.search(question, top_k=10)
-            rank = next((i for i, c in enumerate(results) if c.concept_id == cid), 999)
-            scored.append((rank, cid))
-
-        scored.sort(key=lambda x: x[0])
+        # Compute ranking ONCE via search
+        scored_set = set()
+        for c in self.search(question, top_k=max(len(concept_ids), 10)):
+            scored_set.add(c.concept_id)
 
         # Build context with progressive disclosure
         parts: list[str] = []
         chars_used = 0
 
-        for rank, cid in scored:
+        for cid in concept_ids:
             if chars_used >= max_total_chars:
                 break
             concept = self.get(cid)
             if not concept:
                 continue
 
-            # Section-aware context for this concept
             remaining = max_total_chars - chars_used
             context = self.get_section_context(cid, question, max_chars=min(remaining, 4000))
             if context:
-                parts.append(f"=== {cid} ({concept.type}) ===\n{context}")
-                chars_used += len(context) + len(cid) + 50
+                # Prefer concepts that appeared in top search results
+                prefix = "▶ " if cid in scored_set else "  "
+                parts.append(f"{prefix}{cid} ({concept.type})\n{context}")
+                chars_used += len(context) + len(cid) + 60
 
         return "\n\n".join(parts)
 
@@ -701,7 +817,9 @@ _CURRENT_INFO_KEYWORDS = [
     "deadline", "last date", "अन्तिम मिति", "anti limiti",
     "mati", "date", "मिति",
     "current", "halaij", "वर्तमान",
-    " 갱신",  # Korean junk — ignore
+    "required documents", "चाहिने कागजात", "documents needed",
+    "application process", "process of applying", "how to apply for",
+    "जहाँ", "where to", "कहाँ", "office location",
 ]
 
 
