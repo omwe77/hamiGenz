@@ -6,8 +6,6 @@ tags: [hamigenz, knowledge-bundle, nepal, official-documents]
 status: stable
 okf_version: "0.2"
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 ---
 
 # hamiGenZ Knowledge Bundle

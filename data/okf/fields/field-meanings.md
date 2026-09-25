@@ -5,8 +5,6 @@ description: What common fields on Nepal official documents mean, what belongs t
 tags: [fields, document-fields, meanings, nepali, identity-documents, reference, क्षेत्र, अर्थ, नेपाली, फेल्ड, पासपोर्ट]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 owner: "hamiGenZ curated knowledge"
 ---
 

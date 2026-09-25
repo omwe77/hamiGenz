@@ -6,8 +6,6 @@ resource: https://nepal.gov.np
 tags: [nepal, citizenship, identity, official-id, citizenship-certificate, नागरिकता, नेपाली, प्रमाणपत्र, नागरिक]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
   - {id: moha, title: "Ministry of Home Affairs, Nepal", resource: "https://mhom.gov.np"}
 owner: "District Administration Office, Ministry of Home Affairs"

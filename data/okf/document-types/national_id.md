@@ -6,8 +6,6 @@ resource: https://nepal.gov.np
 tags: [nepal, identity, national-id, nid, biometric, citizen-id, राष्ट्रिय-परिचय-पत्र, नेपाली]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
   - {id: moha-nid, title: "Ministry of Home Affairs, Nepal", resource: "https://mhom.gov.np"}
 owner: "District Administration Office / National ID Management Center"

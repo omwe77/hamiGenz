@@ -6,8 +6,6 @@ resource: https://election.gov.np
 tags: [nepal, voter-id, election-commission, identity, official-id, voting, मतदान-परिचय-पत्र, नेपाली]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
   - {id: ecn, title: "Election Commission of Nepal", resource: "https://election.gov.np"}
 owner: "Election Commission of Nepal / नेपाल निर्वाचन आयोग"
