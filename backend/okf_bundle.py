@@ -746,11 +746,19 @@ class OKFBundle:
                 if tag and tag.lower() in q:
                     score += 30
                     break
-            # Keyword overlap in body
+            # Keyword overlap in body — check both whole words and content phrases
             body_lower = concept.body.lower()
+            # Word-level overlap
             for word in re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", q):
                 if word in body_lower:
                     score += 5
+            # Also check if any significant phrase from the query appears in body
+            q_words_list = q.split()
+            for i in range(len(q_words_list)):
+                for j in range(i + 1, min(i + 4, len(q_words_list) + 1)):
+                    phrase = " ".join(q_words_list[i:j])
+                    if len(phrase) >= 4 and phrase in body_lower:
+                        score += 3
             scored.append((score, cid))
 
         # Sort by relevance, then by deterministic ID order for ties
@@ -850,6 +858,8 @@ class OKFBundle:
 # These take highest priority when there's no explicit doc_id.
 _DOCUMENT_REF_KEYWORDS = [
     "my document", "मेरो कागजात", "मेरो दस्तावेज",
+    "my passport", "my citizenship", "my voter id", "my nid",
+    "मेरो राहदानी", "मेरो नागरिकता", "मेरो मतदान",
     "this document", "yo document", "yo kagajat",
     "uploaded", "upload garnye", "upload gardeko",
     "the document", "that document", "tyo document",
@@ -891,12 +901,14 @@ _OKF_INTENT_KEYWORDS = [
 _CURRENT_INFO_KEYWORDS = [
     "fee", "fees", "cost", "price", "कति", "शुल्क", "dastur",
     "शुल्क", "rupee", "रु", "rs.", "rs",
+    "kharch", "kharcha", "lagyo", "lagne",
     "deadline", "last date", "अन्तिम मिति", "anti limiti",
     "mati", "date", "मिति",
     "current", "halaij", "वर्तमान",
     "required documents", "चाहिने कागजात", "documents needed",
     "application process", "process of applying", "how to apply for",
     "जहाँ", "where to", "कहाँ", "office location",
+    "requirement", "requirements", "आवश्यक", "चाहिने",
 ]
 
 
@@ -947,10 +959,15 @@ def classify_query(
     #    dynamic facts (fees, deadlines) and OKF for structural facts.
     #    For mixed queries, check if there's a strong current-info signal.
     if wants_current and has_okf_intent:
-        # "What is the passport fee?" → official (fee = dynamic)
-        # "What is a passport?" → OKF (structural)
-        # If the question is short and asks about a fee/cost/deadline, go official
-        if len(q.split()) <= 8 and any(kw in q for kw in ["fee", "cost", "price", "कति", "शुल्क", "deadline", "मिति"]):
+        # What is the passport fee? -> official (fee = dynamic)
+        # What is a passport? -> OKF (structural)
+        # If the question asks about fees, costs, deadlines, requirements,
+        # or current procedures, go official
+        if len(q.split()) <= 10 and any(kw in q for kw in [
+            "fee", "cost", "price", "कति", "शुल्क", "deadline", "मिति",
+            "kharch", "lagyo", "lagne", "required", "requirements",
+            "how to apply", "where to", "कहाँ", "जहाँ",
+        ]):
             return "official"
         # Otherwise, it's a mixed query — prefer OKF for the structural part
         # but the official layer should also be tried

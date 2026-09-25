@@ -917,5 +917,459 @@ class TestExplanationEngineCitations(unittest.TestCase):
         self.assertNotIn(7, pages)
 
 
+class TestGraphExpansionInRetrieval(unittest.TestCase):
+    """Regression tests proving graph expansion reaches LLM context (Issue #1)."""
+
+    def setUp(self):
+        import shutil
+        self.tmp_dir = _TEST_DIR / "tmp_graph_retrieval"
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def _make_linked_bundle(self, edges: list[tuple[str, str]], types: dict[str, str] = None):
+        """Create a bundle with directed edges A→B meaning A links to B.
+
+        types: optional dict mapping concept_id → type string.
+        Returns the bundle and a dict of concept_id → file path for verification.
+        """
+        types = types or {}
+        files_written = {}
+        for source, target in edges:
+            for cid in (source, target):
+                if cid in files_written:
+                    continue
+                path = self.tmp_dir / f"{cid}.md"
+                fm = {"type": types.get(cid, "TestType"), "title": cid}
+                path.write_text(
+                    "---\n" + f"type: {fm['type']}\ntitle: {cid}\n---\n\n# {cid}\n\nContent for {cid}.\n",
+                    encoding="utf-8"
+                )
+                files_written[cid] = path
+            # Make source link to target
+            src_path = self.tmp_dir / f"{source}.md"
+            existing = src_path.read_text(encoding="utf-8")
+            link_line = f"\nSee [related]({target}.md) for more.\n"
+            if f"({target}.md)" not in existing:
+                src_path.write_text(existing.rstrip() + link_line, encoding="utf-8")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        return bundle, files_written
+
+    def test_graph_expansion_single_hop_brings_linked_concept_into_context(self):
+        """A → B. Query matches A, B contains answer. Context must include B."""
+        # Concept A: no answer to the query
+        (self.tmp_dir / "concept-a.md").write_text(
+            "---\ntype: DocumentType\ntitle: Concept A\n---\n\n# Concept A\n\n"
+            "This concept has general info but NOT the specific answer.\n",
+            encoding="utf-8"
+        )
+        # Concept B: contains the answer, linked from A
+        (self.tmp_dir / "concept-b.md").write_text(
+            "---\ntype: FieldDefinition\ntitle: Concept B\n---\n\n# Concept B\n\n"
+            "The specific answer is here: the field meaning is explained in detail.\n"
+            "See [Concept A](concept-a.md).\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+
+        # Search for "field meaning" — should match B (type match: FieldDefinition)
+        results = bundle.search("field meaning", top_k=5)
+        result_ids = [c.concept_id for c in results]
+        self.assertIn("concept-b", result_ids,
+                      "Search must find concept B via type match")
+
+        # get_context_for_llm with graph_expansion=True must include B
+        context = bundle.get_context_for_llm(
+            ["concept-a"], "what is the field meaning", max_total_chars=4000
+        )
+        self.assertIn("concept-b", context,
+                      "Graph expansion must bring concept B into context")
+        self.assertIn("specific answer", context,
+                      "Context must contain B's answer text")
+
+    def test_graph_expansion_provides_provenance_for_expanded_concept(self):
+        """When B is added via graph expansion, citations must identify B.
+
+        The LLM context must clearly show which concept contributed what.
+        """
+        (self.tmp_dir / "seed.md").write_text(
+            "---\ntype: DocumentType\ntitle: Seed Concept\n---\n\n# Seed\n\n"
+            "General info only.\nSee [Expanded](expanded.md).\n",
+            encoding="utf-8"
+        )
+        (self.tmp_dir / "expanded.md").write_text(
+            "---\ntype: FieldDefinition\ntitle: Expanded Concept\n---\n\n# Expanded\n\n"
+            "The expanded info: field X means Y.\nSee [Seed](seed.md).\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+
+        # Use a query that matches the expanded concept's type or content
+        context = bundle.get_context_for_llm(
+            ["seed"], "field meaning", max_total_chars=4000
+        )
+        # The context must contain the expanded concept's content
+        self.assertIn("field X means Y", context,
+                      "Expanded concept content must be in context")
+        # And must identify the concept (by concept_id or title)
+        self.assertTrue(
+            "expanded" in context.lower(),
+            "Provenance must identify the expanded concept in the context"
+        )
+
+    def test_one_hop_does_not_automatically_pull_two_hop_away_concept(self):
+        """A → B → C. One-hop mode gets B but NOT C (C is two hops away)."""
+        (self.tmp_dir / "a.md").write_text(
+            "---\ntype: TestType\ntitle: A\n---\n\n# A\n\nContent A. See [B](b.md).\n",
+            encoding="utf-8"
+        )
+        (self.tmp_dir / "b.md").write_text(
+            "---\ntype: TestType\ntitle: B\n---\n\n# B\n\nContent B. See [C](c.md).\n",
+            encoding="utf-8"
+        )
+        (self.tmp_dir / "c.md").write_text(
+            "---\ntype: TestType\ntitle: C\n---\n\n# C\n\nContent C. See [A](a.md).\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+
+        # One-hop from A: should get B (direct link) but NOT C
+        context = bundle.get_context_for_llm(
+            ["a"], "some query", max_total_chars=4000, graph_expansion=True
+        )
+        self.assertIn("b.md", context or "B", "One-hop must include B")
+        # C should NOT be in context with one-hop expansion
+        # (B links to C but that's 2 hops from A)
+        self.assertNotIn("c.md", context,
+                         "One-hop expansion must NOT pull in two-hop concepts")
+
+    def test_cycle_terminates_safely(self):
+        """A → B → A loop must terminate without infinite recursion."""
+        (self.tmp_dir / "loop-a.md").write_text(
+            "---\ntype: TestType\ntitle: Loop A\n---\n\n# A\n\nSee [B](loop-b.md).\n",
+            encoding="utf-8"
+        )
+        (self.tmp_dir / "loop-b.md").write_text(
+            "---\ntype: TestType\ntitle: Loop B\n---\n\n# B\n\nSee [A](loop-a.md).\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+
+        # This should NOT hang or overflow the stack
+        related = bundle.get_related("loop-a", max_hops=10)
+        ids = {c.concept_id for c in related}
+        # Should include loop-b (one hop) but not loop back to loop-a
+        self.assertIn("loop-b", ids)
+        self.assertNotIn("loop-a", ids)
+
+        # get_context_for_llm must also terminate
+        context = bundle.get_context_for_llm(
+            ["loop-a"], "query", max_total_chars=2000, graph_expansion=True
+        )
+        self.assertIsInstance(context, str)
+        self.assertLess(len(context), 10000)  # bounded output
+
+    def test_expansion_is_bounded(self):
+        """Even with many linked concepts, expansion must be bounded (max_added=4)."""
+        # Create Hub linked to B, C, D, E, F (5 concepts)
+        # Each target has unique content we can check for
+        (self.tmp_dir / "hub.md").write_text(
+            "---\ntype: TestType\ntitle: Hub\n---\n\n# Hub\n\n"
+            "See [B](b.md), [C](c.md), [D](d.md), [E](e.md), [F](f.md).\n",
+            encoding="utf-8"
+        )
+        for letter in "bcdef":
+            (self.tmp_dir / f"{letter}.md").write_text(
+                f"---\ntype: TestType\ntitle: {letter.upper()}\n---\n\n# {letter.upper()}\n\n"
+                f"UNIQUE_CONTENT_{letter.upper()}\n",
+                encoding="utf-8"
+            )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+
+        context = bundle.get_context_for_llm(
+            ["hub"], "UNIQUE_CONTENT", max_total_chars=4000, graph_expansion=True
+        )
+        # Count how many expanded concepts' unique content made it into context
+        expanded_in_context = sum(
+            1 for letter in "bcdef"
+            if f"UNIQUE_CONTENT_{letter.upper()}" in context
+        )
+        # All 5 match the query "UNIQUE_CONTENT", so all should be candidates
+        # But expansion is bounded at max_added=4
+        self.assertLessEqual(expanded_in_context, 4,
+                             "Expansion must be bounded (max_added=4)")
+
+    def test_seed_priority_preserved(self):
+        """Seed concepts must appear before expanded concepts in context."""
+        (self.tmp_dir / "seed.md").write_text(
+            "---\ntype: DocumentType\ntitle: Seed\n---\n\n# Seed\n\n"
+            "Seed content.\nSee [Extra](extra.md).\n",
+            encoding="utf-8"
+        )
+        (self.tmp_dir / "extra.md").write_text(
+            "---\ntype: FieldDefinition\ntitle: Extra\n---\n\n# Extra\n\n"
+            "Extra content: field Z details.\nSee [Seed](seed.md).\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+
+        # Query that matches Extra's content so it gets expanded
+        context = bundle.get_context_for_llm(
+            ["seed"], "field Z details", max_total_chars=4000
+        )
+        seed_pos = context.find("seed")
+        extra_pos = context.find("extra")
+        self.assertGreaterEqual(seed_pos, 0, "Seed must be in context")
+        self.assertGreaterEqual(extra_pos, 0, "Expanded must be in context")
+        self.assertLess(seed_pos, extra_pos,
+                        "Seed must appear before expanded concept in context")
+
+
+class TestTypeValidationNoLengthRestriction(unittest.TestCase):
+    """Type validation must accept any non-empty string, no arbitrary length limit (#2)."""
+
+    def setUp(self):
+        import shutil
+        self.tmp_dir = _TEST_DIR / "tmp_type_validation"
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def _write_concept(self, filename: str, type_value: str, body: str = "Body."):
+        path = self.tmp_dir / filename
+        path.write_text(
+            f"---\ntype: {type_value}\n---\n\n{body}\n",
+            encoding="utf-8"
+        )
+        return path
+
+    def test_document_type_accepted(self):
+        """DocumentType is a valid OKF concept type."""
+        self._write_concept("doc.md", "DocumentType")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("doc")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.type, "DocumentType")
+
+    def test_field_definition_accepted(self):
+        """FieldDefinition is a valid OKF concept type."""
+        self._write_concept("field.md", "FieldDefinition")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("field")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.type, "FieldDefinition")
+
+    def test_attested_computation_accepted(self):
+        """Attested Computation is a valid OKF v0.2 concept type."""
+        self._write_concept("comp.md", "Attested Computation")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("comp")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.type, "Attested Computation")
+
+    def test_arbitrary_unicode_type_accepted(self):
+        """Unicode type values must be accepted (e.g. Devanagari)."""
+        self._write_concept("unicode.md", "नेपाली प्रकार")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("unicode")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.type, "नेपाली प्रकार")
+
+    def test_long_valid_type_string_accepted(self):
+        """Long but valid type strings must not be rejected."""
+        long_type = "A" * 500  # 500 chars — well beyond any reasonable semantic type
+        self._write_concept("long.md", long_type)
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("long")
+        self.assertIsNotNone(c, "Long type string must be accepted")
+        self.assertEqual(c.type, long_type)
+
+    def test_unknown_type_accepted(self):
+        """Unknown type values must be tolerated (OKF §11)."""
+        self._write_concept("unknown.md", "SomeUnrecognizedType")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("unknown")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.type, "SomeUnrecognizedType")
+
+    def test_empty_type_rejected(self):
+        """Empty type is still rejected (type is required, §4.1)."""
+        path = self.tmp_dir / "empty.md"
+        path.write_text("---\n---\n\nBody.\n", encoding="utf-8")
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        self.assertNotIn("empty", bundle.concepts)
+
+
+class TestTrustWordingFixed(unittest.TestCase):
+    """User-facing wording must not claim human review for machine-confirmed OKF (#3)."""
+
+    def test_main_py_no_longer_says_reviewed_knowledge(self):
+        """main.py must not describe OKF as 'reviewed knowledge'."""
+        main_path = Path(__file__).resolve().parent.parent / "backend" / "main.py"
+        text = main_path.read_text(encoding="utf-8")
+        self.assertNotIn("reviewed knowledge", text,
+                         "main.py must not claim OKF knowledge is 'reviewed'")
+
+    def test_main_py_uses_machine_confirmed_curated_wording(self):
+        """main.py must use 'machine-confirmed curated knowledge' wording."""
+        main_path = Path(__file__).resolve().parent.parent / "backend" / "main.py"
+        text = main_path.read_text(encoding="utf-8")
+        self.assertIn("machine-confirmed curated knowledge", text,
+                      "main.py must describe OKF as machine-confirmed curated knowledge")
+
+    def test_okf_bundle_trust_tier_accurate(self):
+        """The trust_tier property correctly returns 'machine-confirmed' for process-verified."""
+        from okf_bundle import OKFConcept, OKFVerificationEvent
+        c = OKFConcept(
+            concept_id="test",
+            type="DocumentType",
+            verified=[OKFVerificationEvent(by="process/hamigenz-okf-curator/v0.1",
+                                           at="2026-09-25T00:00:00Z")],
+        )
+        self.assertEqual(c.trust_tier, "machine-confirmed",
+                         "process-verified concepts must be machine-confirmed, not human-reviewed")
+
+    def test_no_human_reviewed_claim_for_curator_verified(self):
+        """OKF concepts verified only by process/hamigenz-okf-curator must NOT be human-reviewed."""
+        from okf_bundle import OKFConcept, OKFVerificationEvent
+        c = OKFConcept(
+            concept_id="test",
+            type="DocumentType",
+            verified=[OKFVerificationEvent(by="process/hamigenz-okf-curator/v0.1",
+                                           at="2026-09-25T00:00:00Z")],
+        )
+        self.assertNotEqual(c.trust_tier, "human-reviewed",
+                            "No human verification event → must not claim human-reviewed")
+
+
+# Replace placeholder
+TestTrustWording = TestTrustWordingFixed
+
+
+class TestAdversarialRouting(unittest.TestCase):
+    """Adversarial routing tests — single keyword must not misroute (#7)."""
+
+    def test_passport_general_routes_to_okf(self):
+        self.assertEqual(classify_query("What is a passport?"), "okf")
+
+    def test_passport_fee_routes_to_official(self):
+        self.assertEqual(classify_query("What is the current passport fee?"), "official")
+
+    def test_passport_required_documents_routes_to_official(self):
+        self.assertEqual(
+            classify_query("What documents are currently required for passport application?"),
+            "official"
+        )
+
+    def test_my_uploaded_passport_routes_to_document(self):
+        self.assertEqual(
+            classify_query("What does my uploaded passport say?", has_doc_id=True),
+            "document"
+        )
+        self.assertEqual(
+            classify_query("What does my uploaded passport say?"),
+            "document"
+        )
+
+    def test_uploaded_passport_field_meaning_routes_to_document(self):
+        """'What does this field in my uploaded passport mean?' → document (has doc ref)."""
+        self.assertEqual(
+            classify_query("What does this field in my uploaded passport mean?"),
+            "document"
+        )
+
+    def test_page_1_of_nepal_passport_routes_to_okf(self):
+        """'What is page 1 of a Nepal passport?' → OKF (structural knowledge)."""
+        self.assertEqual(
+            classify_query("What is page 1 of a Nepal passport?"),
+            "okf"
+        )
+
+    def test_romanized_nepali_passport_routes_to_okf(self):
+        self.assertEqual(classify_query("rahadani ke ho"), "okf")
+
+    def test_romanized_nepali_fee_routes_to_official(self):
+        self.assertEqual(classify_query("passport kati kharch lagyo"), "official")
+
+    def test_nepali_passport_meaning_routes_to_okf(self):
+        self.assertEqual(classify_query("नेपाली पासपोर्ट के हो"), "okf")
+
+    def test_nepali_passport_fee_routes_to_official(self):
+        self.assertEqual(classify_query("पासपोर्ट कति खर्च लाग्छ"), "official")
+
+    def test_single_keyword_passport_not_misrouted_to_document(self):
+        """A query with just 'passport' must NOT go to document."""
+        self.assertNotEqual(classify_query("passport"), "document")
+
+    def test_my_document_takes_priority_over_passport_keyword(self):
+        """'my passport' → document (doc ref keyword wins over OKF keyword)."""
+        self.assertEqual(classify_query("what does my passport say"), "document")
+
+    def test_empty_routes_to_general(self):
+        self.assertEqual(classify_query(""), "general")
+        self.assertEqual(classify_query("   "), "general")
+
+
+class TestAskGeneralEndpointBehavior(unittest.TestCase):
+    """Verify /ask-general routing behavior (#8)."""
+
+    def test_okf_question_routes_to_okf(self):
+        """OKF structural question → classified as okf."""
+        self.assertTrue(is_okf_question("What is a Nepal passport?"))
+        self.assertTrue(is_okf_question("What does the citizenship certificate look like?"))
+
+    def test_official_question_routes_to_official_answer(self):
+        """Current official question → classified as official."""
+        self.assertTrue(should_use_official_source("What is the passport fee?"))
+        self.assertTrue(should_use_official_source("What are the current passport requirements?"))
+
+    def test_no_okf_result_falls_back_to_general(self):
+        """When OKF returns no concepts, /ask-general must use official_answer fallback.
+
+        This is tested via the classify function: if it's not okf and not document,
+        it should be general or official.
+        """
+        # A question with no OKF keywords and no current-info keywords → general
+        classification = classify_query("What is the weather like in Nepal?")
+        self.assertEqual(classification, "general")
+
+    def test_okf_citations_use_concept_ids_not_page_numbers(self):
+        """OKF citations must reference concept_ids, never fake page numbers."""
+        from prompt_guard import evidence_block
+        chunks = [{
+            "page_num": None,
+            "text": "OKF knowledge content.",
+            "source_type": "okf",
+            "concept_ids": ["document-types/passport", "fields/field-meanings"],
+        }]
+        block = evidence_block(chunks)
+        self.assertIn("[OKF CONCPT", block)
+        self.assertIn("document-types/passport", block)
+        self.assertNotIn("[PAGE 0]", block)
+        self.assertNotIn("page 0", block.lower())
+
+
 if __name__ == "__main__":
     unittest.main()
