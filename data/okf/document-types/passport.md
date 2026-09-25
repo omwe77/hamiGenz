@@ -1,7 +1,7 @@
 ---
 type: DocumentType
 title: Nepal Ordinary Passport
-description: "Structure, fields, and pages of the Nepal ordinary passport (लामो राहदानी). 32-page and 64-page versions exist."
+description: "Structure, fields, and pages of the Nepal ordinary passport (लामो राहदानी). 34-page and 66-page versions exist."
 resource: https://nepalpassport.gov.np
 tags: [nepal, identity, international-travel, official-id, passport, blue-passport, राहदानी, नेपाली, प्रवासी, डाटा पृष्ठ]
 status: stable
@@ -21,7 +21,7 @@ The Nepal ordinary passport (नेपाली राहदानी) is issued
 
 ## Passport structure (page by page)
 
-A standard Nepal passport has **32 pages** (or 64 pages for frequent travelers). The pages are organized as follows:
+- A standard Nepal passport has **34 pages** (or 66 pages for frequent travelers). The pages are organized as follows:
 
 ### Page 1 — Data Page (प्रथम पृष्ठ / डाटा पृष्ठ)
 
