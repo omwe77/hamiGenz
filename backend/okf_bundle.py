@@ -340,7 +340,7 @@ class OKFBundle:
         known_keys = {
             "type", "title", "description", "resource", "tags",
             "generated", "verified", "sources", "status", "stale_after",
-            "okf_version",
+            "okf_version", "owner", "usage_window",
         }
         extra_metadata = {
             k: v for k, v in meta.items()
