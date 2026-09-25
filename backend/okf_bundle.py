@@ -37,7 +37,7 @@ import yaml
 # We do NOT reject types with spaces — the spec gives "BigQuery Table" as an
 # example type value, and "Attested Computation" is a defined v0.2 concept type.
 
-_TYPE_MAX_LEN = 200
+
 
 # ─── Standard Markdown link extraction ─────────────────────────────────────────
 
@@ -291,8 +291,10 @@ class OKFBundle:
             return None
         concept_type = str(concept_type).strip()
         # OKF §11: consumers MUST NOT reject unknown type values.
-        # We accept any non-empty string up to _TYPE_MAX_LEN.
-        if not concept_type or len(concept_type) > _TYPE_MAX_LEN:
+        # Accept any non-empty string — no arbitrary length restriction.
+        # A safety ceiling exists at the filesystem layer (filename length),
+        # not as an OKF semantic restriction.
+        if not concept_type:
             return None
 
         # Extract standard Markdown links from body
@@ -703,13 +705,83 @@ class OKFBundle:
 
         return "\n\n".join(parts)
 
+    def _expand_graph(
+        self,
+        seed_ids: list[str],
+        question: str,
+        max_hops: int = 1,
+        max_added: int = 4,
+    ) -> list[str]:
+        """Expand seed concept IDs by one hop of graph traversal.
+
+        Only includes linked concepts that are relevant to the query.
+        Preserves seed priority — seeds always rank ahead of expansions.
+        Bounded: adds at most max_added concepts.
+        """
+        if not seed_ids or max_hops < 1:
+            return list(seed_ids)
+
+        # Get all related concepts (one-hop, deduped, cycle-protected)
+        all_related: dict[str, OKFConcept] = {}
+        for seed_id in seed_ids:
+            if seed_id not in self.concepts:
+                continue
+            for rel in self.get_related(seed_id, max_hops=max_hops):
+                if rel.concept_id not in seed_ids:
+                    all_related[rel.concept_id] = rel
+
+        if not all_related:
+            return list(seed_ids)
+
+        # Score related concepts by relevance to the query
+        q = question.lower().strip()
+        scored: list[tuple[int, str]] = []
+        for cid, concept in all_related.items():
+            score = 0
+            # Type match
+            if concept.type and concept.type.lower() in q:
+                score += 50
+            # Tag match
+            for tag in concept.tags:
+                if tag and tag.lower() in q:
+                    score += 30
+                    break
+            # Keyword overlap in body
+            body_lower = concept.body.lower()
+            for word in re.findall(r"[\u0900-\u097F]{2,}|[a-z0-9]{2,}", q):
+                if word in body_lower:
+                    score += 5
+            scored.append((score, cid))
+
+        # Sort by relevance, then by deterministic ID order for ties
+        scored.sort(key=lambda x: (-x[0], x[1]))
+
+        # Keep only relevant expansions (score > 0) plus seeds
+        added_ids = [cid for _, cid in scored if _ > 0]
+        # Bound expansion
+        added_ids = added_ids[:max_added]
+
+        # Final order: seeds first (preserve original order), then expansions
+        result = list(seed_ids)
+        for cid in added_ids:
+            if cid not in result:
+                result.append(cid)
+        return result
+
     def get_context_for_llm(
         self,
         concept_ids: list[str],
         question: str,
         max_total_chars: int = 8000,
+        graph_expansion: bool = True,
     ) -> str:
-        """Build LLM-context string from multiple concepts with section-aware selection.
+        """Build LLM-context string from multiple concepts with section-aware selection
+        and optional one-hop graph expansion.
+
+        With graph_expansion=True (default), related concepts discovered via
+        standard Markdown links are added to the context when they are relevant
+        to the query — so a query about "passport field meaning" can bring
+        field-definition concepts into context even when not named explicitly.
 
         Progressive disclosure: most relevant concept first, expand only when needed.
         No blind truncation.
@@ -719,16 +791,21 @@ class OKFBundle:
         if not concept_ids:
             return ""
 
+        # Expand via graph if requested — adds relevant linked concepts
+        working_ids = concept_ids
+        if graph_expansion:
+            working_ids = self._expand_graph(concept_ids, question, max_hops=1, max_added=4)
+
         # Compute ranking ONCE via search
         scored_set = set()
-        for c in self.search(question, top_k=max(len(concept_ids), 10)):
+        for c in self.search(question, top_k=max(len(working_ids), 10)):
             scored_set.add(c.concept_id)
 
         # Build context with progressive disclosure
         parts: list[str] = []
         chars_used = 0
 
-        for cid in concept_ids:
+        for cid in working_ids:
             if chars_used >= max_total_chars:
                 break
             concept = self.get(cid)
