@@ -4,8 +4,9 @@ title: Nepal Document OCR Post-Processing Rules
 description: Rules for cleaning and correcting OCR output from Nepal official documents scanned with Tesseract.
 tags: [ocr, post-processing, nepali, tesseract, correction, cleanup]
 status: stable
+generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 verified:
-  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 owner: "hamiGenZ document processing pipeline"
 ---
 
@@ -30,6 +31,7 @@ Implementation note: use `str.translate()` with a Devanagari-to-Latin digit mapp
 Tesseract can insert spaces where none exist in Devanagari text, especially with complex conjuncts. Common issue: words get split mid-word.
 
 Detection heuristic:
+
 - If a Devanagari word fragment is very short (< 3 characters) and followed by another Devanagari fragment, try joining them.
 - Check against a Nepali dictionary if available; if joined form is a valid word, merge.
 

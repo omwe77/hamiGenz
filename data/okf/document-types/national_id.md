@@ -5,11 +5,11 @@ description: "The Nepal National Identity Card (राष्ट्रिय प�
 resource: https://nepal.gov.np
 tags: [nepal, identity, national-id, nid, biometric, citizen-id, राष्ट्रिय-परिचय-पत्र, नेपाली]
 status: stable
-generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 verified:
-  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
-  - {title: "Ministry of Home Affairs, Nepal", url: "https://mhom.gov.np", retrieved_at: "2025-09-24T00:00:00Z"}
+  - {id: moha-nid, title: "Ministry of Home Affairs, Nepal", resource: "https://mhom.gov.np"}
 owner: "District Administration Office / National ID Management Center"
 ---
 
@@ -31,12 +31,12 @@ The NID card is a PVC smart card (similar to EMV credit card format), typically 
 - **Name (नाम)** — Full name in Devanagari.
 - **Nepali Citizenship Number / नागरिकता नम्बर** — Unique 10-digit (or similar) citizenship number.
 - **Card Number / परिचय पत्र नम्बर** — Unique card ID number (printed and encoded in chip).
-- **Date of Birth (जप्म मिति)** — DD/MM/YYYY.
-- **Gender (लिंग)** — Male / Female.
-- **Blood Group (रगत समूह)** — A+, B+, O+, etc.
-- **Issue Date (जारी मिति)** — Date of issue.
-- **Expiry Date (समाप्त मिति)** — Usually 5 years or 10 years.
-- **Issuing Office (जारी गर्ने कार्यालय)** — District Administration Office name.
+- **Date of Birth** (जन्म मिति) — DD/MM/YYYY.
+- **Gender** (लिंग) — Male / Female.
+- **Blood Group** (रगत समूह) — A+, B+, O+, etc.
+- **Issue Date** (जारी मिति) — Date of issue.
+- **Expiry Date** (समाप्त मिति) — Usually 5 years or 10 years.
+- **Issuing Office** (जारी गर्ने कार्यालय) — District Administration Office name.
 - **Signature of issuing authority** — CDO (Chief District Officer) or authorized officer.
 - **Smart chip indicator** — Contactless chip symbol.
 
@@ -44,8 +44,8 @@ The NID card is a PVC smart card (similar to EMV credit card format), typically 
 
 - **Barcode / QR code** — Machine-readable encoded data.
 - **Father's Name / Mother's Name** (sometimes).
-- **Address (ठेगाना)** — Permanent address.
-- **Caste/Ethnicity (जाति/थर)** — In some versions.
+- **Address** (ठेगाना) — Permanent address.
+- **Caste/Ethnicity** (जाति/थर) — In some versions.
 - **Security features** — Hologram, UV features, microprinting.
 - **Extra fields** depending on card version.
 
@@ -56,6 +56,7 @@ The NID card number is typically a 10-digit numeric or alphanumeric identifier, 
 ## Biometric data (chip)
 
 The embedded chip stores:
+
 - Facial biometric reference
 - Fingerprints (10-print)
 - Demographic data
