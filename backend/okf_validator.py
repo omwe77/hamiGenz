@@ -140,19 +140,11 @@ def validate_concept(concept_path: Path, bundle_dir: Path) -> tuple[bool, list[s
 
 
 def _check_stale_after(value: str, errors: list[str]) -> None:
-    """stale_after must be an absolute ISO date (YYYY-MM-DD) per OKF v0.2."""
-    m = re.match(r"^\d{4}-\d{2}-\d{2}$", value)
-    if not m:
+    """stale_after must be an absolute ISO 8601 datetime per OKF v0.2 §5.5."""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$", value):
         errors.append(
-            f"'stale_after' value '{value}' is not a valid absolute date (YYYY-MM-DD)"
+            f"'stale_after' value '{value}' is not a valid ISO 8601 datetime"
         )
-        return
-    try:
-        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if not (1 <= mo <= 12 and 1 <= d <= 31):
-            errors.append(f"'stale_after' value '{value}' has invalid month/day")
-    except ValueError:
-        errors.append(f"'stale_after' value '{value}' could not be parsed")
 
 
 def _check_generated(generated: dict, errors: list[str]) -> None:
@@ -169,8 +161,16 @@ def _check_generated(generated: dict, errors: list[str]) -> None:
             errors.append(f"'generated.at' value '{at}' is not a valid ISO timestamp")
 
 
-def _check_verified(verified: list, errors: list[str]) -> None:
-    """verified must be a list of {by, at} objects."""
+def _check_verified(verified, errors: list[str]) -> None:
+    """verified must be a list of {by, at} objects, or a bare {by, at} mapping."""
+    if isinstance(verified, dict):
+        # Bare mapping — accept as one-element list (§5.2)
+        if "by" not in verified:
+            errors.append("'verified' mapping missing 'by' field")
+        return
+    if not isinstance(verified, list):
+        errors.append("'verified' must be a list or bare mapping if present")
+        return
     for i, entry in enumerate(verified):
         if not isinstance(entry, dict):
             errors.append(f"'verified' entry {i} must be a mapping")
@@ -180,13 +180,13 @@ def _check_verified(verified: list, errors: list[str]) -> None:
 
 
 def _check_sources(sources: list, errors: list[str]) -> None:
-    """sources must be a list of mappings with at least 'name' or 'id'."""
+    """sources must be a list of mappings with at least 'resource' (required per §5.1)."""
     for i, entry in enumerate(sources):
         if not isinstance(entry, dict):
             errors.append(f"'sources' entry {i} must be a mapping")
             continue
-        if "name" not in entry and "id" not in entry:
-            errors.append(f"'sources' entry {i} missing 'name' or 'id'")
+        if "resource" not in entry:
+            errors.append(f"'sources' entry {i} missing required 'resource' field")
 
 
 def _check_body_syntax(body: str, filename: str, errors: list[str]) -> None:

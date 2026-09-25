@@ -637,20 +637,35 @@ Do NOT treat this as a word-for-word translation. Focus on meaning.
 
     @staticmethod
     def _extract_citations(answer: str, chunks: list[dict]) -> list[dict]:
-        """Extract page references mentioned in the answer."""
+        """Extract page references and OKF concept references mentioned in the answer."""
         citations = []
         pages_mentioned = set()
-        for chunk in chunks:
-            page = chunk.get("page_num")
-            if page and str(page) in answer:
-                pages_mentioned.add(page)
+        concept_ids_mentioned: set[str] = set()
 
+        # Find OKF concept IDs referenced in the answer or evidence
+        for chunk in chunks:
+            source_type = chunk.get("source_type", "document")
+            if source_type == "okf":
+                for cid in chunk.get("concept_ids", []):
+                    concept_ids_mentioned.add(cid)
+            else:
+                page = chunk.get("page_num")
+                if page and str(page) in answer:
+                    pages_mentioned.add(page)
+
+        # Add page citations
         for page in sorted(pages_mentioned):
-            # Find the chunk text for this page
             chunk_texts = [c["text"] for c in chunks if c.get("page_num") == page]
             citations.append({
                 "page": page,
-                "excerpt": chunk_texts[0][:200] if chunk_texts else "",
+                "excerpt": (chunk_texts[0] or "")[:200] if chunk_texts else "",
+            })
+
+        # Add OKF concept citations
+        for cid in sorted(concept_ids_mentioned):
+            citations.append({
+                "concept_id": cid,
+                "source_type": "okf",
             })
 
         return citations
