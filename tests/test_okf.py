@@ -31,6 +31,7 @@ from okf_bundle import (
     OKFSource,
     OKFVerificationEvent,
     classify_query,
+    classify_query_detailed,
     is_okf_question,
     should_use_official_source,
     should_use_document_search,
@@ -668,7 +669,8 @@ class TestRealOKFFiles(unittest.TestCase):
         self.assertEqual(passport.title, "Nepal Ordinary Passport")
         self.assertIn("passport", passport.tags)
         self.assertEqual(passport.effective_status, "stable")
-        self.assertEqual(passport.trust_tier, "machine-confirmed")
+        self.assertEqual(passport.trust_tier, "unverified",
+                         "Generated-only concepts without verification events are unverified")
         # Has sources
         self.assertGreater(len(passport.sources), 0)
         # Has links (standard Markdown)
@@ -1369,6 +1371,222 @@ class TestAskGeneralEndpointBehavior(unittest.TestCase):
         self.assertIn("document-types/passport", block)
         self.assertNotIn("[PAGE 0]", block)
         self.assertNotIn("page 0", block.lower())
+
+
+class TestMetadataPreservation(unittest.TestCase):
+    """Test that producer-defined frontmatter fields are preserved (#3)."""
+
+    def setUp(self):
+        import shutil
+        self.tmp_dir = _TEST_DIR / "tmp_metadata"
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_owner_preserved(self):
+        """owner field must be preserved from frontmatter."""
+        (self.tmp_dir / "test.md").write_text(
+            "---\ntype: TestType\nowner: Test Owner\n---\n\nBody.\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("test")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.owner, "Test Owner")
+
+    def test_usage_window_preserved(self):
+        """usage_window field must be preserved from frontmatter."""
+        (self.tmp_dir / "test.md").write_text(
+            "---\ntype: TestType\nusage_window: 2026-01-01/2027-01-01\n---\n\nBody.\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("test")
+        self.assertIsNotNone(c)
+        self.assertEqual(c.usage_window, "2026-01-01/2027-01-01")
+
+    def test_extra_metadata_still_works(self):
+        """Unknown fields must still be preserved in extra_metadata."""
+        (self.tmp_dir / "test.md").write_text(
+            "---\ntype: TestType\ncustom_field: custom_value\nanother: 123\n---\n\nBody.\n",
+            encoding="utf-8"
+        )
+        bundle = OKFBundle(str(self.tmp_dir))
+        bundle.load()
+        c = bundle.get("test")
+        self.assertIsNotNone(c)
+        self.assertIn("custom_field", c.extra_metadata)
+        self.assertEqual(c.extra_metadata["custom_field"], "custom_value")
+        self.assertEqual(c.extra_metadata["another"], 123)
+
+    def test_owner_from_real_passport(self):
+        """Real passport concept must have owner preserved."""
+        bundle = OKFBundle(str(_OKF_DIR))
+        bundle.load()
+        passport = bundle.get("document-types/passport")
+        self.assertIsNotNone(passport)
+        self.assertIsNotNone(passport.owner)
+        self.assertIn("Passport Department", passport.owner)
+
+
+class TestGeneratedVsVerifiedDistinction(unittest.TestCase):
+    """Test that generated-only concepts are unverified, not machine-confirmed (#2)."""
+
+    def test_generated_only_is_unverified(self):
+        """A concept with only generated (no verified) must be unverified."""
+        from okf_bundle import OKFConcept, OKFVerificationEvent
+        c = OKFConcept(
+            concept_id="test",
+            type="DocumentType",
+            generated={"by": "process/hamigenz-okf-curator/v0.1", "at": "2026-09-25T00:00:00Z"},
+        )
+        self.assertEqual(c.trust_tier, "unverified",
+                         "Generated-only concepts must be unverified")
+        self.assertEqual(len(c.verified), 0)
+
+    def test_generated_plus_verified_is_machine_confirmed(self):
+        """A concept with both generated and verified events is machine-confirmed."""
+        from okf_bundle import OKFConcept, OKFVerificationEvent
+        c = OKFConcept(
+            concept_id="test",
+            type="DocumentType",
+            generated={"by": "process/test/v0.1", "at": "2026-09-25T00:00:00Z"},
+            verified=[OKFVerificationEvent(by="process/test/v0.1", at="2026-09-25T00:00:00Z")],
+        )
+        self.assertEqual(c.trust_tier, "machine-confirmed")
+
+    def test_real_passport_is_unverified(self):
+        """Real passport concept (generated-only) must be unverified."""
+        bundle = OKFBundle(str(_OKF_DIR))
+        bundle.load()
+        passport = bundle.get("document-types/passport")
+        self.assertIsNotNone(passport)
+        self.assertEqual(passport.trust_tier, "unverified",
+                         "Passport has generated but no verified event")
+        self.assertEqual(len(passport.verified), 0,
+                         "Passport should have no verified events")
+
+    def test_real_field_meanings_is_unverified(self):
+        """Real field-meanings concept must be unverified."""
+        bundle = OKFBundle(str(_OKF_DIR))
+        bundle.load()
+        fields = bundle.get("fields/field-meanings")
+        self.assertIsNotNone(fields)
+        self.assertEqual(fields.trust_tier, "unverified")
+
+
+class TestMixedSourceRouting(unittest.TestCase):
+    """Test mixed-source routing for multi-domain queries (#4)."""
+
+    def test_mixed_query_returns_mixed(self):
+        """'What is the passport and what is the current fee?' → mixed."""
+        result = classify_query(
+            "What is the passport and what is the current application fee?"
+        )
+        self.assertEqual(result, "mixed")
+
+    def test_mixed_query_via_conjunction(self):
+        """'पासपोर्ट के हो र वर्तमान शुल्क कति छ?' → mixed."""
+        result = classify_query("पासपोर्ट के हो र वर्तमान शुल्क कति छ?")
+        self.assertEqual(result, "mixed")
+
+    def test_pure_fee_still_official(self):
+        """'What is the passport fee?' → official (not mixed)."""
+        result = classify_query("What is the passport fee?")
+        self.assertEqual(result, "official")
+
+    def test_pure_structural_still_okf(self):
+        """'What is a Nepal passport?' → okf."""
+        result = classify_query("What is a Nepal passport?")
+        self.assertEqual(result, "okf")
+
+    def test_is_okf_question_includes_mixed(self):
+        """is_okf_question should return True for mixed queries too."""
+        self.assertTrue(is_okf_question("What is the passport and what is the current fee?"))
+
+    def test_should_use_official_includes_mixed(self):
+        """should_use_official_source should return True for mixed queries."""
+        self.assertTrue(should_use_official_source("What is the passport and what is the current fee?"))
+
+    def test_classify_query_detailed_mixed(self):
+        """classify_query_detailed returns correct sources for mixed queries."""
+        result = classify_query_detailed(
+            "What is the passport and what is the current fee?"
+        )
+        self.assertEqual(result["primary"], "mixed")
+        self.assertTrue(result["mixed"])
+        self.assertIn("okf", result["sources"])
+        self.assertIn("official", result["sources"])
+
+
+class TestNoDuplicateSearch(unittest.TestCase):
+    """Test that get_context_for_llm avoids duplicate search when precomputed (#5)."""
+
+    def setUp(self):
+        import shutil
+        self.tmp_dir = _TEST_DIR / "tmp_no_duplicate"
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        (self.tmp_dir / "concept.md").write_text(
+            "---\ntype: TestType\n---\n\n# Concept\n\nContent here.\n",
+            encoding="utf-8"
+        )
+        self.bundle = OKFBundle(str(self.tmp_dir))
+        self.bundle.load()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_pre_ranked_skips_internal_search(self):
+        """When _pre_ranked is provided, get_context_for_llm uses it."""
+        # First do a search to get ranked IDs
+        ranked = self.bundle.search("concept", top_k=5)
+        ranked_ids = {c.concept_id for c in ranked}
+
+        # Call get_context_for_llm with pre-ranked set
+        context = self.bundle.get_context_for_llm(
+            ["concept"], "concept", _pre_ranked=ranked_ids
+        )
+        self.assertIn("concept", context)
+
+    def test_without_pre_ranked_still_works(self):
+        """Normal call without _pre_ranked still works."""
+        context = self.bundle.get_context_for_llm(
+            ["concept"], "concept"
+        )
+        self.assertIn("concept", context)
+
+
+class TestCanonicalSpecReference(unittest.TestCase):
+    """Test that the canonical spec URL is correct (#6)."""
+
+    def test_okf_bundle_docstring_has_canonical_url(self):
+        """okf_bundle.py docstring must reference the canonical spec URL."""
+        import inspect
+        from backend.okf_bundle import OKFBundle
+        source = inspect.getsource(OKFBundle)
+        # Check module docstring
+        module_source = inspect.getfile(OKFBundle)
+        with open(module_source, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn(
+            "https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md",
+            text,
+            "Must reference canonical open-knowledge-format spec URL"
+        )
+        self.assertNotIn(
+            "knowledge-catalog",
+            text,
+            "Must NOT reference old knowledge-catalog URL"
+        )
 
 
 if __name__ == "__main__":

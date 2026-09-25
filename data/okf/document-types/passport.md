@@ -6,10 +6,10 @@ resource: https://nepalpassport.gov.np
 tags: [nepal, identity, international-travel, official-id, passport, blue-passport, राहदानी, नेपाली, प्रवासी, डाटा पृष्ठ]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
-  - {id: passport-dept, title: "Nepal Department of Passports", resource: "https://nepalpassport.gov.np"}
+  - {id: passport-dept, title: "Nepal Department of Passports — Official Website", resource: "https://nepalpassport.gov.np"}
+  - {id: mofa, title: "Ministry of Foreign Affairs, Nepal", resource: "https://mofa.gov.np"}
+  - {id: handbook, title: "Passport Office Handbook / Application Guidelines", resource: "https://nepalpassport.gov.np/process/-3"}
 owner: "Passport Department, Ministry of Foreign Affairs"
 ---
 

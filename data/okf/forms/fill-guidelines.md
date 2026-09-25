@@ -5,8 +5,6 @@ description: General guidelines for filling out Nepal government forms, applicat
 tags: [forms, filling, guidelines, nepali, official-documents, application, भर्नु, कसरी, बुझ्न, प्रक्रिया]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 owner: "hamiGenZ curated knowledge"
 ---
 

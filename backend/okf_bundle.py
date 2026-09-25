@@ -14,7 +14,7 @@ For hamiGenZ, OKF replaces the chunking-based RAG approach for curated
 knowledge (document type definitions, field meanings, form guidelines).
 User-uploaded document search still uses VectorStore directly.
 
-Conformance: v0.2 — see https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+Conformance: v0.2 — see https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 """
 
 from __future__ import annotations
@@ -119,6 +119,9 @@ class OKFConcept:
     stale_after: Optional[str] = None  # ISO 8601 datetime
     # Provenance
     sources: list[OKFSource] = field(default_factory=list)
+    # Producer-defined metadata (preserved from frontmatter)
+    owner: Optional[str] = None  # e.g. "Passport Department, Ministry of Foreign Affairs"
+    usage_window: Optional[str] = None  # ISO 8601 datetime range when valid
     # Body + links
     body: str = ""
     links: list[tuple[str, str]] = field(default_factory=list)  # (text, target)
@@ -337,7 +340,7 @@ class OKFBundle:
         known_keys = {
             "type", "title", "description", "resource", "tags",
             "generated", "verified", "sources", "status", "stale_after",
-            "okf_version", "owner", "usage_window",
+            "okf_version",
         }
         extra_metadata = {
             k: v for k, v in meta.items()
@@ -356,6 +359,8 @@ class OKFBundle:
             status=str(meta["status"]) if meta.get("status") else None,
             stale_after=str(meta["stale_after"]) if meta.get("stale_after") else None,
             sources=sources,
+            owner=str(meta["owner"]) if meta.get("owner") else None,
+            usage_window=str(meta["usage_window"]) if meta.get("usage_window") else None,
             body=body.strip(),
             links=links,
             extra_metadata=extra_metadata,
@@ -782,6 +787,7 @@ class OKFBundle:
         question: str,
         max_total_chars: int = 8000,
         graph_expansion: bool = True,
+        _pre_ranked: Optional[set[str]] = None,
     ) -> str:
         """Build LLM-context string from multiple concepts with section-aware selection
         and optional one-hop graph expansion.
@@ -794,8 +800,10 @@ class OKFBundle:
         Progressive disclosure: most relevant concept first, expand only when needed.
         No blind truncation.
 
-        Efficiency: ranking is computed ONCE via search(), not per-concept.
+        Efficiency: when _pre_ranked is provided (set of pre-scored concept IDs),
+        skip the duplicate search — useful when caller already ranked via search().
         """
+
         if not concept_ids:
             return ""
 
@@ -804,10 +812,11 @@ class OKFBundle:
         if graph_expansion:
             working_ids = self._expand_graph(concept_ids, question, max_hops=1, max_added=4)
 
-        # Compute ranking ONCE via search
-        scored_set = set()
-        for c in self.search(question, top_k=max(len(working_ids), 10)):
-            scored_set.add(c.concept_id)
+        # Compute ranking ONCE via search, unless caller precomputed it
+        scored_set: set[str] = _pre_ranked if _pre_ranked is not None else set()
+        if not scored_set:
+            for c in self.search(question, top_k=max(len(working_ids), 10)):
+                scored_set.add(c.concept_id)
 
         # Build context with progressive disclosure
         parts: list[str] = []
@@ -917,19 +926,21 @@ def classify_query(
     has_doc_id: bool = False,
     doc_reference_hint: Optional[str] = None,
 ) -> str:
-    """Classify a user question into one of four buckets:
+    """Classify a user question into one of five buckets:
 
     - 'okf':        Curated knowledge question → route to OKF bundle
     - 'document':   Question about a specific uploaded document → vector search
     - 'official':   Current official Nepal information → official_answer
+    - 'mixed':      Query spanning multiple source types → multi-source response
     - 'general':    General Nepal info / chit-chat / unknown → LLM or official
 
     Routing precedence (highest first):
     1. Explicit doc_id → document
     2. Document reference keywords → document
-    3. Current-info keywords + official intent → official
-    4. OKF intent keywords → okf
-    5. Default → general
+    3. Mixed query detection (structural + current-info) → mixed
+    4. Current-info keywords + official intent → official
+    5. OKF intent keywords → okf
+    6. Default → general
 
     Do NOT let a single word like "passport" decide the route.
     A question containing "passport" AND "fee" should go to official,
@@ -955,22 +966,57 @@ def classify_query(
     # D. OKF intent — structural knowledge about document types, fields, forms
     has_okf_intent = any(kw in q for kw in _OKF_INTENT_KEYWORDS)
 
-    # E. If both current-info and OKF intent, prefer current-info for
-    #    dynamic facts (fees, deadlines) and OKF for structural facts.
-    #    For mixed queries, check if there's a strong current-info signal.
+    # E. If both current-info and OKF intent, check for genuinely mixed queries
+    #    that need both OKF (structural knowledge) AND official (current info).
+    #    A mixed query has substantive questions in BOTH domains — not just
+    #    a keyword overlap.
     if wants_current and has_okf_intent:
-        # What is the passport fee? -> official (fee = dynamic)
-        # What is a passport? -> OKF (structural)
-        # If the question asks about fees, costs, deadlines, requirements,
-        # or current procedures, go official
+        # Detect mixed queries: must have both a structural-OKF question
+        # AND a current-info question in the same sentence.
+        # "What is the passport and what is the current application fee?"
+        # -> structural ("what is passport") + current ("current fee")
+        # vs.
+        # "What is the passport fee?" -> just fee question (official only)
+        has_structural_phrase = any(phrase in q for phrase in [
+            "what is", "के हो", "yo ke ho", "describe", "explain",
+            "structure", "format", "tell me about", "give me info",
+        ])
+        has_current_phrase = any(phrase in q for phrase in [
+            "current", "वर्तमान", "halaij", "fee", "कति", "शुल्क",
+            "cost", "price", "required", "चाहिने", "how to apply",
+            "application process", "deadline", "मिति",
+        ])
+        # Also detect conjunction-based mixed queries: "X and Y" where
+        # X is structural and Y is current-info
+        has_conjunction = " and " in q or " र " in q or " & " in q
+
+        # If there's a conjunction with structural + current phrases, it's mixed
+        if has_conjunction and (has_structural_phrase or has_current_phrase):
+            return "mixed"
+
+        # Pure fee/cost/deadline questions (even with structural keywords)
+        # should go to official, not mixed
+        is_pure_fee_question = len(q.split()) <= 8 and any(kw in q for kw in [
+            "fee", "cost", "price", "कति", "शुल्क", "kharch", "lagyo",
+        ])
+        is_pure_deadline_question = len(q.split()) <= 10 and any(kw in q for kw in [
+            "deadline", "मिति", "mati", "last date", "अन्तिम मिति",
+        ])
+
+        if is_pure_fee_question or is_pure_deadline_question:
+            return "official"
+
+        if (has_structural_phrase and has_current_phrase) or has_conjunction:
+            return "mixed"  # Needs both OKF + official
+
+        # Short queries with fee/cost/deadline keywords → official only
         if len(q.split()) <= 10 and any(kw in q for kw in [
             "fee", "cost", "price", "कति", "शुल्क", "deadline", "मिति",
             "kharch", "lagyo", "lagne", "required", "requirements",
             "how to apply", "where to", "कहाँ", "जहाँ",
         ]):
             return "official"
-        # Otherwise, it's a mixed query — prefer OKF for the structural part
-        # but the official layer should also be tried
+        # Otherwise, prefer OKF for the structural part
         return "okf"
 
     if wants_current:
@@ -984,12 +1030,12 @@ def classify_query(
 
 def is_okf_question(question: str, has_doc_id: bool = False) -> bool:
     """Shorthand: does this question belong in the OKF layer?"""
-    return classify_query(question, has_doc_id=has_doc_id) == "okf"
+    return classify_query(question, has_doc_id=has_doc_id) in ("okf", "mixed")
 
 
 def should_use_official_source(question: str) -> bool:
     """Does this question need current official information?"""
-    return classify_query(question) == "official"
+    return classify_query(question) in ("official", "mixed")
 
 
 def should_use_document_search(
@@ -998,3 +1044,33 @@ def should_use_document_search(
 ) -> bool:
     """Does this question need uploaded-document vector search?"""
     return classify_query(question, has_doc_id=has_doc_id) == "document"
+
+
+def classify_query_detailed(question: str) -> dict:
+    """Return detailed classification with source recommendations.
+
+    Returns dict with:
+        - primary: main classification bucket
+        - sources: list of source types to query (okf, official, document)
+        - mixed: bool indicating multi-source need
+    """
+    q = question.lower().strip()
+    if not q:
+        return {"primary": "general", "sources": [], "mixed": False}
+
+    has_doc = False  # would be passed in real usage
+    primary = classify_query(question)
+
+    sources = []
+    if primary in ("okf", "mixed", "document"):
+        sources.append("okf")
+    if primary in ("official", "mixed"):
+        sources.append("official")
+    if primary == "document":
+        sources.append("document")
+
+    return {
+        "primary": primary,
+        "sources": sources,
+        "mixed": primary == "mixed",
+    }

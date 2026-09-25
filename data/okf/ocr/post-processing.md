@@ -5,8 +5,6 @@ description: Rules for cleaning and correcting OCR output from Nepal official do
 tags: [ocr, post-processing, nepali, tesseract, correction, cleanup]
 status: stable
 generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
-verified:
-  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 owner: "hamiGenZ document processing pipeline"
 ---
 
