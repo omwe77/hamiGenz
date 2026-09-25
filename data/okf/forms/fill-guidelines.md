@@ -4,8 +4,9 @@ title: Nepal Official Form Filling Guidelines
 description: General guidelines for filling out Nepal government forms, application forms, and official documents.
 tags: [forms, filling, guidelines, nepali, official-documents, application, भर्नु, कसरी, बुझ्न, प्रक्रिया]
 status: stable
+generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 verified:
-  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 owner: "hamiGenZ curated knowledge"
 ---
 
@@ -26,10 +27,10 @@ owner: "hamiGenZ curated knowledge"
 | Field label (Nepali) | Field label (English) | What to write |
 |---|---|---|
 | थर / नाम | Name / Surname | Your full name as on citizenship/passport |
-| पिताको नाम / बाबुको नाम | Father's Name | Your father's full name |
+| बाबुको नाम / पिताको नाम | Father's Name | Your father's full name |
 | आमाको नाम | Mother's Name | Your mother's full name |
 | नागरिकता नम्बर | Citizenship No. | Your citizenship certificate number |
-| जप्म मिति | Date of Birth | DD/MM/YYYY format |
+| जन्म मिति | Date of Birth | DD/MM/YYYY format |
 | लिंग | Gender | Male (पुलिंग) / Female (स्त्रीलिंग) |
 | ठेगाना | Address | Your permanent address (house no, ward, VDC/Municipality, district) |
 | सम्पर्क नम्बर | Contact No. | Your phone number |

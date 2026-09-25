@@ -5,11 +5,11 @@ description: "Structure, fields, and pages of the Nepal ordinary passport (ल�
 resource: https://nepalpassport.gov.np
 tags: [nepal, identity, international-travel, official-id, passport, blue-passport, राहदानी, नेपाली, प्रवासी, डाटा पृष्ठ]
 status: stable
-generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 verified:
-  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
-  - {title: "Nepal Department of Passports", url: "https://nepalpassport.gov.np", retrieved_at: "2025-09-24T00:00:00Z"}
+  - {id: passport-dept, title: "Nepal Department of Passports", resource: "https://nepalpassport.gov.np"}
 owner: "Passport Department, Ministry of Foreign Affairs"
 ---
 
@@ -32,8 +32,8 @@ This is the most important page. It contains the holder's personal information i
 - **Surname / Last Name** (उपनाम / नाम) — In the Devanagari and English sections.
 - **Given Names / First Name** (थर / नाम) — Full name in Devanagari and English.
 - **Nationality** (राहदानी धारी / नागरिकता) — "Nepali" / "नेपाली"
-- **Date of Birth** (जप्म मिति) — In DD/MM/YYYY format, in both scripts.
-- **Place of Birth** (जप्म स्थान) — City/Town, District, Nepal.
+- **Date of Birth** (जन्म मिति) — In DD/MM/YYYY format, in both scripts.
+- **Place of Birth** (जन्म स्थान) — City/Town, District, Nepal.
 - **Gender** (लिंग) — Male / Female / Other (नपुंसक / महिला / अन्य).
 - **Issue Date** (जारी मिति) — When the passport was issued.
 - **Expiry Date** (समाप्त मिति) — Usually 5 years or 10 years from issue date depending on passport type.
@@ -73,6 +73,7 @@ This is the most important page. It contains the holder's personal information i
 ## Document number format
 
 Passport numbers in Nepal typically follow patterns like:
+
 - `A-XXXXXX` (older format)
 - `AB-XXXXXXX` (newer format)
 - Alphanumeric, 6-8 characters
@@ -83,6 +84,6 @@ Passport numbers in Nepal typically follow patterns like:
 - Nepali and English text appear side by side on the data page.
 - The MRZ at the bottom uses a standardized format (TD3 passport format) — 2 lines of 44 characters each.
 - OCR should handle both Devanagari and Latin scripts on the same page.
-- See [Field meanings](../fields/field-meanings.md) for what each field on the data page means.
-- See [How to apply](../forms/fill-guidelines.md) for how to apply for a passport.
+- See [Field meanings](fields/field-meanings.md) for what each field on the data page means.
+- See [How to apply](forms/fill-guidelines.md) for how to apply for a passport.
 - The photo page should NOT be confused with visa pages — check the "नेपाल राहदानी" header.

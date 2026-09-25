@@ -5,11 +5,11 @@ description: "Structure and fields of the Nepal Citizenship Certificate — the 
 resource: https://nepal.gov.np
 tags: [nepal, citizenship, identity, official-id, citizenship-certificate, नागरिकता, नेपाली, प्रमाणपत्र, नागरिक]
 status: stable
-generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 verified:
-  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 sources:
-  - {title: "Ministry of Home Affairs, Nepal", url: "https://mhom.gov.np", retrieved_at: "2025-09-24T00:00:00Z"}
+  - {id: moha, title: "Ministry of Home Affairs, Nepal", resource: "https://mhom.gov.np"}
 owner: "District Administration Office, Ministry of Home Affairs"
 ---
 
@@ -30,12 +30,12 @@ The Nepal Citizenship Certificate (नागरिकता प्रमाण�
 - **Name (थर/नाम)** — Full name in Devanagari script.
 - **Father's Name (बाबुको नाम)** — Father's full name.
 - **Mother's Name (आमाको नाम)** — Mother's full name.
-- **Date of Birth (जप्म मिति)** — DD/MM/YYYY format.
-- **Place of Birth (जप्म स्थान)** — Village/Town, District, Nepal.
-- **Gender (लिंग)** — Male / Female.
-- **Address (ठेगाना)** — Permanent address (स्थायी ठेगाना).
-- **Issue Date (जारी मिति)** — Date the certificate was issued.
-- **Issuing Authority (जारी गर्ने अधिकारी)** — District Administration Office name, with signature/stamp/seal.
+- **Date of Birth** (जन्म मिति) — DD/MM/YYYY format.
+- **Place of Birth** (जन्म स्थान) — Village/Town, District, Nepal.
+- **Gender** (लिंग) — Male / Female.
+- **Address** (ठेगाना) — Permanent address (स्थायी ठेगाना).
+- **Issue Date** (जारी मिति) — Date the certificate was issued.
+- **Issuing Authority** (जारी गर्ने अधिकारी) — District Administration Office name, with signature/stamp/seal.
 
 ### Back side (पुस्ता २ — if applicable)
 

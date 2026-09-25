@@ -5,9 +5,9 @@ description: "Curated knowledge about Nepal official documents, identity cards, 
 tags: [hamigenz, knowledge-bundle, nepal, official-documents]
 status: stable
 okf_version: "0.2"
-generated: {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+generated: {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 verified:
-  - {by: "hamiGenZ OKF curator", at: "2025-09-24T00:00:00Z"}
+  - {by: "process/hamigenz-okf-curator/v0.1", at: "2026-09-25T00:00:00Z"}
 ---
 
 # hamiGenZ Knowledge Bundle
@@ -36,3 +36,10 @@ identity cards, and form-filling processes.
 - "What field is on page 3 of the voter ID?"
 - "How do I fill out this form?"
 - "What OCR corrections should I apply to Nepali text?"
+
+## Directory structure
+
+* [Document Types](document-types/) — Passport, Citizenship, NID, Voter ID
+* [Field Definitions](fields/) — What each field on Nepal documents means
+* [Form Filling Guidelines](forms/) — How to fill Nepal government forms
+* [OCR Post-Processing Rules](ocr/) — Rules for cleaning OCR output
