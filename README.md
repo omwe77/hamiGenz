@@ -21,7 +21,8 @@ QUERY ROUTER
 ├── curated/static knowledge → OKF bundle (data/okf/)
 ├── user's uploaded document → FAISS vector search
 ├── current official information → official_answer service
-└── mixed query → controlled multi-source retrieval
+├── mixed query → controlled multi-source retrieval
+└── general fallback → LLM or official_answer
 
 retrieved evidence
 ↓
@@ -201,9 +202,9 @@ Over: confident but unsupported answer.
 
 ```bash
 # Activate venv
-.\\.venv\\Scripts\\Activate.ps1   # PowerShell
+.\.venv\Scripts\Activate.ps1   # PowerShell
 # or
-.venv\\Scripts\\activate.bat      # CMD
+.venv\Scripts\activate.bat      # CMD
 
 # Start backend (Ollama must be running with qwen3:8b loaded)
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
@@ -212,6 +213,24 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 cd frontend
 npm run dev
 ```
+
+## Running Tests
+
+```bash
+# Run the complete test suite
+.venv\Scripts\python -m pytest tests/ -v
+
+# Run OKF tests only
+.venv\Scripts\python -m pytest tests/test_okf.py -v
+
+# Run with coverage summary
+.venv\Scripts\python -m pytest tests/ -v --tb=short
+```
+
+All tests are offline/unit tests. They do not require Ollama to be running.
+The test suite covers OKF bundle loading, search, graph traversal, routing,
+document processing, vector storage, OCR, forms, actions, official answering,
+security, prompt guard, and source registry.
 
 ## API Endpoints
 
@@ -292,7 +311,9 @@ hamigenz/
 │   ├── action_extractor.py    # Requirements/deadlines/fees extraction
 │   ├── form_understanding.py  # Form field detection + explanation
 │   ├── official_answer.py     # Curated official-source answering
-│   └── source_registry.py     # Curated authoritative Nepali sources
+│   ├── source_registry.py     # Curated authoritative Nepali sources
+│   ├── prompt_guard.py        # Prompt injection defense
+│   └── rate_limiter.py        # Per-IP rate limiting
 ├── data/
 │   ├── okf/          # OKF knowledge bundle (markdown concept files)
 │   │   ├── index.md
@@ -304,12 +325,13 @@ hamigenz/
 │   ├── vectors/      # FAISS vector indexes
 │   ├── knowledge/    # Official source knowledge cache
 │   ├── feedback.db   # User feedback SQLite
-│   └── hamigenz.db   # Document metadata + chunk registry
+│   ├── hamigenz.db   # Document metadata + chunk registry
+│   └── knowledge_sources.json  # Curated official source registry data
 ├── frontend/         # Next.js + React
 │   └── src/
 │       ├── components/workspace/   # Explain/document UI
 │       └── lib/hamigenz-api.ts    # API client
-│   └── tests/            # Test suite (282 tests passing)
+├── tests/            # Test suite (282 tests passing)
 └── docs/             # Architecture, evaluation, security docs
 ```
 
