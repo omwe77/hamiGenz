@@ -53,7 +53,7 @@ final answer + citations
 | `backend/main.py` /ask routing | ✅ Complete | OKF routing, section-aware context, no blind truncation, page_num=None for OKF |
 | `backend/main.py` /ask-general | ✅ Complete | Routes structural knowledge to OKF, current info to official_answer |
 | `backend/okf_bundle.py` link parsing | ✅ Complete | Standard Markdown link parsing, not [[...]] custom syntax |
-| Golden query tests | ✅ Complete | 79 tests covering parsing, graph, search, routing, corruption, injection, citations |
+|| Golden query tests | ✅ Complete | 144 tests covering parsing, graph, search, routing, corruption, injection, citations |
 
 ---
 
@@ -91,7 +91,7 @@ Over: confident but unsupported answer.
 - [x] Trust tier is machine-confirmed (process/hamigenz-okf-curator), not human-reviewed
 
 ### Routing (Complete)
-- [x] Four-bucket classification: okf / document / official / general
+- [x] Five-bucket classification: okf / document / official / mixed / general
 - [x] Doc_id precedence for uploaded-document queries
 - [x] Devanagari + English + Romanized Nepali handling
 - [x] Alias support (passport/राहदानी, citizenship/नागरिकता, etc.)
@@ -136,9 +136,9 @@ Over: confident but unsupported answer.
 - [x] Full-body section scanning (not first-N-chars only)
 - [x] Exact concept ID lookup
 - [x] Section relevance scoring across ALL sections
-- [x] Efficient ranking: search() computed once in get_context_for_llm
+- [x] Efficient ranking: normal callers pre-rank concepts once and pass the ranked IDs into get_context_for_llm, avoiding duplicate OKF searches.
 
-### Testing (Complete — 273 tests passing)
+### Testing (Complete — 282 tests passing, 1 skipped)
 - [x] OKF parsing tests (valid/invalid frontmatter, missing type, unknown metadata)
 - [x] Graph tests (links, backlinks, cycles, deduplication)
 - [x] Search tests (English, Nepali, trailing-section retrieval)
@@ -261,7 +261,7 @@ by adding new `.md` concept files — no code changes needed.
 hamiGenZ's OKF concepts are **machine-confirmed** (curated by `process/hamigenz-okf-curator/v0.1`).
 They are NOT human-reviewed. See the OKF spec §5.3 for trust tier derivation.
 
-**OKF spec reference:** https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+**OKF spec reference:** https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 
 ## Limitations
 
@@ -309,7 +309,7 @@ hamigenz/
 │   └── src/
 │       ├── components/workspace/   # Explain/document UI
 │       └── lib/hamigenz-api.ts    # API client
-│   └── tests/            # Test suite (273 tests passing)
+│   └── tests/            # Test suite (282 tests passing)
 └── docs/             # Architecture, evaluation, security docs
 ```
 
