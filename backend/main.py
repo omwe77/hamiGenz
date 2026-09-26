@@ -484,10 +484,12 @@ async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
             if okf_concepts:
                 # Build section-aware context from OKF concepts for the LLM prompt.
                 # No blind truncation — uses section-aware context extraction.
+                # Pass _pre_ranked to skip duplicate search inside get_context_for_llm.
                 okf_context = app.state.okf.get_context_for_llm(
                     [c.concept_id for c in okf_concepts],
                     req.question,
                     max_total_chars=6000,
+                    _pre_ranked={c.concept_id for c in okf_concepts},
                 )
                 if okf_context:
                     evidence.append({
@@ -501,6 +503,36 @@ async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
             # Question references an uploaded document but no doc_id given —
             # fall through to vector search across all documents
             evidence = pipeline.query(None, req.question, top_k=5)
+        elif query_class == "mixed":
+            # Mixed query: structural OKF knowledge + current official info.
+            # Retrieve both as distinct evidence sources with preserved provenance.
+            okf_concepts = app.state.okf.get_relevant_concepts(req.question)
+            if okf_concepts:
+                okf_context = app.state.okf.get_context_for_llm(
+                    [c.concept_id for c in okf_concepts],
+                    req.question,
+                    max_total_chars=6000,
+                    _pre_ranked={c.concept_id for c in okf_concepts},
+                )
+                if okf_context:
+                    evidence.append({
+                        "page_num": None,
+                        "text": okf_context,
+                        "source_type": "okf",
+                        "filename": okf_concepts[0].concept_id,
+                        "concept_ids": [c.concept_id for c in okf_concepts],
+                    })
+            # Current official information (fees, deadlines, procedures)
+            official_result = app.state.official_answer.answer(req.question, lang=response_lang)
+            if official_result.get("answer") and "could not verify" not in official_result.get("answer", "").lower():
+                evidence.append({
+                    "page_num": None,
+                    "text": official_result.get("answer", ""),
+                    "source_type": "official",
+                    "filename": "",
+                    "concept_ids": [],
+                    "official_sources": official_result.get("official_sources", []),
+                })
         # else: general query — evidence stays empty, handled by general path below
 
     if not evidence and not okf_concepts:

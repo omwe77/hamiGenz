@@ -988,7 +988,7 @@ def classify_query(
         ])
         # Also detect conjunction-based mixed queries: "X and Y" where
         # X is structural and Y is current-info
-        has_conjunction = " and " in q or " र " in q or " & " in q
+        has_conjunction = " and " in q or " र " in q or " & " in q or " ra " in q
 
         # If there's a conjunction with structural + current phrases, it's mixed
         if has_conjunction and (has_structural_phrase or has_current_phrase):
