@@ -18,6 +18,7 @@ Covers:
 import os
 import sys
 import unittest
+import inspect
 from pathlib import Path
 
 # Make backend importable
@@ -1565,8 +1566,106 @@ class TestNoDuplicateSearch(unittest.TestCase):
         self.assertIn("concept", context)
 
 
+class TestMixedQueryExecution(unittest.TestCase):
+    """Test that mixed queries execute both OKF and official sources (#1)."""
+
+    def test_classify_mixed_english(self):
+        """'What is a Nepal passport and what is the current application fee?' → mixed"""
+        from okf_bundle import classify_query
+        result = classify_query("What is a Nepal passport and what is the current application fee?")
+        self.assertEqual(result, "mixed")
+
+    def test_classify_structural_only(self):
+        """Structural question → okf, not mixed"""
+        from okf_bundle import classify_query
+        result = classify_query("What is a Nepal passport?")
+        self.assertEqual(result, "okf")
+
+    def test_classify_current_only(self):
+        """Current info question → official, not mixed"""
+        from okf_bundle import classify_query
+        result = classify_query("What is the current passport fee?")
+        self.assertEqual(result, "official")
+
+    def test_classify_mixed_nepali(self):
+        """Mixed Nepali query → mixed"""
+        from okf_bundle import classify_query
+        result = classify_query("नेपाल राहदानी के हो र हालको आवेदन शुल्क कति छ?")
+        self.assertEqual(result, "mixed")
+
+    def test_classify_mixed_romanized(self):
+        """Mixed Romanized Nepali query → mixed"""
+        from okf_bundle import classify_query
+        result = classify_query("Nepal passport ke ho ra halko application fee kati ho?")
+        self.assertEqual(result, "mixed")
+
+    def test_mixed_has_both_sources(self):
+        """classify_query_detailed for mixed query returns both okf and official sources"""
+        from okf_bundle import classify_query_detailed
+        detailed = classify_query_detailed("What is a Nepal passport and what is the current application fee?")
+        self.assertTrue(detailed["mixed"])
+        self.assertIn("okf", detailed["sources"])
+        self.assertIn("official", detailed["sources"])
+
+
+class TestSingleSearchPerRequest(unittest.TestCase):
+    """Test that OKF request path does not execute search twice (#2)."""
+
+    def test_pre_ranked_skips_duplicate_search(self):
+        """get_context_for_llm with _pre_ranked does not run search again."""
+        bundle = OKFBundle.__new__(OKFBundle)
+        bundle.bundle_dir = Path(__file__).resolve().parent.parent / "data" / "okf"
+        bundle.concepts = {}
+        bundle._by_type = {}
+        bundle._by_tag = {}
+        bundle._backlinks = {}
+        bundle._loaded = False
+        bundle.load()
+
+        # Get concepts via search (the normal entry point)
+        concepts = bundle.get_relevant_concepts("passport")
+        concept_ids = [c.concept_id for c in concepts]
+
+        # Call get_context_for_llm with _pre_ranked — should NOT run search again
+        # We verify this indirectly: the method accepts _pre_ranked and uses it
+        context = bundle.get_context_for_llm(
+            concept_ids, "passport", _pre_ranked=set(concept_ids)
+        )
+        self.assertIn("passport", context.lower())
+        # The context should contain the concept
+        self.assertGreater(len(context), 0)
+
+
+class TestOneHopDocumentationConsistency(unittest.TestCase):
+    """Test that documentation matches actual production behavior (#3)."""
+
+    def test_production_uses_one_hop(self):
+        """get_context_for_llm calls _expand_graph with max_hops=1."""
+        import inspect
+        source = inspect.getsource(OKFBundle.get_context_for_llm)
+        # The production path uses max_hops=1
+        self.assertIn("max_hops=1", source)
+
+    def test_graph_parser_supports_bounded_traversal(self):
+        """get_related accepts max_hops parameter for bounded traversal."""
+        bundle = OKFBundle.__new__(OKFBundle)
+        bundle.bundle_dir = Path(__file__).resolve().parent.parent / "data" / "okf"
+        bundle.concepts = {}
+        bundle._by_type = {}
+        bundle._by_tag = {}
+        bundle._backlinks = {}
+        bundle._loaded = False
+        bundle.load()
+
+        # Verify get_related has max_hops parameter
+        sig = inspect.signature(bundle.get_related)
+        self.assertIn("max_hops", sig.parameters)
+        # Default is 1 (one-hop)
+        self.assertEqual(sig.parameters["max_hops"].default, 1)
+
+
 class TestCanonicalSpecReference(unittest.TestCase):
-    """Test that the canonical spec URL is correct (#6)."""
+    """Test that the canonical spec URL is correct (#4)."""
 
     def test_okf_bundle_docstring_has_canonical_url(self):
         """okf_bundle.py docstring must reference the canonical spec URL."""

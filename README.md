@@ -66,7 +66,7 @@ Prefer: "I could not verify this from an authoritative source."
 Over: confident but unsupported answer.
 
 ### OKF Conformance (Complete)
-- [x] OKF v0.2 spec reviewed from GoogleCloudPlatform/knowledge-catalog
+- [x] OKF v0.2 spec reviewed from GoogleCloudPlatform/open-knowledge-format
 - [x] Markdown concept files with YAML frontmatter
 - [x] `type` required, non-empty — any valid string accepted (spaces, Unicode)
 - [x] `status` uses valid values: draft | stable | deprecated
@@ -126,7 +126,7 @@ Over: confident but unsupported answer.
 - [x] Outgoing links extracted from Markdown bodies
 - [x] Reverse/backlinks where useful
 - [x] One-hop related concepts
-- [x] Controlled two-hop traversal with cycle detection
+- [x] Controlled one-hop expansion with cycle detection
 - [x] Progressive disclosure: index → concept → linked → evidence
 
 ### Search Quality (Complete)
