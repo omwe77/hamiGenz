@@ -8,7 +8,7 @@ Replaces the hybrid RAG retriever (BM25 + dense + RRF fusion) with a curated
 knowledge layer based on the Open Knowledge Format spec (Google Cloud, June 2026).
 
 OKF stores knowledge as markdown concept files with YAML frontmatter — one concept
-per file, cross-linked with `[[concept-id]]` references, git-native and diffable.
+per file, cross-linked with standard Markdown links (`[text](../path/to/concept.md)`), git-native and diffable.
 This fixes the core weakness the user identified: RAG shreds documents into
 disconnected chunks, losing structure and relationships (e.g. passport page-1 data
 vs page-N disclaimer become separate chunks with no connection).
@@ -36,7 +36,6 @@ Devanagari + English tags, verified flags, owner metadata, resource links.
 - Updated `backend/main.py` — replace hybrid retriever lifespan with OKF loading;
   add knowledge routing in /ask; OKF-aware grounding notes; fallback message
 - Added `backend/ocr_engines.py` — EasyOCR + TrOCR extended OCR engines
-- Frontend: reset feedback state on workspace clear
 
 ### Added — User feedback loop (thumbs up / down)
 - `POST /feedback` endpoint: record a -1 (thumbs down) or 1 (thumbs up) rating

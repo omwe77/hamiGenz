@@ -138,7 +138,7 @@ Over: confident but unsupported answer.
 - [x] Section relevance scoring across ALL sections
 - [x] Efficient ranking: search() computed once in get_context_for_llm
 
-### Testing (Complete — 198 tests passing)
+### Testing (Complete — 273 tests passing)
 - [x] OKF parsing tests (valid/invalid frontmatter, missing type, unknown metadata)
 - [x] Graph tests (links, backlinks, cycles, deduplication)
 - [x] Search tests (English, Nepali, trailing-section retrieval)
@@ -309,7 +309,7 @@ hamigenz/
 │   └── src/
 │       ├── components/workspace/   # Explain/document UI
 │       └── lib/hamigenz-api.ts    # API client
-├── tests/            # Test suite (198 tests passing)
+│   └── tests/            # Test suite (273 tests passing)
 └── docs/             # Architecture, evaluation, security docs
 ```
 
