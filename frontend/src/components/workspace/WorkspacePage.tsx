@@ -519,6 +519,7 @@ export default function WorkspacePage() {
                     setExplanation(null);
                     setError(null);
                     setSelectedText("");
+                    setFeedback({ rating: null, confirmed: false, aggregate: null });
                   }}
                 >
                   Clear
