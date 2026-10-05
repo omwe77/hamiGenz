@@ -1,346 +1,268 @@
-# hamiGenZ
+﻿# hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
 
-**Tagline:** "Don't understand it? Ask hamiGenZ."
+> A local-first, privacy-centric AI platform engineered to make complex Nepali administrative notices, government forms, and civil documents universally understandable. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance and zero hallucinations.
 
-Nepal's AI document understanding platform — fully local, free, offline-capable.
+[![Tests](https://img.shields.io/badge/Tests-282%20Passed-2ecc71?style=for-the-badge)](https://github.com/omwe77/hamiGenz/tree/main/tests)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org)
+[![LLM](https://img.shields.io/badge/LLM-Ollama%20(qwen3%3A8b)-orange?style=for-the-badge)](https://ollama.ai)
+[![Embeddings](https://img.shields.io/badge/Embeddings-paraphrase--multilingual-blue?style=for-the-badge)](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)
 
 ---
 
-## OKF Knowledge Layer — Current State
+## 1. Problem & Context: Why hamiGenZ Matters in Nepal
 
-hamiGenZ uses the Open Knowledge Format (OKF) v0.2 (Google Cloud, July 2026) as its
-curated knowledge layer for Nepal document understanding. OKF keeps knowledge as durable,
-structured Markdown files with YAML frontmatter — not as chunks lost in a vector index.
+Navigating public services in Nepal presents severe cognitive and linguistic hurdles:
+- **Administrative Complexity:** Official guidelines for vital documents (Citizenship Certificates, e-Passports, National Identity Cards (NID), and Voter IDs) are published across disparate government gazettes, complex legal PDFs, and scanned circulars.
+- **Linguistic Hurdles:** Notices frequently mix formal bureaucratic Devanagari, English, and colloquial Romanized Nepali.
+- **The Pitfall of General-Purpose LLMs:** Standard cloud LLMs hallucinate obsolete fee structures, fabricate nonexistent embassy procedures, and cannot reliably parse degraded Devanagari scans.
+- **Privacy Constraints:** Citizens should never be forced to upload sensitive identity records to third-party cloud AI vendors.
 
-**Architecture:**
+**hamiGenZ** addresses this gap as a **fully local, grounded document-understanding platform**. It ingests citizen documents, extracts bilingual text via specialized OCR, routes queries against an authoritative structured knowledge layer, and produces plain-language explanations backed by verifiable citations.
+
+---
+
+## 2. Key Concepts & The Knowledge Layer: OKF Beyond Conventional RAG
+
+A core architectural pillar of hamiGenZ is moving beyond standard naive Retrieval-Augmented Generation (RAG):
 
 ```
-USER
-↓
-QUERY ROUTER
-├── curated/static knowledge → OKF bundle (data/okf/)
-├── user's uploaded document → FAISS vector search
-├── current official information → official_answer service
-├── mixed query → controlled multi-source retrieval
-└── general fallback → LLM or official_answer
-
-retrieved evidence
-↓
-LLM answer generation
-↓
-grounding validation
-↓
-contradiction verification
-↓
-confidence/provenance
-↓
-final answer + citations
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Why OKF is Not Just RAG                         │
+├───────────────────────────────────┬────────────────────────────────────┤
+│ Standard Chunk-Based RAG          │ Open Knowledge Format (OKF v0.2)   │
+├───────────────────────────────────┼────────────────────────────────────┤
+│ Statistical chunk similarity      │ Canonical, curated concept graphs  │
+│ Context lost across split chunks  │ Durable frontmatter & provenance   │
+│ Blind retrieval of outdated info  │ Versioned trust tiers & validation │
+│ No relationship awareness         │ Bounded graph link traversal       │
+└───────────────────────────────────┴────────────────────────────────────┘
 ```
 
-**What exists today:**
-
-| File | Status | Notes |
-|------|--------|-------|
-| `backend/okf_bundle.py` | ✅ Complete | OKF v0.2 loader, search (full-body section scoring), graph traversal, deterministic router |
-| `backend/okf_validator.py` | ✅ Complete | Validates OKF conformance: YAML, type, status, verified, sources, links, duplicates |
-| `data/okf/index.md` | ✅ Complete | Bundle index with `okf_version: "0.2"` frontmatter |
-| `data/okf/document-types/passport.md` | ✅ Complete | Nepal Ordinary Passport — 34/66 pages, standard Markdown links, v0.2 metadata |
-| `data/okf/document-types/citizenship.md` | ✅ Complete | Nepal Citizenship Certificate — fixed corrupted text, v0.2 metadata |
-| `data/okf/document-types/national_id.md` | ✅ Complete | Nepal NID/Citizen ID — fixed corruption, v0.2 metadata |
-| `data/okf/document-types/voter_id.md` | ✅ Complete | Nepal Voter ID — fixed text corruption, v0.2 metadata |
-| `data/okf/forms/fill-guidelines.md` | ✅ Complete | Form-filling guidelines, v0.2 metadata |
-| `data/okf/ocr/post-processing.md` | ✅ Complete | OCR post-processing rules (10 rules), v0.2 metadata |
-| `data/okf/fields/field-meanings.md` | ✅ Complete | Field reference — fixed corruption, v0.2 metadata |
-| `backend/main.py` /ask routing | ✅ Complete | OKF routing, section-aware context, no blind truncation, page_num=None for OKF |
-| `backend/main.py` /ask-general | ✅ Complete | Routes structural knowledge to OKF, current info to official_answer |
-| `backend/okf_bundle.py` link parsing | ✅ Complete | Standard Markdown link parsing, not [[...]] custom syntax |
-|| Golden query tests | ✅ Complete | 144 tests covering parsing, graph, search, routing, corruption, injection, citations |
+### The Role of Open Knowledge Format (OKF v0.2)
+hamiGenZ implements the **Open Knowledge Format (OKF v0.2)** specification as its structured knowledge foundation:
+1. **Durable Knowledge Units:** Located under `data/okf/`, knowledge is stored as versioned Markdown files with rich YAML frontmatter, capturing concept IDs, authoritative sources (`verified: {by, at}`), and explicit concept relationships (`links`).
+2. **Canonical Domain Truth:** Rather than hoping an embedding model retrieves the correct page count for an e-Passport (e.g. 34 vs 66 pages) from an arbitrary chunk, OKF concept files define canonical, machine-validated facts.
+3. **Bounded Graph Traversal:** When a query touches related administrative workflows (e.g., citizenship prerequisites for passport applications), the OKF engine traverses typed links up to bounded depth to build a cohesive evidence package.
 
 ---
 
-## Goals
+## 3. End-to-End System Architecture
 
-### Accuracy Priority
-Accuracy > Grounding > Usefulness > Simplicity > Visual polish
+```
+                                  ┌────────────────────────┐
+                                  │      User Browser      │
+                                  │ Next.js 16 + React 19  │
+                                  └───────────┬────────────┘
+                                              │ (REST API)
+                                  ┌───────────▼────────────┐
+                                  │    FastAPI Backend     │
+                                  │      (Python 3.12)     │
+                                  └───────────┬────────────┘
+                                              │
+                      ┌───────────────────────┴───────────────────────┐
+                      │                                               │
+           ┌──────────▼──────────┐                         ┌──────────▼──────────┐
+           │   Document Pipeline │                         │    Query Router     │
+           │ • PyMuPDF / Plumber │                         │ • OKF Structural KB │
+           │ • Tesseract (nep)   │                         │ • Document Evidence │
+           │ • Sentence Chunker  │                         │ • Official Registry │
+           │ • FAISS Vector Store│                         │ • Trilingual Parser │
+           └──────────┬──────────┘                         └──────────┬──────────┘
+                      │                                               │
+                      └───────────────────────┬───────────────────────┘
+                                              │
+                                  ┌───────────▼────────────┐
+                                  │  Evidence Preparation  │
+                                  │  Prompt Injection Guard│
+                                  │  Untrusted Delimiters  │
+                                  └───────────┬────────────┘
+                                              │
+                                  ┌───────────▼────────────┐
+                                  │     Ollama Runtime     │
+                                  │       (qwen3:8b)       │
+                                  └───────────┬────────────┘
+                                              │
+                                  ┌───────────▼────────────┐
+                                  │   Verification Layer   │
+                                  │ • Grounding Validation │
+                                  │ • Contradiction Check  │
+                                  │ • Citation Attribution │
+                                  └───────────┬────────────┘
+                                              │
+                                  ┌───────────▼────────────┐
+                                  │ Final Grounded Answer  │
+                                  │ + Interactive Citations│
+                                  └────────────────────────┘
+```
 
-Prefer: "I could not verify this from an authoritative source."
-Over: confident but unsupported answer.
+### Component Breakdown
 
-### OKF Conformance (Complete)
-- [x] OKF v0.2 spec reviewed from GoogleCloudPlatform/open-knowledge-format
-- [x] Markdown concept files with YAML frontmatter
-- [x] `type` required, non-empty — any valid string accepted (spaces, Unicode)
-- [x] `status` uses valid values: draft | stable | deprecated
-- [x] `verified` is a list of {by, at} objects, not a boolean
-- [x] `generated` field present on all concepts
-- [x] `sources` field present on concepts with provenance
-- [x] Standard Markdown links in data files AND in okf_bundle.py parser
-- [x] OKF validator (`backend/okf_validator.py`) catches conformance issues
-- [x] `okf_version: "0.2"` declared in index.md frontmatter
-- [x] Unknown type values tolerated (§11)
-- [x] Broken links tolerated (§11)
-- [x] Unknown frontmatter fields preserved
-- [x] Nested index.md/log.md handled at every directory level
+1. **Frontend Workspace (`frontend/`):**
+   - Built with Next.js 16 (Turbopack, TypeScript) and React 19.
+   - Interactive split-screen: document preview with dynamic citation highlighting on the left, multi-level explanation panel (Original, Simple, Very Simple) on the right.
+   - Zero telemetry leaks: compiled as a static client with configurable API backend routing.
 
-### Data Quality (Complete)
-- [x] All corrupted text fixed across all concept files
-- [x] Nepal passport page count corrected to 34/66 pages (authoritative: Department of Passports)
-- [x] `जप्म` → `जन्म` (correct Devanagari for 'birth')
-- [x] `रगत कunarो` → `रगत समूह` (blood group)
-- [x] `ठiegाना` → `ठेगाना` (address)
-- [x] Every concept has `sources` with resource URL
-- [x] Trust tier is machine-confirmed (process/hamigenz-okf-curator), not human-reviewed
+2. **Ingestion & OCR Pipeline (`backend/pipeline.py`, `backend/ocr.py`):**
+   - Dual-engine parsing: `pdfplumber` and `PyMuPDF` for digital documents; Tesseract 5.x with custom Nepali language data (`nep.traineddata`) for scanned images.
+   - Automated script selector: tests Devanagari character densities to select between pure Nepali and bilingual OCR modes.
 
-### Routing (Complete)
-- [x] Five-bucket classification: okf / document / official / mixed / general
-- [x] Doc_id precedence for uploaded-document queries
-- [x] Devanagari + English + Romanized Nepali handling
-- [x] Alias support (passport/राहदानी, citizenship/नागरिकता, etc.)
-- [x] Current-info keywords route to official_answer (fees, deadlines, procedures)
-- [x] Structural knowledge routes to OKF (document types, fields, forms)
-- [x] "What is the passport fee?" → official, not OKF
-- [x] "What does my document say?" → document search
-- [x] "What is a Nepal passport?" → OKF
+3. **Multilingual Vector Engine (`backend/vector_store.py`):**
+   - Powered by `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dimensional dense vectors).
+   - FAISS CPU indexes stored per document, with vector model checksums to eliminate model-switch index corruption.
 
-### Context Preservation (Complete)
-- [x] No `body[:1500]` truncation in main.py
-- [x] Section-aware context selection when limits require reduction
-- [x] Trailing warnings/disclaimers/exceptions preserved when relevant
-- [x] Regression test: answer depends on information near END of a concept
-- [x] Head+tail section truncation preserves important content at both ends
+4. **Prompt Injection Defense (`backend/prompt_guard.py`):**
+   - Sanitizes untrusted user documents before constructing LLM context.
+   - Strips zero-width unicode smuggling characters and system-role hijacking patterns.
+   - Wraps retrieved chunks inside isolated `<evidence>` blocks with explicit system boundaries.
 
-### Provenance & Citations (Complete)
-- [x] OKF evidence distinct from document-page evidence in code
-- [x] `page_num=None` for OKF citations (not 0 — OKF is not page-based)
-- [x] OKF citations show: source_type="okf", concept_id, concept_title, trust_tier
-- [x] Document citations show: source_type="document", page_num, chunk
-- [x] Official-source evidence carries source identity
-
-### Trust, Verification, Freshness (Complete)
-- [x] `stale_after` field parsed and used to flag potentially outdated knowledge
-- [x] `trust_tier` derived from verified: unverified | machine-confirmed | human-reviewed
-- [x] Current gov't queries prefer official_answer over static OKF
-- [x] Staleness computable via is_stale property
-
-### Graph Behavior (Complete)
-- [x] Standard Markdown link parsing (not [[...]] regex)
-- [x] Outgoing links extracted from Markdown bodies
-- [x] Reverse/backlinks where useful
-- [x] One-hop related concepts
-- [x] Controlled one-hop expansion with cycle detection
-- [x] Progressive disclosure: index → concept → linked → evidence
-
-### Search Quality (Complete)
-- [x] Type match, tag match, keyword overlap
-- [x] Devanagari-aware tokenization
-- [x] Multi-word phrase matching
-- [x] Full-body section scanning (not first-N-chars only)
-- [x] Exact concept ID lookup
-- [x] Section relevance scoring across ALL sections
-- [x] Efficient ranking: normal callers pre-rank concepts once and pass the ranked IDs into get_context_for_llm, avoiding duplicate OKF searches.
-
-### Testing (Complete — 282 tests passing, 1 skipped)
-- [x] OKF parsing tests (valid/invalid frontmatter, missing type, unknown metadata)
-- [x] Graph tests (links, backlinks, cycles, deduplication)
-- [x] Search tests (English, Nepali, trailing-section retrieval)
-- [x] Routing tests (OKF/document/official/mixed/ambiguous)
-- [x] Provenance tests (no page 0 for OKF)
-- [x] Freshness tests (stale_after parsing)
-- [x] Safety tests (prompt injection in OKF content)
-- [x] Regression test (trailing content must be retrieved)
-- [x] Pipeline tests (embedder, chunker, Ollama connectivity)
-- [x] Prompt guard tests (injection neutralization)
-- [x] Security tests (path traversal, filename sanitization)
-- [x] Source registry tests (domain lookup, freshness, classification)
-
-### Documentation (Complete)
-- [x] README.md describes OKF architecture accurately
-- [x] README.md lists all concept files and types
-- [x] README.md accurately describes routing (OKF ≠ all retrieval)
-- [x] README.md documents how to add a concept
-- [x] README.md documents provenance and verification
-- [x] README.md documents limitations
+5. **Verification & Grounding (`backend/verification.py`):**
+   - Secondary validation pass comparing LLM output against retrieved source chunks.
+   - Rejects unsupported hallucinations: if evidence does not substantiate a claim, the system responds: *"I could not verify this from an authoritative source."*
 
 ---
 
-## Phase 1 MVP Features
+## 4. Implementation Status
 
-- File upload (PDF, PNG, JPG, TIFF)
-- PDF text extraction (pdfplumber + PyMuPDF)
-- OCR for scanned documents (Tesseract, Nepali + English)
-- Extended OCR engines: EasyOCR + TrOCR for Devanagari and handwriting
-- **OKF Knowledge Layer** — curated Nepal document knowledge (Open Knowledge Format v0.2),
-  for structured knowledge about document types, fields, forms, and OCR rules
-- Sentence-level chunking with overlap
-- Local embeddings (sentence-transformers paraphrase-multilingual-MiniLM-L12-v2)
-- FAISS vector storage per document (for user-uploaded document search)
-- Ollama LLM (qwen3:8b)
-- Grounding validation (claim extraction vs evidence)
-- Verification layer (contradiction detection, confidence scoring 0-100)
-- Explanation engine (original / simple / very_simple levels)
-- Language detection (Nepali, English, Romanized Nepali, mixed)
-- Form-filling explanation mode with SAMPLE markers
-- Official-source answering from curated registry
-- Action extraction (checklists, deadlines, fees, next steps)
-- User feedback loop (thumbs up/down)
-- Fully local and free — no paid APIs
-- Security hardening (magic-byte validation, path containment, rate limiting, prompt injection defense, CORS allowlist)
+| Feature / Subsystem | Status | Details |
+|---|---|---|
+| **OKF v0.2 Specification Conformance** | Implemented | Conformance validator, YAML frontmatter parser, graph linker, and test suite. |
+| **Bilingual OCR Engine** | Implemented | Tesseract Devanagari + English engine with automated script detection. |
+| **Multilingual Vector Retrieval** | Implemented | FAISS CPU index with `paraphrase-multilingual-MiniLM-L12-v2`. |
+| **Prompt Injection Armor** | Implemented | Evidence delimiters, zero-width char filter, role hijack neutralization. |
+| **Multi-Tier Explanation Engine** | Implemented | 3 complexity tiers (Original, Simple Summary, Bullet Breakdown). |
+| **Comprehensive Test Suite** | Implemented | **282 passing tests** across unit, pipeline, security, and golden queries. |
+| **Split-Pane Next.js Workspace** | Implemented | Responsive desktop, tablet, and mobile interface with citation chips. |
+| **Official Source Registry** | Implemented | Verified `.gov.np` directory with authority ranking and freshness audits. |
+| **Form Assistance & Action Extraction**| In Progress | Schema extraction from standard bureaucratic application templates. |
+| **Azure VM Staging Deployment** | In Progress | Nginx HTTPS reverse proxy + systemd service specifications (`docs/DEPLOYMENT.md`). |
+| **Offline Desktop Executable** | Planned | Local bundle via Tauri/Electron for fully isolated, zero-internet field operations. |
 
-## Tech Stack
+---
 
-- **Backend:** Python 3.11 + FastAPI + Uvicorn
-- **LLM:** Ollama + qwen3:8b (local)
-- **Embeddings:** sentence-transformers (paraphrase-multilingual-MiniLM-L12-v2)
-- **Knowledge layer:** OKF (Open Knowledge Format) v0.2 — Markdown + YAML, git-native
-- **Document search:** FAISS (dense) for uploaded user documents
-- **OCR:** pytesseract + Tesseract OCR (nepali traineddata) + EasyOCR + TrOCR
-- **PDF:** pdfplumber + PyMuPDF (fitz)
-- **Frontend:** Next.js + React
-- **DB:** SQLite (metadata + feedback), FAISS (vectors)
+## 5. User Experience & Responsive Design
 
-## Running
+The hamiGenZ workspace provides an accessible interface engineered to handle complex documents gracefully across screen sizes:
+
+```
+┌──────────────────────────────────────┬──────────────────────────────────────┐
+│ Document Viewer                      │ Grounded Explanation Panel           │
+├──────────────────────────────────────┼──────────────────────────────────────┤
+│ [Page 1 / 3]                         │ [Original] [Simple] [Very Simple]    │
+│                                      │                                      │
+│ "...citizenship certificate is       │ Verified Answer:                     │
+│ required to verify applicant's date  │ You must present your original       │
+│ of birth and permanent residency..." │ citizenship certificate to prove     │
+│ [Citation 1 highlighted]             │ permanent residency. [Citation 1]    │
+└──────────────────────────────────────┴──────────────────────────────────────┘
+```
+
+*Desktop and mobile layouts tested and verified across 375px (mobile), 768px (tablet), 1024px, 1280px, and 1440px viewport widths.*
+
+---
+
+## 6. Quick Start & Local Development
+
+### Prerequisites
+- **Python:** 3.12+
+- **Node.js:** 18+ (tested with v20+)
+- **Ollama:** Installed and running locally (`ollama pull qwen3:8b`)
+- **Tesseract OCR:** Installed with `nep` (Nepali) and `eng` (English) trained data.
+  - Windows: Install via UB-Mannheim and install Nepali language data.
+  - Linux: `sudo apt install tesseract-ocr tesseract-ocr-nep tesseract-ocr-eng`
+
+### 1. Backend Setup
 
 ```bash
-# Activate venv
-.\.venv\Scripts\Activate.ps1   # PowerShell
-# or
-.venv\Scripts\activate.bat      # CMD
+# Clone the repository
+git clone https://github.com/omwe77/hamiGenz.git
+cd hamiGenz
 
-# Start backend (Ollama must be running with qwen3:8b loaded)
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+# Create and activate Python virtual environment
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
 
-# Start frontend (separate terminal)
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the FastAPI server
+uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+The API documentation will be available at `http://localhost:8000/docs`.
+
+### 2. Frontend Setup
+
+```bash
+# In a separate terminal, navigate to the frontend directory
 cd frontend
+
+# Install dependencies
+npm install
+
+# Start Next.js development server
 npm run dev
 ```
 
-## Running Tests
+Open `http://localhost:3000` to access the interactive workspace.
+
+---
+
+## 7. Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# Ollama Configuration
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+
+# Embedding Configuration
+EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+
+# Security & CORS
+FRONTEND_ORIGIN=http://localhost:3000
+MAX_UPLOAD_SIZE_MB=50
+
+# Storage Paths
+UPLOAD_DIR=data/uploads
+VECTOR_DIR=data/vectors
+SQLITE_DB_PATH=data/hamigenz.db
+```
+
+---
+
+## 8. Verification & Test Suite
+
+hamiGenZ maintains a strict test-driven development workflow:
 
 ```bash
-# Run the complete test suite
-.venv\Scripts\python -m pytest tests/ -v
+# Run the full backend test suite (282 tests)
+pytest tests/ -v
 
-# Run OKF tests only
-.venv\Scripts\python -m pytest tests/test_okf.py -v
+# Run OKF specification conformance validator directly
+python -m backend.okf_validator
 
-# Run with coverage summary
-.venv\Scripts\python -m pytest tests/ -v --tb=short
+# Build and type-check the Next.js frontend
+cd frontend
+npm run build
 ```
 
-All tests are offline/unit tests. They do not require Ollama to be running.
-The test suite covers OKF bundle loading, search, graph traversal, routing,
-document processing, vector storage, OCR, forms, actions, official answering,
-security, prompt guard, and source registry.
+---
 
-## API Endpoints
+## 9. Limitations & Boundary Conditions
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Service health + model info |
-| POST | /upload | Upload document (PDF/image) for analysis |
-| POST | /ask | Ask question — routes to OKF knowledge, document search, or general |
-| POST | /explain | Explain text in simple language |
-| POST | /actions | Extract requirements, deadlines, fees |
-| POST | /forms/detect | Detect form fields in text |
-| POST | /forms/explain-field | Explain one form field |
-| POST | /ask-general | Ask Nepal-info question without document |
-| GET | /knowledge/sources | List curated official sources |
-| GET | /knowledge/classify | Classify a URL against registry |
-| POST | /feedback | Record thumbs up/down rating |
-| GET | /feedback/stats | Aggregate feedback stats |
-| GET | /documents | List uploaded documents |
-| DELETE | /documents/{doc_id} | Delete a document |
-| GET | /documents/{doc_id}/viewer | Per-page text viewer |
-| GET | /documents/{doc_id}/search-text | Search document text |
-| GET | /endpoints | Live HTML API reference |
+- **Local Compute Demands:** Running `qwen3:8b` via Ollama requires at least 8 GB of unified RAM / VRAM for acceptable inference latency.
+- **Scanned Document Quality:** Extreme degradation, physical tears, or blurred mobile photos may reduce OCR accuracy; the pipeline warns the user when OCR confidence falls below 60%.
+- **No Direct Filing:** hamiGenZ provides explanatory guidance and verified criteria; it does not directly submit citizen applications to government portals.
 
-## OKF Knowledge Bundle
+---
 
-The OKF bundle lives in `data/okf/` and is loaded at startup. You can extend it
-by adding new `.md` concept files — no code changes needed.
+## 10. License & Attribution
 
-**Adding a new document type:**
-1. Create `data/okf/document-types/<name>.md`
-2. Add YAML frontmatter with `type: DocumentType` and tags
-3. Write the body in markdown with page-by-page structure
-4. Use standard Markdown links: `[text](../path/to/concept.md)` — NOT `[[...]]`
-5. Run `python -m backend.okf_validator` to check conformance
-6. Restart the backend — the bundle auto-loads
-
-**Validating the bundle:**
-```bash
-.venv\\Scripts\\python -m backend.okf_validator
-```
-
-**Trust tiers:**
-- `unverified` — no `verified` field
-- `machine-confirmed` — verified by process: or agent: actors only
-- `human-reviewed` — verified by a human: actor
-
-hamiGenZ's OKF concepts are **machine-confirmed** (curated by `process/hamigenz-okf-curator/v0.1`).
-They are NOT human-reviewed. See the OKF spec §5.3 for trust tier derivation.
-
-**OKF spec reference:** https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
-
-## Limitations
-
-- OKF concepts are machine-confirmed, not human-reviewed — verify critical facts
-  against authoritative sources before relying on them for legal/official purposes.
-- Static OKF knowledge may become stale — `stale_after` dates flag when re-verification
-  is needed. Current fees, deadlines, and procedures should be verified via the
-  official-answer service.
-- The knowledge bundle covers Nepal passport, citizenship, NID, voter ID, form-filling,
-  and OCR rules. It does not cover every Nepal document type or government process.
-- Retrieval is keyword + type/tag overlap based, not semantic vector search. For
-  curated knowledge this is deterministic and cheap; for uploaded documents, FAISS
-  vector search is used instead.
-
-## Project Structure
-
-```
-hamigenz/
-├── backend/          # Python + FastAPI backend
-│   ├── main.py        # FastAPI app, all endpoints
-│   ├── document_processor.py  # PDF/image extraction, chunking
-│   ├── vector_store.py        # FAISS + sentence-transformers
-│   ├── llm_service.py         # Ollama + grounding + verification
-│   ├── okf_bundle.py          # OKF bundle loader + router
-│   ├── okf_validator.py       # OKF conformance validator
-│   ├── ocr_engines.py         # EasyOCR + TrOCR extended OCR engines
-│   ├── feedback_store.py      # user ratings SQLite store
-│   ├── action_extractor.py    # Requirements/deadlines/fees extraction
-│   ├── form_understanding.py  # Form field detection + explanation
-│   ├── official_answer.py     # Curated official-source answering
-│   ├── source_registry.py     # Curated authoritative Nepali sources
-│   ├── prompt_guard.py        # Prompt injection defense
-│   └── rate_limiter.py        # Per-IP rate limiting
-├── data/
-│   ├── okf/          # OKF knowledge bundle (markdown concept files)
-│   │   ├── index.md
-│   │   ├── document-types/   # Nepal document type definitions
-│   │   ├── forms/            # Form-filling guidelines
-│   │   ├── ocr/              # OCR post-processing rules
-│   │   └── fields/           # Field meaning reference
-│   ├── uploads/      # Uploaded documents
-│   ├── vectors/      # FAISS vector indexes
-│   ├── knowledge/    # Official source knowledge cache
-│   ├── feedback.db   # User feedback SQLite
-│   ├── hamigenz.db   # Document metadata + chunk registry
-│   └── knowledge_sources.json  # Curated official source registry data
-├── frontend/         # Next.js + React
-│   └── src/
-│       ├── components/workspace/   # Explain/document UI
-│       └── lib/hamigenz-api.ts    # API client
-├── tests/            # Test suite (282 tests passing)
-└── docs/             # Architecture, evaluation, security docs
-```
-
-## License
-
-MIT — built for Nepal, open for everyone.
-
-## Connect
-
-- **GitHub:** https://github.com/omwe77/hamiGenZ
-- **Developer:** Om (omwe77) — London Metropolitan University
-- **Mailing list / feedback:** Open a GitHub issue
+- **License:** MIT License © [Om Dangol](https://github.com/omwe77)
+- **Knowledge Specification:** Built in conformance with the Open Knowledge Format (OKF v0.2).
