@@ -28,8 +28,10 @@
   --color-evidence-border: #7dd3fc;
   --color-nepal-red: #c8102e;
   --color-nepal-blue: #003893;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  /* Next.js loads Plus Jakarta Sans as --font-sans-loaded, Source Serif 4 as --font-serif-loaded.
+     Fall through to system fonts when the custom property hasn't been set yet. */
+  --font-sans: var(--font-sans-loaded, 'Plus Jakarta Sans'), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif: var(--font-serif-loaded, 'Source Serif 4'), Georgia, 'Times New Roman', serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   /* Devanagari / Nepali script font stack — falls back through system fonts that
      ship Devanagari glyphs. On Windows this resolves to Mangal / Kokila / Noto
@@ -239,6 +241,22 @@ a:hover { color: var(--color-accent-hover); }
   }
 }
 
+/* ── Homepage capability + trust grids (inline styles can't be responsive) */
+@media (max-width: 860px) {
+  .caps-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .trust-grid {
+    grid-template-columns: 1fr !important;
+    gap: var(--space-10) !important;
+  }
+}
+@media (max-width: 520px) {
+  .caps-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   #doc-card, #scanline, [data-scroll-step],
   #hero-title, #hero-sub, #hero-ctas, #final-cta {
@@ -275,4 +293,23 @@ a:hover { color: var(--color-accent-hover); }
 .reveal.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ── Skip-to-content link (keyboard / screen-reader accessibility) */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: var(--space-4);
+  z-index: 9999;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent);
+  color: white;
+  border-radius: var(--radius-md);
+  font-weight: var(--font-semibold);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  transition: top var(--duration-fast) var(--ease-default);
+}
+.skip-link:focus {
+  top: var(--space-4);
 }
