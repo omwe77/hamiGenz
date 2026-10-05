@@ -90,28 +90,34 @@ export default function ExplanationPanel({
 
   return (
     <div style={styles.container}>
-      {/* Header */}
-      <div style={styles.header}>
-        <h2 style={styles.title}>Your explanation</h2>
-        <div style={styles.metaRow}>
-          <span style={styles.metaBadge}>
-            Language: {language_used}
-          </span>
-          <span style={styles.metaBadge}>
-            Level: {expData.explanation_level}
-          </span>
+      {/* 1. User's Question (Context) */}
+      {expData.question && (
+        <div style={styles.questionBlock}>
+          <span style={styles.sectionLabel}>Your Question</span>
+          <h3 style={styles.questionText}>“{expData.question}”</h3>
         </div>
+      )}
+
+      {/* 2. Primary Plain-Language Answer */}
+      <div style={styles.answerSection}>
+        <div style={styles.answerHeader}>
+          <span style={styles.sectionLabel}>Plain-Language Explanation</span>
+          <div style={styles.metaRow}>
+            <span style={styles.metaText}>{language_used}</span>
+            <span style={styles.metaDot}>·</span>
+            <span style={styles.metaText}>{expData.explanation_level}</span>
+          </div>
+        </div>
+        <div style={styles.answerBody}>{renderAnswer(expData.answer)}</div>
       </div>
 
-      {/* Answer content */}
-      <div style={styles.answerBox}>
-        <div style={styles.answer}>{renderAnswer(expData.answer)}</div>
-      </div>
-
-      {/* Citations */}
+      {/* 3. Evidence / Citations */}
       {citations && citations.length > 0 && (
         <div style={styles.citationsSection}>
-          <h3 style={styles.sectionTitle}>Evidence</h3>
+          <div style={styles.sectionHeader}>
+            <span style={styles.sectionLabel}>Verified Source Evidence ({citations.length})</span>
+            <span style={styles.citationHelpText}>Click an excerpt to inspect page proof</span>
+          </div>
           <div style={styles.citations}>
             {citations.map((c, i) => (
               <button
@@ -127,10 +133,12 @@ export default function ExplanationPanel({
                 aria-label={`Jump to citation excerpt on page ${c.page}`}
               >
                 <div style={styles.citationHeader}>
-                  <span style={styles.citationPageNum}>Page {c.page}</span>
-                  <span style={styles.citationBadge}>Verified excerpt</span>
+                  <span style={styles.citationPageNum}>📄 Page {c.page}</span>
+                  <span style={styles.citationInspectHint}>
+                    {activeCitation === c.page ? "Highlighted" : "Inspect →"}
+                  </span>
                 </div>
-                <p style={styles.citationExcerpt}>{c.excerpt}</p>
+                <p style={styles.citationExcerpt}>“{c.excerpt}”</p>
               </button>
             ))}
           </div>
@@ -217,113 +225,148 @@ const styles: Record<string, React.CSSProperties> = {
     background: "var(--color-surface)",
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-xl)",
-    padding: "var(--space-5)",
-    gap: "var(--space-4)",
+    padding: "var(--space-6)",
+    gap: "var(--space-5)",
     overflow: "auto",
   } as React.CSSProperties,
-  header: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: "var(--space-3)",
-    flexWrap: "wrap",
+  questionBlock: {
+    padding: "var(--space-3) var(--space-4)",
+    background: "var(--color-bg-alt)",
+    borderLeft: "3px solid var(--color-accent)",
+    borderRadius: "0 var(--radius-md) var(--radius-md) 0",
   } as React.CSSProperties,
-  title: {
-    fontSize: "var(--text-xl)",
-    fontWeight: "var(--font-bold)",
+  sectionLabel: {
+    display: "block",
+    fontSize: "11px",
+    fontWeight: "var(--font-semibold)",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "var(--color-text-tertiary)",
+    marginBottom: "4px",
+  } as React.CSSProperties,
+  questionText: {
+    fontFamily: "var(--font-devanagari)",
+    fontSize: "var(--text-base)",
+    fontWeight: "var(--font-semibold)",
     color: "var(--color-text-primary)",
     margin: 0,
+    lineHeight: 1.5,
+  } as React.CSSProperties,
+  answerSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--space-2)",
+  } as React.CSSProperties,
+  answerHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: "var(--space-2)",
+    borderBottom: "1px solid var(--color-border)",
   } as React.CSSProperties,
   metaRow: {
     display: "flex",
-    gap: "var(--space-2)",
-    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
   } as React.CSSProperties,
-  metaBadge: {
-    padding: "2px 8px",
-    background: "var(--color-bg-alt)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-sm)",
-    fontSize: "var(--text-xs)",
-    color: "var(--color-text-secondary)",
+  metaText: {
+    fontSize: "11px",
+    color: "var(--color-text-tertiary)",
     fontWeight: "var(--font-medium)",
+    textTransform: "capitalize",
   } as React.CSSProperties,
-  answerBox: {
-    flex: 1,
-    background: "var(--color-bg)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-lg)",
-    padding: "var(--space-4)",
-    overflow: "auto",
+  metaDot: {
+    fontSize: "11px",
+    color: "var(--color-text-tertiary)",
   } as React.CSSProperties,
-  answer: {
+  answerBody: {
     fontFamily: "var(--font-devanagari)",
-    fontSize: "var(--text-sm)",
-    lineHeight: 1.75,
+    fontSize: "1rem", /* 16px */
+    lineHeight: 1.85,
     color: "var(--color-text-primary)",
+    paddingTop: "var(--space-2)",
   } as React.CSSProperties,
   citationsSection: {
     borderTop: "1px solid var(--color-border)",
     paddingTop: "var(--space-4)",
   } as React.CSSProperties,
-  sectionTitle: {
-    fontSize: "var(--text-sm)",
-    fontWeight: "var(--font-semibold)",
-    color: "var(--color-text-primary)",
-    margin: "0 0 var(--space-3) 0",
-  } as React.CSSProperties,
-  citations: {
+  sectionHeader: {
     display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "var(--space-3)",
     flexWrap: "wrap",
     gap: "var(--space-2)",
   } as React.CSSProperties,
+  citationHelpText: {
+    fontSize: "11px",
+    color: "var(--color-text-tertiary)",
+  } as React.CSSProperties,
+  citationInspectHint: {
+    fontSize: "11px",
+    fontWeight: "var(--font-semibold)",
+    color: "var(--color-accent)",
+  } as React.CSSProperties,
+  citations: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+    gap: "var(--space-3)",
+  } as React.CSSProperties,
   citationCard: {
-    flex: "1 1 200px",
     display: "flex",
     flexDirection: "column",
-    padding: "var(--space-3)",
+    padding: "var(--space-3) var(--space-4)",
     background: "var(--color-surface)",
     border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-md)",
+    borderRadius: "var(--radius-lg)",
     cursor: "pointer",
     textAlign: "left",
     font: "inherit",
     appearance: "none",
-    maxWidth: "320px",
     boxShadow: "var(--shadow-sm)",
-    transition: "border-color var(--duration-fast) var(--ease-default), background var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default)",
+    transition: "all var(--duration-fast) var(--ease-default)",
   } as React.CSSProperties,
   citationCardActive: {
-    borderColor: "var(--color-accent)",
-    background: "var(--color-accent-soft)",
-    boxShadow: "0 0 0 2px var(--color-accent-soft)",
+    borderColor: "var(--color-citation-border)",
+    background: "var(--color-citation)",
+    boxShadow: "0 0 0 2px var(--color-citation-border), var(--shadow-sm)",
+    transform: "translateY(-1px)",
   } as React.CSSProperties,
   citationHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     width: "100%",
-    marginBottom: "var(--space-1)",
+    marginBottom: "var(--space-2)",
   } as React.CSSProperties,
   citationBadge: {
     fontSize: "10px",
-    fontWeight: "var(--font-medium)",
-    color: "var(--color-text-tertiary)",
-    background: "var(--color-bg-alt)",
-    padding: "1px 6px",
+    fontWeight: "var(--font-semibold)",
+    color: "var(--color-citation-text)",
+    background: "rgba(245, 158, 11, 0.15)",
+    padding: "2px 8px",
     borderRadius: "var(--radius-full)",
-    border: "1px solid var(--color-border)",
+    border: "1px solid var(--color-citation-border)",
+    letterSpacing: "0.03em",
   } as React.CSSProperties,
   citationPageNum: {
-    fontSize: "var(--text-sm)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "var(--text-xs)",
     fontWeight: "var(--font-bold)",
     color: "var(--color-accent)",
   } as React.CSSProperties,
   citationExcerpt: {
-    fontSize: "var(--text-xs)",
+    fontFamily: "var(--font-devanagari)",
+    fontSize: "12px",
     color: "var(--color-text-secondary)",
-    lineHeight: 1.5,
+    lineHeight: 1.6,
     margin: 0,
+    display: "-webkit-box",
+    WebkitLineClamp: 3,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
   } as React.CSSProperties,
   noCitations: {
     padding: "var(--space-3)",
