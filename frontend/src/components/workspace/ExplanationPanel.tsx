@@ -10,7 +10,9 @@ type Props = {
   explanation: ExplainResponse;
   onCitationClick: (c: { page: number; excerpt: string }) => void;
   activeCitation: number | null;
-  onClearCitation: () => void;
+  /** @deprecated kept for call-site compat; no longer used internally */
+  onClearCitation?: () => void;
+  /** @deprecated kept for call-site compat; no longer used internally */
   docId?: string;
   sourceUnavailable?: boolean;
 };
