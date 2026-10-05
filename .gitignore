@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.so
@@ -65,3 +65,10 @@ frontend/.env.local
 # Testing scratch data
 tests/data/
 tests/ocr_tests/
+tests/tmp_graph/
+tests/tmp_search/
+
+# Agent / Tooling scratch
+.claude/
+.codex/
+.playwright-mcp/
