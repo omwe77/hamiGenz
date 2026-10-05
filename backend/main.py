@@ -14,7 +14,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -182,6 +182,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(LLMUnavailableError)
+async def llm_unavailable_handler(request: Request, exc: LLMUnavailableError):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "The explanation service is temporarily unavailable. Please make sure the local AI backend is running and try again."},
+    )
 
 
 # ─── Pydantic Models ─────────────────────────────────────────────
