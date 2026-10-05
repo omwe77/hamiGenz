@@ -41,10 +41,10 @@ const LOADING_STAGES = [
 ];
 
 const EXAMPLE_PROMPTS = [
-  "यो सूचनामा वास्तवमा के भन्न खोजिएको हो?",
-  "yo notice ko simple meaning ke ho?",
-  "passport banauna k k chainxa?",
-  "What do I need to submit?",
+  { tag: "📜 Notice", text: "यो सूचनामा वास्तवमा के भन्न खोजिएको हो?" },
+  { tag: "🔤 Romanized", text: "yo notice ko simple meaning ke ho?" },
+  { tag: "🛂 Passport", text: "passport banauna k k chainxa?" },
+  { tag: "📋 Checklist", text: "What do I need to submit?" },
 ];
 
 export default function WorkspacePage() {
@@ -377,7 +377,7 @@ export default function WorkspacePage() {
   return (
     <div style={styles.wrap}>
       {/* ── Header ──────────────────────────────────────────────────── */}
-      <header style={styles.header}>
+      <header className="glass-header" style={styles.header}>
         <div style={styles.headerInner}>
           <Link href="/" style={styles.brand} aria-label="hamiGenZ home">
             <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -412,7 +412,7 @@ export default function WorkspacePage() {
         {activeTab === "explain" && (
           <div className="ws-grid-2" style={styles.explainLayout}>
             {/* Left: input panel */}
-            <div style={styles.inputPanel}>
+            <div className="glass-card" style={{ ...styles.inputPanel, padding: "var(--space-6)", borderRadius: "var(--radius-xl)" }}>
               <div style={styles.panelHeader}>
                 <h2 style={styles.panelTitle}>What do you want to understand?</h2>
                 <p style={styles.panelSubtitle}>
@@ -482,11 +482,18 @@ export default function WorkspacePage() {
                 <div style={styles.examplesRow}>
                   {EXAMPLE_PROMPTS.map((ex) => (
                     <button
-                      key={ex}
-                      style={styles.exampleChip}
-                      onClick={() => setInputText(ex)}
+                      key={ex.text}
+                      style={{
+                        ...styles.exampleChip,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "var(--space-2)",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                      }}
+                      onClick={() => setInputText(ex.text)}
                     >
-                      {ex}
+                      <span style={{ fontSize: "11px", opacity: 0.9 }}>{ex.tag}</span>
+                      <span>{ex.text}</span>
                     </button>
                   ))}
                 </div>
@@ -577,7 +584,7 @@ export default function WorkspacePage() {
             </div>
 
             {/* Right: explanation output */}
-            <div style={styles.outputPanel}>
+            <div className="glass-card" style={{ ...styles.outputPanel, padding: "var(--space-6)", borderRadius: "var(--radius-xl)" }}>
               {!explanation ? (
                 <div style={styles.emptyState}>
                   <div style={styles.emptyIcon}>

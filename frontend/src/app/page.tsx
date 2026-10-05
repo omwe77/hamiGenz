@@ -6,6 +6,7 @@ import Link from "next/link";
 /* ── Homepage with anime.js scroll storytelling ───────── */
 export default function Home() {
   const [animeReady, setAnimeReady] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"notice" | "simplified">("simplified");
   const animeFnRef = useRef<typeof import("animejs").animate | null>(null);
 
   useEffect(() => {
@@ -49,20 +50,23 @@ export default function Home() {
     // Stagger delay callback (v4 FunctionValue: (target?, index?, targets?, prevTween?) => number)
     const stagger = (base: number) => (_target?: unknown, i = 0): number => i * base;
 
+    const heroBadge = document.getElementById("hero-badge");
     const heroTitle = document.getElementById("hero-title");
     const heroSub = document.getElementById("hero-sub");
     const heroCtas = document.getElementById("hero-ctas");
+    const heroPreview = document.getElementById("hero-preview-sandbox");
     const finalCta = document.getElementById("final-cta");
 
-    // ── Hero title + subtitle: fade in + rise ─────────────────────
-    if (heroTitle && heroSub) {
+    // ── Hero badge + title + subtitle: fade in + rise ─────────────
+    const heroTextElements = [heroBadge, heroTitle, heroSub].filter(Boolean);
+    if (heroTextElements.length) {
       play(
-        animeFn([heroTitle, heroSub], {
+        animeFn(heroTextElements, {
           opacity: [0, 1],
-          translateY: [30, 0],
+          translateY: [24, 0],
           duration: 800,
-          easing: "outCubic", // v4 builtin (was "easeOutCubic" in v3)
-          delay: stagger(120),
+          easing: "outCubic",
+          delay: stagger(110),
         })
       );
     }
@@ -75,7 +79,21 @@ export default function Home() {
           scale: [0.92, 1],
           duration: 600,
           easing: "outCubic",
-          delay: 500,
+          delay: 450,
+        })
+      );
+    }
+
+    // ── Hero Preview Sandbox: rise + subtle scale ─────────────────
+    if (heroPreview) {
+      play(
+        animeFn([heroPreview], {
+          opacity: [0, 1],
+          translateY: [25, 0],
+          scale: [0.98, 1],
+          duration: 750,
+          easing: "outCubic",
+          delay: 600,
         })
       );
     }
@@ -232,19 +250,18 @@ export default function Home() {
     >
       {/* ── Navigation ──────────────────────────────────── */}
       <header
+        className="glass-header"
         style={{
           position: "fixed",
           top: 0,
           left: 0,
           right: 0,
           zIndex: 200,
-          transition: "background var(--duration-slow) var(--ease-default), box-shadow var(--duration-slow) var(--ease-default)",
           padding: "0 var(--space-8)",
           height: "var(--header-height)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          background: "transparent",
         }}
         id="main-nav"
       >
@@ -252,30 +269,54 @@ export default function Home() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "var(--space-2)",
-            fontWeight: "var(--font-bold)",
-            fontSize: "var(--text-xl)",
-            color: "var(--color-text-primary)",
-            letterSpacing: "-0.02em",
+            gap: "var(--space-4)",
           }}
         >
-          <svg
-            width="32"
-            height="32"
-            viewBox="0 0 32 32"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              fontWeight: "var(--font-bold)",
+              fontSize: "var(--text-xl)",
+              color: "var(--color-text-primary)",
+              letterSpacing: "-0.02em",
+            }}
           >
-            <rect width="32" height="32" rx="7" fill="#c8520b" />
-            <path
-              d="M9 10h14M9 16h14M9 22h10"
-              stroke="white"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-            <circle cx="24" cy="22" r="3.5" fill="white" fillOpacity="0.9" />
-          </svg>
-          hamiGenZ
+            <svg
+              width="32"
+              height="32"
+              viewBox="0 0 32 32"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <rect width="32" height="32" rx="7" fill="#c8520b" />
+              <path
+                d="M9 10h14M9 16h14M9 22h10"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+              <circle cx="24" cy="22" r="3.5" fill="white" fillOpacity="0.9" />
+            </svg>
+            hamiGenZ
+          </div>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              fontSize: "var(--text-xs)",
+              color: "var(--color-text-secondary)",
+              background: "var(--color-bg-alt)",
+              padding: "4px 10px",
+              borderRadius: "var(--radius-full)",
+              border: "1px solid var(--color-border)",
+            }}
+          >
+            <span className="beacon-dot" />
+            <span style={{ fontWeight: "var(--font-medium)" }}>Grounded &amp; Local</span>
+          </div>
         </div>
         <nav
           style={{
@@ -333,11 +374,15 @@ export default function Home() {
           alignItems: "center",
           justifyContent: "center",
           textAlign: "center",
-          padding: "var(--space-24) var(--space-6)",
+          padding: "var(--space-24) var(--space-6) var(--space-16)",
           position: "relative",
           overflow: "hidden",
         }}
       >
+        {/* Ambient floating orbs for rich modern depth */}
+        <div className="ambient-orb-1" aria-hidden="true" />
+        <div className="ambient-orb-2" aria-hidden="true" />
+
         {/* Subtle background grid pattern */}
         <div
           style={{
@@ -346,22 +391,7 @@ export default function Home() {
             backgroundImage: `linear-gradient(var(--color-border-soft) 1px, transparent 1px),
                               linear-gradient(90deg, var(--color-border-soft) 1px, transparent 1px)`,
             backgroundSize: "60px 60px",
-            opacity: 0.4,
-            pointerEvents: "none",
-          }}
-        />
-
-        {/* Soft ambient glow */}
-        <div
-          style={{
-            position: "absolute",
-            top: "20%",
-            left: "50%",
-            transform: "translateX(-50%)",
-            width: "600px",
-            height: "600px",
-            background: "radial-gradient(ellipse, var(--color-accent-soft) 0%, transparent 70%)",
-            opacity: 0.5,
+            opacity: 0.35,
             pointerEvents: "none",
           }}
         />
@@ -369,18 +399,35 @@ export default function Home() {
         <div
           style={{
             position: "relative",
-            maxWidth: "760px",
+            maxWidth: "840px",
+            width: "100%",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
+            marginTop: "var(--space-8)",
           }}
         >
+          {/* Hero Top Badge */}
+          <div
+            id="hero-badge"
+            className="gradient-badge"
+            style={{
+              opacity: 0,
+              transform: "translateY(24px)",
+              marginBottom: "var(--space-5)",
+            }}
+          >
+            <span>🇳🇵 Nepal&apos;s AI Document Assistant</span>
+            <span style={{ color: "rgba(200, 82, 11, 0.35)" }}>•</span>
+            <span>100% Free &amp; Offline-Capable</span>
+          </div>
+
           <h1
             id="hero-title"
             className="hero-title"
             style={{
               opacity: 0,
-              transform: "translateY(30px)",
+              transform: "translateY(24px)",
               margin: "0 0 var(--space-6)",
               fontFamily: "var(--font-serif)",
               fontSize: "var(--text-6xl)",
@@ -390,19 +437,19 @@ export default function Home() {
             }}
           >
             Don&apos;t understand it?{" "}
-            <span style={{ color: "var(--color-accent)" }}>Ask hamiGenZ.</span>
+            <span className="gradient-text">Ask hamiGenZ.</span>
           </h1>
 
           <div
             id="hero-sub"
             style={{
               opacity: 0,
-              transform: "translateY(30px)",
+              transform: "translateY(24px)",
               color: "var(--color-text-secondary)",
               fontSize: "var(--text-xl)",
               lineHeight: "1.5",
-              maxWidth: "560px",
-              marginBottom: "var(--space-10)",
+              maxWidth: "580px",
+              marginBottom: "var(--space-8)",
             }}
           >
             Upload a document, ask a question, or describe what you need. hamiGenZ reads it,
@@ -430,18 +477,18 @@ export default function Home() {
                 fontSize: "var(--text-lg)",
                 fontWeight: "var(--font-semibold)",
                 textDecoration: "none",
-                boxShadow: "var(--shadow-md)",
+                boxShadow: "0 4px 14px rgba(200, 82, 11, 0.35)",
                 transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default)",
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-hover)";
                 (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-2px)";
-                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "var(--shadow-lg)";
+                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 8px 20px rgba(200, 82, 11, 0.45)";
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent)";
                 (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
-                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "var(--shadow-md)";
+                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 4px 14px rgba(200, 82, 11, 0.35)";
               }}
             >
               Try hamiGenZ
@@ -473,6 +520,202 @@ export default function Home() {
               See how it works
             </a>
           </div>
+
+          {/* ── Interactive Transformation Sandbox (Before / After) ── */}
+          <div
+            id="hero-preview-sandbox"
+            className="glass-card"
+            style={{
+              marginTop: "var(--space-10)",
+              width: "100%",
+              maxWidth: "800px",
+              borderRadius: "var(--radius-2xl)",
+              padding: "var(--space-6)",
+              textAlign: "left",
+              opacity: 0,
+              transform: "translateY(25px)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "var(--space-3)",
+                paddingBottom: "var(--space-4)",
+                borderBottom: "1px solid var(--color-border-soft)",
+                marginBottom: "var(--space-4)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-bold)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-tertiary)" }}>
+                  Interactive Transformation Preview
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "inline-flex",
+                  background: "var(--color-bg-alt)",
+                  padding: "3px",
+                  borderRadius: "var(--radius-full)",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode("notice")}
+                  style={{
+                    border: "none",
+                    background: previewMode === "notice" ? "var(--color-surface)" : "transparent",
+                    color: previewMode === "notice" ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+                    fontWeight: previewMode === "notice" ? "var(--font-semibold)" : "var(--font-normal)",
+                    padding: "6px 14px",
+                    borderRadius: "var(--radius-full)",
+                    fontSize: "var(--text-xs)",
+                    cursor: "pointer",
+                    boxShadow: previewMode === "notice" ? "var(--shadow-xs)" : "none",
+                    transition: "all var(--duration-fast) var(--ease-default)",
+                  }}
+                >
+                  🏛️ Official Notice (Before)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode("simplified")}
+                  style={{
+                    border: "none",
+                    background: previewMode === "simplified" ? "var(--color-accent)" : "transparent",
+                    color: previewMode === "simplified" ? "white" : "var(--color-text-secondary)",
+                    fontWeight: previewMode === "simplified" ? "var(--font-semibold)" : "var(--font-normal)",
+                    padding: "6px 14px",
+                    borderRadius: "var(--radius-full)",
+                    fontSize: "var(--text-xs)",
+                    cursor: "pointer",
+                    boxShadow: previewMode === "simplified" ? "var(--shadow-sm)" : "none",
+                    transition: "all var(--duration-fast) var(--ease-default)",
+                  }}
+                >
+                  ✨ hamiGenZ Meaning (After)
+                </button>
+              </div>
+            </div>
+
+            {previewMode === "notice" ? (
+              <div
+                style={{
+                  background: "#fffdfa",
+                  border: "1px solid #fef3c7",
+                  borderRadius: "var(--radius-lg)",
+                  padding: "var(--space-5)",
+                  fontFamily: "var(--font-devanagari)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-2)" }}>
+                  <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-semibold)", color: "var(--color-warning)" }}>
+                    परराष्ट्र मन्त्रालय · राहदानी विभाग सूचना नं. २४/०८१
+                  </span>
+                  <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-tertiary)" }}>
+                    Official Legal Text
+                  </span>
+                </div>
+                <p style={{ fontSize: "var(--text-sm)", lineHeight: "1.7", color: "var(--color-text-primary)", margin: 0 }}>
+                  “राहदानी नियमावली, २०७७ को परिच्छेद २, नियम ५ बमोजिम विद्युतीय राहदानी (e-Passport) का लागि अनलाइन प्रि-एनरोलमेन्ट फारम पेश गर्दा अनिवार्य रूपमा राष्ट्रिय परिचयपत्र वा सोको प्रमाणीकरण नम्बर, नागरिकता प्रमाणपत्रको सक्कल प्रति तथा तोकिएको राजस्व रकम (६६ पृष्ठका लागि रु. १०,०००/- र ३४ पृष्ठका लागि रु. ५,०००/-) दाखिला भएको सक्कल बैंक भौचर अनिवार्य रूपमा संलग्न हुनुपर्नेछ। म्याद गुज्रेको वा अपूर्ण विवरण भएका आवेदन स्वतः बदर हुनेछन्।”
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: "var(--color-accent-soft)",
+                  border: "1px solid rgba(200, 82, 11, 0.2)",
+                  borderRadius: "var(--radius-lg)",
+                  padding: "var(--space-5)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-3)" }}>
+                  <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-semibold)", color: "var(--color-accent)" }}>
+                    💡 Simple &amp; Grounded Explanation
+                  </span>
+                  <span style={{ fontSize: "var(--text-xs)", background: "var(--color-evidence)", color: "var(--color-info)", padding: "2px 8px", borderRadius: "var(--radius-full)", fontWeight: "var(--font-medium)" }}>
+                    100% Grounded in Rule 5
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
+                    <span style={{ color: "var(--color-success)", fontWeight: "bold" }}>✓</span>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
+                      <strong>के चाहिन्छ:</strong> नागरिकताको सक्कल (Original), राष्ट्रिय परिचयपत्र नम्बर (NID), र बैंक रसिद।
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
+                    <span style={{ color: "var(--color-success)", fontWeight: "bold" }}>✓</span>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
+                      <strong>दस्तुर (Fees):</strong> ३४ पृष्ठको साधारण पासपोर्टलाई <strong>रु ५,०००</strong>, ६६ पृष्ठकोलाई <strong>रु १०,०००</strong>।
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
+                    <span style={{ color: "var(--color-warning)", fontWeight: "bold" }}>⚠</span>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
+                      <strong>ध्यान दिनुहोस्:</strong> सक्कल नागरिकता नलिई गएमा वा म्याद कटेमा फारम स्वतः रद्द हुनेछ।
+                    </span>
+                  </div>
+                </div>
+                <div style={{ marginTop: "var(--space-3)", display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)" }}>Verified Sources:</span>
+                  <span style={{ fontSize: "var(--text-xs)", background: "white", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
+                    Page 1 · Fees &amp; Rules
+                  </span>
+                  <span style={{ fontSize: "var(--text-xs)", background: "white", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
+                    Passport Act 2077
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Impact & Trust Metrics Ribbon ─────────────────── */}
+      <section
+        style={{
+          borderTop: "1px solid var(--color-border-soft)",
+          borderBottom: "1px solid var(--color-border-soft)",
+          background: "rgba(255, 255, 255, 0.75)",
+          backdropFilter: "blur(8px)",
+          padding: "var(--space-8) var(--space-6)",
+        }}
+      >
+        <div
+          className="container"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: "var(--space-6)",
+            textAlign: "center",
+          }}
+        >
+          {[
+            { value: "100% Local", label: "Runs directly on your system — zero cloud leak" },
+            { value: "0 Hallucinations", label: "Sentence-level citation grounding for all facts" },
+            { value: "3 Tiers", label: "Original, Simple, and Very Simple explanations" },
+            { value: "Tri-Lingual", label: "Full support for नेपाली, English & Romanized" },
+          ].map((stat) => (
+            <div key={stat.value} style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+              <span
+                style={{
+                  fontFamily: "var(--font-serif)",
+                  fontSize: "var(--text-3xl)",
+                  fontWeight: "var(--font-bold)",
+                  color: "var(--color-accent)",
+                }}
+              >
+                {stat.value}
+              </span>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)" }}>
+                {stat.label}
+              </span>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -1353,21 +1596,11 @@ export default function Home() {
             ].map((cap) => (
               <div
                 key={cap.title}
+                className="interactive-card glass-card"
                 style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
                   borderRadius: "var(--radius-xl)",
                   padding: "var(--space-6)",
-                  boxShadow: "var(--shadow-sm)",
-                  transition: "box-shadow var(--duration-normal) var(--ease-default), transform var(--duration-normal) var(--ease-default)",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.boxShadow = "var(--shadow-md)";
-                  (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.boxShadow = "var(--shadow-sm)";
-                  (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
+                  cursor: "default",
                 }}
               >
                 <div
