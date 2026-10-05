@@ -27,6 +27,10 @@ export default function Home() {
     const animeFn = animeFnRef.current;
     if (!animeFn || typeof animeFn !== "function") return;
 
+    // Don't run JS-driven animations for users who prefer reduced motion.
+    // CSS already makes all animated elements visible via !important overrides.
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
     // Track running animations for cleanup (ref — no dependency loop)
     const running = Array<ReturnType<typeof import("animejs").animate>>();
 
@@ -283,7 +287,7 @@ export default function Home() {
           {["Product", "How it works", "Sources"].map((label) => (
             <a
               key={label}
-              href={`#${label.toLowerCase().replace(" ", "-")}`}
+              href={`#${label.toLowerCase().replaceAll(" ", "-")}`}
               style={{
                 color: "var(--color-text-secondary)",
                 fontSize: "var(--text-sm)",

@@ -313,3 +313,22 @@ a:hover { color: var(--color-accent-hover); }
 .skip-link:focus {
   top: var(--space-4);
 }
+
+/* ── Touch-target expansion (WCAG 2.5.5 / 44×44px minimum)
+   Expands the interactive hit area with a transparent ::after pseudo-element
+   without changing the visual size of the element itself.
+   Usage: add className="touch-target-expand" to small interactive elements. */
+.touch-target-expand {
+  position: relative;
+}
+.touch-target-expand::after {
+  content: '';
+  position: absolute;
+  /* Centre the 44px hit area over the element */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 44px;
+  min-height: 44px;
+  /* Invisible but clickable */
+}
