@@ -68,6 +68,7 @@ export default function OfficialSourcesCard({ sources, freshness }: Props) {
                 href={s.url}
                 target="_blank"
                 rel="noopener noreferrer nofollow"
+                className="touch-target-expand"
                 style={styles.link}
               >
                 {s.url.replace(/^https?:\/\//, "").replace(/\/$/, "")}
@@ -194,6 +195,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   link: {
     fontSize: "var(--text-xs)",
+    color: "var(--color-accent)",
+    textDecoration: "underline",
+    textUnderlineOffset: "2px",
     wordBreak: "break-all",
   },
   date: {
