@@ -313,12 +313,14 @@ export default function Home() {
               borderRadius: "var(--radius-full)",
               border: "1px solid var(--color-border)",
             }}
+            className="nav-status-badge"
           >
-            <span className="beacon-dot" />
-            <span style={{ fontWeight: "var(--font-medium)" }}>Grounded &amp; Local</span>
+            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--color-success)", flexShrink: 0 }} />
+            <span style={{ fontWeight: "var(--font-medium)" }}>Verified Nepal Document Engine · Local &amp; Grounded</span>
           </div>
         </div>
         <nav
+          className="nav-text-links"
           style={{
             display: "flex",
             alignItems: "center",
@@ -368,7 +370,7 @@ export default function Home() {
       <section
         id="main-content"
         style={{
-          minHeight: "100vh",
+          minHeight: "92vh",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -379,10 +381,6 @@ export default function Home() {
           overflow: "hidden",
         }}
       >
-        {/* Ambient floating orbs for rich modern depth */}
-        <div className="ambient-orb-1" aria-hidden="true" />
-        <div className="ambient-orb-2" aria-hidden="true" />
-
         {/* Subtle background grid pattern */}
         <div
           style={{
@@ -391,7 +389,7 @@ export default function Home() {
             backgroundImage: `linear-gradient(var(--color-border-soft) 1px, transparent 1px),
                               linear-gradient(90deg, var(--color-border-soft) 1px, transparent 1px)`,
             backgroundSize: "60px 60px",
-            opacity: 0.35,
+            opacity: 0.3,
             pointerEvents: "none",
           }}
         />
@@ -410,15 +408,15 @@ export default function Home() {
           {/* Hero Top Badge */}
           <div
             id="hero-badge"
-            className="gradient-badge"
+            className="editorial-badge"
             style={{
               opacity: 0,
               transform: "translateY(24px)",
               marginBottom: "var(--space-5)",
             }}
           >
-            <span>🇳🇵 Nepal&apos;s AI Document Assistant</span>
-            <span style={{ color: "rgba(200, 82, 11, 0.35)" }}>•</span>
+            <span>🇳🇵 Nepal&apos;s Open Document Intelligence</span>
+            <span style={{ opacity: 0.4 }}>•</span>
             <span>100% Free &amp; Offline-Capable</span>
           </div>
 
@@ -432,12 +430,12 @@ export default function Home() {
               fontFamily: "var(--font-serif)",
               fontSize: "var(--text-6xl)",
               color: "var(--color-text-primary)",
-              lineHeight: "1.1",
+              lineHeight: "1.12",
               letterSpacing: "-0.03em",
             }}
           >
             Don&apos;t understand it?{" "}
-            <span className="gradient-text">Ask hamiGenZ.</span>
+            <span style={{ color: "var(--color-accent)" }}>Ask hamiGenZ.</span>
           </h1>
 
           <div
@@ -447,7 +445,7 @@ export default function Home() {
               transform: "translateY(24px)",
               color: "var(--color-text-secondary)",
               fontSize: "var(--text-xl)",
-              lineHeight: "1.5",
+              lineHeight: "1.55",
               maxWidth: "580px",
               marginBottom: "var(--space-8)",
             }}
@@ -477,18 +475,16 @@ export default function Home() {
                 fontSize: "var(--text-lg)",
                 fontWeight: "var(--font-semibold)",
                 textDecoration: "none",
-                boxShadow: "0 4px 14px rgba(200, 82, 11, 0.35)",
-                transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default)",
+                boxShadow: "0 2px 6px rgba(200, 82, 11, 0.25)",
+                transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default)",
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-hover)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-2px)";
-                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 8px 20px rgba(200, 82, 11, 0.45)";
+                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-1px)";
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent)";
                 (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
-                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 4px 14px rgba(200, 82, 11, 0.35)";
               }}
             >
               Try hamiGenZ
@@ -524,12 +520,11 @@ export default function Home() {
           {/* ── Interactive Transformation Sandbox (Before / After) ── */}
           <div
             id="hero-preview-sandbox"
-            className="glass-card"
+            className="editorial-card"
             style={{
               marginTop: "var(--space-10)",
               width: "100%",
               maxWidth: "800px",
-              borderRadius: "var(--radius-2xl)",
               padding: "var(--space-6)",
               textAlign: "left",
               opacity: 0,
@@ -550,7 +545,7 @@ export default function Home() {
             >
               <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
                 <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-bold)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-tertiary)" }}>
-                  Interactive Transformation Preview
+                  Transformation Comparison
                 </span>
               </div>
               <div
@@ -602,71 +597,73 @@ export default function Home() {
             </div>
 
             {previewMode === "notice" ? (
-              <div
-                style={{
-                  background: "#fffdfa",
-                  border: "1px solid #fef3c7",
-                  borderRadius: "var(--radius-lg)",
-                  padding: "var(--space-5)",
-                  fontFamily: "var(--font-devanagari)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-2)" }}>
-                  <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-semibold)", color: "var(--color-warning)" }}>
-                    परराष्ट्र मन्त्रालय · राहदानी विभाग सूचना नं. २४/०८१
-                  </span>
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-tertiary)" }}>
-                    Official Legal Text
+              <div className="doc-gazette">
+                <div className="doc-gazette-header">
+                  <div>
+                    <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-bold)", color: "var(--color-nepal-red)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      नेपाल सरकार · परराष्ट्र मन्त्रालय
+                    </span>
+                    <span style={{ display: "block", fontSize: "11px", color: "var(--color-text-tertiary)" }}>
+                      राहदानी विभाग सूचना नं. २४/०८१ (विद्युतीय राहदानी सम्बन्धी)
+                    </span>
+                  </div>
+                  <span style={{ fontSize: "11px", background: "#f5ece1", color: "var(--color-text-secondary)", padding: "2px 8px", borderRadius: "var(--radius-sm)", fontWeight: "var(--font-medium)" }}>
+                    Official Gazette Notice
                   </span>
                 </div>
-                <p style={{ fontSize: "var(--text-sm)", lineHeight: "1.7", color: "var(--color-text-primary)", margin: 0 }}>
+                <p style={{ fontSize: "var(--text-sm)", lineHeight: "1.8", color: "var(--color-text-primary)", margin: 0 }}>
                   “राहदानी नियमावली, २०७७ को परिच्छेद २, नियम ५ बमोजिम विद्युतीय राहदानी (e-Passport) का लागि अनलाइन प्रि-एनरोलमेन्ट फारम पेश गर्दा अनिवार्य रूपमा राष्ट्रिय परिचयपत्र वा सोको प्रमाणीकरण नम्बर, नागरिकता प्रमाणपत्रको सक्कल प्रति तथा तोकिएको राजस्व रकम (६६ पृष्ठका लागि रु. १०,०००/- र ३४ पृष्ठका लागि रु. ५,०००/-) दाखिला भएको सक्कल बैंक भौचर अनिवार्य रूपमा संलग्न हुनुपर्नेछ। म्याद गुज्रेको वा अपूर्ण विवरण भएका आवेदन स्वतः बदर हुनेछन्।”
                 </p>
+                <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-2)", borderTop: "1px dashed #d5cbbf", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "11px", color: "var(--color-text-tertiary)" }}>प्रमाणीकरण: नेपाल राजपत्र भाग ३ · नियम ५</span>
+                  <span style={{ fontSize: "11px", color: "var(--color-nepal-red)", fontWeight: "var(--font-medium)" }}>कानुनी मान्यता प्राप्त मूल स्रोत</span>
+                </div>
               </div>
             ) : (
               <div
                 style={{
-                  background: "var(--color-accent-soft)",
-                  border: "1px solid rgba(200, 82, 11, 0.2)",
-                  borderRadius: "var(--radius-lg)",
+                  background: "var(--color-bg)",
+                  border: "1px solid var(--color-border)",
+                  borderLeft: "4px solid var(--color-accent)",
+                  borderRadius: "var(--radius-md)",
                   padding: "var(--space-5)",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-3)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-3)", paddingBottom: "var(--space-2)", borderBottom: "1px solid var(--color-border-soft)" }}>
                   <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-semibold)", color: "var(--color-accent)" }}>
-                    💡 Simple &amp; Grounded Explanation
+                    ✨ नागरिक सारांश (Plain-Language Explanation)
                   </span>
-                  <span style={{ fontSize: "var(--text-xs)", background: "var(--color-evidence)", color: "var(--color-info)", padding: "2px 8px", borderRadius: "var(--radius-full)", fontWeight: "var(--font-medium)" }}>
-                    100% Grounded in Rule 5
+                  <span style={{ fontSize: "11px", background: "var(--color-evidence)", color: "var(--color-info)", padding: "2px 8px", borderRadius: "var(--radius-sm)", fontWeight: "var(--font-medium)" }}>
+                    Rule 5 · 100% Grounded
                   </span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
                     <span style={{ color: "var(--color-success)", fontWeight: "bold" }}>✓</span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
-                      <strong>के चाहिन्छ:</strong> नागरिकताको सक्कल (Original), राष्ट्रिय परिचयपत्र नम्बर (NID), र बैंक रसिद।
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)", lineHeight: 1.6 }}>
+                      <strong>के चाहिन्छ:</strong> नागरिकताको सक्कल प्रति (Original), राष्ट्रिय परिचयपत्र नम्बर (NID), र बैंक रसिद।
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
                     <span style={{ color: "var(--color-success)", fontWeight: "bold" }}>✓</span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)", lineHeight: 1.6 }}>
                       <strong>दस्तुर (Fees):</strong> ३४ पृष्ठको साधारण पासपोर्टलाई <strong>रु ५,०००</strong>, ६६ पृष्ठकोलाई <strong>रु १०,०००</strong>।
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
                     <span style={{ color: "var(--color-warning)", fontWeight: "bold" }}>⚠</span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
-                      <strong>ध्यान दिनुहोस्:</strong> सक्कल नागरिकता नलिई गएमा वा म्याद कटेमा फारम स्वतः रद्द हुनेछ।
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)", lineHeight: 1.6 }}>
+                      <strong>चेतावनी:</strong> सक्कल नागरिकता नलिई गएमा वा म्याद कटेमा आवेदन स्वतः रद्द हुनेछ।
                     </span>
                   </div>
                 </div>
-                <div style={{ marginTop: "var(--space-3)", display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)" }}>Verified Sources:</span>
-                  <span style={{ fontSize: "var(--text-xs)", background: "white", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
-                    Page 1 · Fees &amp; Rules
+                <div style={{ marginTop: "var(--space-4)", paddingTop: "var(--space-2)", borderTop: "1px solid var(--color-border-soft)", display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "11px", color: "var(--color-text-tertiary)" }}>प्रमाणित आधार:</span>
+                  <span style={{ fontSize: "11px", background: "var(--color-surface)", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
+                    Page 1 · दस्तुर र नियम
                   </span>
-                  <span style={{ fontSize: "var(--text-xs)", background: "white", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
-                    Passport Act 2077
+                  <span style={{ fontSize: "11px", background: "var(--color-surface)", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
+                    राहदानी ऐन २०७६
                   </span>
                 </div>
               </div>
@@ -675,43 +672,27 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Impact & Trust Metrics Ribbon ─────────────────── */}
-      <section
-        style={{
-          borderTop: "1px solid var(--color-border-soft)",
-          borderBottom: "1px solid var(--color-border-soft)",
-          background: "rgba(255, 255, 255, 0.75)",
-          backdropFilter: "blur(8px)",
-          padding: "var(--space-8) var(--space-6)",
-        }}
-      >
-        <div
-          className="container"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: "var(--space-6)",
-            textAlign: "center",
-          }}
-        >
+      {/* ── Impact & Trust Ledger ─────────────────────────── */}
+      <section className="ledger-strip">
+        <div className="container ledger-grid">
           {[
-            { value: "100% Local", label: "Runs directly on your system — zero cloud leak" },
-            { value: "0 Hallucinations", label: "Sentence-level citation grounding for all facts" },
-            { value: "3 Tiers", label: "Original, Simple, and Very Simple explanations" },
-            { value: "Tri-Lingual", label: "Full support for नेपाली, English & Romanized" },
+            { value: "100% Local", label: "Runs entirely on your machine — zero cloud data transfer" },
+            { value: "0 Hallucinations", label: "Sentence-level citation grounding for all extracted facts" },
+            { value: "3 Clarification Levels", label: "Original legal text, Simple language, and Very Simple" },
+            { value: "Tri-Lingual Support", label: "Full comprehension in नेपाली, English & Romanized Nepali" },
           ].map((stat) => (
-            <div key={stat.value} style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+            <div key={stat.value} style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", textAlign: "left" }}>
               <span
                 style={{
                   fontFamily: "var(--font-serif)",
-                  fontSize: "var(--text-3xl)",
+                  fontSize: "var(--text-2xl)",
                   fontWeight: "var(--font-bold)",
-                  color: "var(--color-accent)",
+                  color: "var(--color-text-primary)",
                 }}
               >
                 {stat.value}
               </span>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)" }}>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
                 {stat.label}
               </span>
             </div>

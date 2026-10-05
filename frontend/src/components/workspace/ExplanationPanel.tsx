@@ -114,21 +114,24 @@ export default function ExplanationPanel({
           <h3 style={styles.sectionTitle}>Evidence</h3>
           <div style={styles.citations}>
             {citations.map((c, i) => (
-              <div
+              <button
                 key={i}
+                type="button"
+                className="touch-target-expand"
                 style={{
                   ...styles.citationCard,
                   ...(activeCitation === c.page ? styles.citationCardActive : {}),
                 }}
+                onClick={() => onCitationClick(c)}
+                aria-pressed={activeCitation === c.page}
+                aria-label={`Jump to citation excerpt on page ${c.page}`}
               >
-                <button
-                  style={styles.citationPageBtn}
-                  onClick={() => onCitationClick(c)}
-                >
+                <div style={styles.citationHeader}>
                   <span style={styles.citationPageNum}>Page {c.page}</span>
-                </button>
+                  <span style={styles.citationBadge}>Verified excerpt</span>
+                </div>
                 <p style={styles.citationExcerpt}>{c.excerpt}</p>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -256,7 +259,7 @@ const styles: Record<string, React.CSSProperties> = {
   answer: {
     fontFamily: "var(--font-devanagari)",
     fontSize: "var(--text-sm)",
-    lineHeight: 1.7,
+    lineHeight: 1.75,
     color: "var(--color-text-primary)",
   } as React.CSSProperties,
   citationsSection: {
@@ -276,26 +279,40 @@ const styles: Record<string, React.CSSProperties> = {
   } as React.CSSProperties,
   citationCard: {
     flex: "1 1 200px",
+    display: "flex",
+    flexDirection: "column",
     padding: "var(--space-3)",
-    background: "var(--color-bg)",
+    background: "var(--color-surface)",
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-md)",
     cursor: "pointer",
-    transition: "all 0.15s ease",
-    maxWidth: "300px",
+    textAlign: "left",
+    font: "inherit",
+    appearance: "none",
+    maxWidth: "320px",
+    boxShadow: "var(--shadow-sm)",
+    transition: "border-color var(--duration-fast) var(--ease-default), background var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default)",
   } as React.CSSProperties,
   citationCardActive: {
     borderColor: "var(--color-accent)",
     background: "var(--color-accent-soft)",
+    boxShadow: "0 0 0 2px var(--color-accent-soft)",
   } as React.CSSProperties,
-  citationPageBtn: {
-    display: "block",
-    padding: 0,
-    background: "none",
-    border: "none",
-    cursor: "pointer",
+  citationHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
     marginBottom: "var(--space-1)",
-    textAlign: "left",
+  } as React.CSSProperties,
+  citationBadge: {
+    fontSize: "10px",
+    fontWeight: "var(--font-medium)",
+    color: "var(--color-text-tertiary)",
+    background: "var(--color-bg-alt)",
+    padding: "1px 6px",
+    borderRadius: "var(--radius-full)",
+    border: "1px solid var(--color-border)",
   } as React.CSSProperties,
   citationPageNum: {
     fontSize: "var(--text-sm)",
