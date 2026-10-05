@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import Link from "next/link";
 
 /* ── Homepage with anime.js scroll storytelling ───────── */
 export default function Home() {
   const [animeReady, setAnimeReady] = useState(false);
+  const animeFnRef = useRef<typeof import("animejs").animate | null>(null);
 
   useEffect(() => {
     import("animejs")
       .then((mod) => {
-        (window as any).anime = mod.animate;
+        animeFnRef.current = mod.animate;
         setAnimeReady(true);
       })
       .catch(() => {
@@ -22,7 +24,7 @@ export default function Home() {
   useEffect(() => {
     if (!animeReady) return;
 
-    const animeFn = (window as any).anime;
+    const animeFn = animeFnRef.current;
     if (!animeFn || typeof animeFn !== "function") return;
 
     // Track running animations for cleanup (ref — no dependency loop)
@@ -35,13 +37,13 @@ export default function Home() {
 
     function cancelAll() {
       for (const a of running) {
-        try { a.cancel(); } catch (_) { /* already-ended instances are safe */ }
+        try { a.cancel(); } catch { /* already-ended instances are safe */ }
       }
       running.length = 0;
     }
 
-    // Stagger delay callback (v4 accepts (el, i) => number)
-    const stagger = (base: number) => (el: HTMLElement, i: number) => i * base;
+    // Stagger delay callback (v4 FunctionValue: (target?, index?, targets?, prevTween?) => number)
+    const stagger = (base: number) => (_target?: unknown, i = 0): number => i * base;
 
     const heroTitle = document.getElementById("hero-title");
     const heroSub = document.getElementById("hero-sub");
@@ -292,7 +294,7 @@ export default function Home() {
               {label}
             </a>
           ))}
-          <a
+          <Link
             href="/workspace"
             style={{
               background: "var(--color-accent)",
@@ -313,12 +315,13 @@ export default function Home() {
             }}
           >
             Open hamiGenZ
-          </a>
+          </Link>
         </nav>
       </header>
 
       {/* ── Hero ────────────────────────────────────────── */}
       <section
+        id="main-content"
         style={{
           minHeight: "100vh",
           display: "flex",
@@ -413,7 +416,7 @@ export default function Home() {
               justifyContent: "center",
             }}
           >
-            <a
+            <Link
               href="/workspace"
               style={{
                 background: "var(--color-accent)",
@@ -438,7 +441,7 @@ export default function Home() {
               }}
             >
               Try hamiGenZ
-            </a>
+            </Link>
             <a
               href="#story"
               style={{
@@ -1275,6 +1278,7 @@ export default function Home() {
           </div>
 
           <div
+            className="caps-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(3, 1fr)",
@@ -1440,7 +1444,7 @@ export default function Home() {
               gap: "var(--space-4)",
             }}
           >
-            <a
+            <Link
               href="/workspace"
               style={{
                 background: "var(--color-accent)",
@@ -1465,7 +1469,7 @@ export default function Home() {
               }}
             >
               Open hamiGenZ →
-            </a>
+            </Link>
             <p
               style={{
                 color: "var(--color-text-tertiary)",
@@ -1488,6 +1492,7 @@ export default function Home() {
       >
         <div className="container">
           <div
+            className="trust-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
@@ -1686,7 +1691,7 @@ export default function Home() {
                 title: "Check the evidence",
                 desc: "Every claim shows where it came from. Verify for yourself, or ask follow-up questions.",
               },
-            ].map((item, idx) => (
+            ].map((item) => (
               <div
                 key={item.step}
                 style={{
@@ -1773,7 +1778,7 @@ export default function Home() {
               marginBottom: "var(--space-8)",
             }}
           >
-            <a
+            <Link
               href="/workspace"
               style={{
                 background: "var(--color-accent)",
@@ -1795,7 +1800,7 @@ export default function Home() {
               }}
             >
               Try hamiGenZ
-            </a>
+            </Link>
           </div>
           <p
             style={{

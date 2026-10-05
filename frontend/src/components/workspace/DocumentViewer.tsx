@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback } from "react";
+import Image from "next/image";
 import { ViewerPage, Citation, SearchMatch } from "@/lib/types";
 
 type Props = {
@@ -127,7 +128,6 @@ export function buildSegments(
 }
 
 export default function DocumentViewer({
-  docId,
   pages,
   onTextHighlight,
   citationsByPage,
@@ -149,12 +149,14 @@ export default function DocumentViewer({
     []
   );
 
-  const handleMouseUp = useCallback(() => {
-    const sel = window.getSelection();
-    const text = sel?.toString().trim();
-    if (text && text.length > 1) {
-      onTextHighlight(text);
-    }
+  const handleSelection = useCallback(() => {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel?.toString().trim();
+      if (text && text.length > 1) {
+        onTextHighlight(text);
+      }
+    }, 40);
   }, [onTextHighlight]);
 
   const goToMatch = useCallback(
@@ -201,10 +203,13 @@ export default function DocumentViewer({
               </div>
 
               {page.has_image && page.image_url && (
-                <img
+                <Image
                   src={page.image_url}
                   alt={`Page ${page.page_num} scanned image`}
                   style={styles.pageImage}
+                  width={800}
+                  height={1100}
+                  unoptimized
                   loading="lazy"
                 />
               )}
@@ -214,7 +219,8 @@ export default function DocumentViewer({
                   ...styles.pageText,
                   ...(isCitedPage ? styles.pageTextHighlighted : {}),
                 }}
-                onMouseUp={handleMouseUp}
+                onMouseUp={handleSelection}
+                onTouchEnd={handleSelection}
               >
                 {page.text
                   ? page.text.split("\n").map((para, i) => {

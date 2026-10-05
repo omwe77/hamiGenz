@@ -10,13 +10,16 @@ type Props = {
 export default function CitationChip({ citation, active, onClick }: Props) {
   return (
     <button
+      className="touch-target-expand"
       style={{
         ...styles.btn,
-        ...(active && styles.btnActive),
+        ...(active ? styles.btnActive : {}),
       }}
       onClick={onClick}
+      aria-label={`Jump to citation on page ${citation.page}`}
+      aria-pressed={active}
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }} aria-hidden="true">
         <rect x="3" y="3" width="7" height="7" rx="1" fill="currentColor" />
         <rect x="14" y="3" width="7" height="7" rx="1" fill="currentColor" />
         <rect x="3" y="14" width="7" height="7" rx="1" fill="currentColor" />
@@ -29,10 +32,12 @@ export default function CitationChip({ citation, active, onClick }: Props) {
 
 const styles = {
   btn: {
+    position: "relative",
     display: "inline-flex",
     alignItems: "center",
     gap: "var(--space-1)",
-    padding: "var(--space-1) var(--space-3)",
+    padding: "6px var(--space-3)",
+    minHeight: "32px",
     background: "var(--color-evidence)",
     color: "var(--color-info)",
     border: "1px solid var(--color-evidence-border)",
@@ -40,7 +45,7 @@ const styles = {
     fontSize: "var(--text-xs)",
     fontWeight: "var(--font-medium)",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default), border-color var(--duration-fast) var(--ease-default)",
   } as React.CSSProperties,
   btnActive: {
     background: "var(--color-accent)",

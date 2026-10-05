@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 
 type Props = {
   value: "original" | "simple" | "very_simple";
@@ -23,10 +23,11 @@ export default function ExplanationLevelSelect({ value, onChange }: Props) {
             key={opt.value}
             style={{
               ...styles.btn,
-              ...(active && styles.btnActive),
+              ...(active ? styles.btnActive : {}),
             }}
             onClick={() => onChange(opt.value)}
             title={opt.hint}
+            aria-pressed={active}
           >
             <span style={styles.btnLabel}>{opt.label}</span>
             {active && <span style={styles.btnDot} />}
@@ -55,7 +56,7 @@ const styles = {
     fontWeight: "var(--font-medium)",
     color: "var(--color-text-secondary)",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default), border-color var(--duration-fast) var(--ease-default)",
   } as React.CSSProperties,
   btnActive: {
     background: "var(--color-accent)",

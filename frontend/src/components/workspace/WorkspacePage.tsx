@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import Link from "next/link";
 import {
   explainText,
   uploadDocument,
@@ -61,8 +62,12 @@ export default function WorkspacePage() {
   // ── Document state ──────────────────────────────────────────────────
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [viewerPages, setViewerPages] = useState<ViewerPage[]>([]);
-  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerData, setViewerData] = useState<{ docId: string | null; pages: ViewerPage[] }>({
+    docId: null,
+    pages: [],
+  });
+  const viewerLoading = Boolean(activeDocId && viewerData.docId !== activeDocId);
+  const viewerPages = viewerData.docId === activeDocId ? viewerData.pages : [];
   const [selectedText, setSelectedText] = useState("");
 
   // ── Search state ────────────────────────────────────────────────────
@@ -70,9 +75,20 @@ export default function WorkspacePage() {
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
   const [activeSearchMatchIdx, setActiveSearchMatchIdx] = useState<number | null>(null);
 
-  // ── Citation/highlight state ────────────────────────────────────────
-  const [citationsByPage, setCitationsByPage] = useState<Map<number, Citation[]>>(new Map());
+  // ── Citation/highlight state (pure derived state from explanation) ───
   const [highlightPage, setHighlightPage] = useState<number | null>(null);
+
+  const citationsByPage = useMemo(() => {
+    const map = new Map<number, Citation[]>();
+    if (explanation?.citations) {
+      for (const c of explanation.citations) {
+        const list = map.get(c.page) || [];
+        list.push(c);
+        map.set(c.page, list);
+      }
+    }
+    return map;
+  }, [explanation]);
 
   // ── Action layer state (PR-009) ─────────────────────────────────────
   const [actions, setActions] = useState<ActionsResponse | null>(null);
@@ -97,46 +113,44 @@ export default function WorkspacePage() {
   // ── Active doc → load viewer ────────────────────────────────────────
   useEffect(() => {
     if (!activeDocId) {
-      setViewerPages([]);
       return;
     }
-    setViewerLoading(true);
+    let ignore = false;
     getDocumentViewer(activeDocId)
-      .then((v) => setViewerPages(v.pages))
-      .catch(() => setViewerPages([]))
-      .finally(() => setViewerLoading(false));
+      .then((v) => {
+        if (!ignore) setViewerData({ docId: activeDocId, pages: v.pages });
+      })
+      .catch(() => {
+        if (!ignore) setViewerData({ docId: activeDocId, pages: [] });
+      });
+    return () => {
+      ignore = true;
+    };
   }, [activeDocId]);
 
   // ── Debounced search on active doc ──────────────────────────────────
   useEffect(() => {
     if (!activeDocId || !searchQuery.trim()) {
-      setSearchResults([]);
-      setActiveSearchMatchIdx(null);
       return;
     }
+    let ignore = false;
     const t = setTimeout(() => {
       searchDocumentText(activeDocId, searchQuery.trim())
         .then((r) => {
-          setSearchResults(r.matches);
-          setActiveSearchMatchIdx(null);
+          if (!ignore) {
+            setSearchResults(r.matches);
+            setActiveSearchMatchIdx(null);
+          }
         })
-        .catch(() => setSearchResults([]));
+        .catch(() => {
+          if (!ignore) setSearchResults([]);
+        });
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      ignore = true;
+      clearTimeout(t);
+    };
   }, [activeDocId, searchQuery]);
-
-  // ── Build citations-by-page map when explanation changes ───────────
-  useEffect(() => {
-    const map = new Map<number, Citation[]>();
-    if (explanation?.citations) {
-      for (const c of explanation.citations) {
-        const list = map.get(c.page) || [];
-        list.push(c);
-        map.set(c.page, list);
-      }
-    }
-    setCitationsByPage(map);
-  }, [explanation]);
 
   // ── Clear stage timer on unmount ────────────────────────────────────
   useEffect(() => {
@@ -245,7 +259,7 @@ export default function WorkspacePage() {
         setDocuments((prev) => prev.filter((d) => d.doc_id !== docId));
         if (activeDocId === docId) {
           setActiveDocId(null);
-          setViewerPages([]);
+          setViewerData({ docId: null, pages: [] });
           setSelectedText("");
           setSearchQuery("");
           setSearchResults([]);
@@ -365,14 +379,14 @@ export default function WorkspacePage() {
       {/* ── Header ──────────────────────────────────────────────────── */}
       <header style={styles.header}>
         <div style={styles.headerInner}>
-          <a href="/" style={styles.brand} aria-label="hamiGenZ home">
+          <Link href="/" style={styles.brand} aria-label="hamiGenZ home">
             <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
               <rect width="32" height="32" rx="7" fill="#c8520b" />
               <path d="M9 10h14M9 16h14M9 22h10" stroke="white" strokeWidth="2" strokeLinecap="round" />
               <circle cx="24" cy="22" r="3.5" fill="white" fillOpacity="0.9" />
             </svg>
             <span style={styles.brandName}>hamiGenZ</span>
-          </a>
+          </Link>
           <nav style={styles.tabs} aria-label="Workspace mode">
             <button
               style={{ ...styles.tab, ...(activeTab === "explain" ? styles.tabActive : {}) }}
@@ -412,7 +426,14 @@ export default function WorkspacePage() {
                   <span style={styles.docBadgeName}>{activeDoc?.filename}</span>
                   <button
                     style={styles.docBadgeClear}
-                    onClick={() => setActiveDocId(null)}
+                    onClick={() => {
+                      setActiveDocId(null);
+                      setViewerData({ docId: null, pages: [] });
+                      setSelectedText("");
+                      setSearchQuery("");
+                      setSearchResults([]);
+                      setActiveSearchMatchIdx(null);
+                    }}
                     title="Switch to direct text"
                     aria-label="Clear active document"
                   >
@@ -832,11 +853,25 @@ export default function WorkspacePage() {
                     style={styles.searchInput}
                     placeholder="Search text..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      const q = e.target.value;
+                      setSearchQuery(q);
+                      if (!q.trim()) {
+                        setSearchResults([]);
+                        setActiveSearchMatchIdx(null);
+                      }
+                    }}
                     aria-label="Search document text"
                   />
                   {searchQuery && (
-                    <button style={styles.searchClear} onClick={() => setSearchQuery("")}>
+                    <button
+                      style={styles.searchClear}
+                      onClick={() => {
+                        setSearchQuery("");
+                        setSearchResults([]);
+                        setActiveSearchMatchIdx(null);
+                      }}
+                    >
                       Clear
                     </button>
                   )}
@@ -973,7 +1008,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: "var(--font-medium)",
     color: "var(--color-text-secondary)",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default)",
   },
   tabActive: {
     background: "var(--color-accent)",
@@ -1145,7 +1180,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "var(--text-xs)",
     color: "var(--color-text-secondary)",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "background-color var(--duration-fast) var(--ease-default), border-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default)",
   },
 
   // ── Actions ─────────────────────────────────────────────────────────
@@ -1306,7 +1341,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--color-text-secondary)",
     cursor: "pointer",
     textAlign: "center",
-    transition: "all 0.15s ease",
+    transition: "background-color var(--duration-fast) var(--ease-default), border-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default)",
   },
   noDocs: {
     padding: "var(--space-6)",
@@ -1617,7 +1652,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: "var(--color-surface)",
     color: "var(--color-text-secondary)",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default), border-color var(--duration-fast) var(--ease-default)",
   },
   feedbackBtnActive: {
     background: "var(--color-accent)",

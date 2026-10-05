@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import type { ExplainResponse, GroundingReport } from "@/lib/types";
+import type { ExplainResponse } from "@/lib/types";
 import ProvenanceBadge from "./ProvenanceBadge";
 import OfficialSourcesCard from "./OfficialSourcesCard";
 
@@ -72,8 +72,6 @@ export default function ExplanationPanel({
   explanation,
   onCitationClick,
   activeCitation,
-  onClearCitation,
-  docId,
   sourceUnavailable,
 }: Props) {
   const { explanation: expData, citations, provenance, language_used } = explanation;
@@ -156,7 +154,7 @@ export default function ExplanationPanel({
               <p style={styles.contradictionDetail}>
                 {grounding.contradiction_claims?.map((c, i) => (
                   <span key={i} style={styles.contradictionClaim}>
-                    • "{c}"
+                    • &ldquo;{c}&rdquo;
                   </span>
                 ))}
               </p>
