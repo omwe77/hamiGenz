@@ -75,3 +75,9 @@ tests/tmp_search/
 
 # Documentation assets (orphaned screenshots, not referenced in docs or README)
 docs/assets/
+
+# Test artifacts (regenerated on each test run)
+tests/nepali_ocr_verify.png
+tests/test_gen_current.png
+tests/nep_exact_repro.png
+tests/test_gen_current.png
