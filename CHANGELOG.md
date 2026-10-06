@@ -68,6 +68,22 @@ Devanagari + English tags, verified flags, owner metadata, resource links.
   for handwritten values + SpaCy NER) as the modern alternative to Tesseract,
   with links to Sandip Acharya's engineering write-up and the HuggingFace model
 
+### Added — Official Nepal knowledge base (expanded — Phase 2)
+- Added **driving license (गाडी सबैभन्दा पत्र)** concept (DocumentType) — structure,
+  categories (B/C/D/E), card front/back, license number format, security features,
+  OCR considerations
+- Added **traffic rules & penalties** (Reference) — signals, speed limits, right-of-way,
+  violations, penalties, emergency vehicle rules
+- Added **government services overview** (Reference) — passport, citizenship, NID,
+  driving license, voter ID, birth/death registration; links to related concepts
+- Frontend trust signals: verified-source badges (`ProvenanceBadge`), official
+  sources card (`OfficialSourcesCard`), freshness report (`FreshnessInfo`) in
+  `/ask-general` responses
+- Frontend: `OfficialSourceInfo`, `FreshnessInfo`, and related types added to
+  `lib/types.ts`; `/ask-general` returns `official_sources` + `freshness` fields
+- Updated `data/okf/index.md` directory structure and concept index to include
+  driving license + government services
+
 ### Fixed
 - Test teardown no longer deletes `data/`: `TestFullPipeline` previously walked
   the shared `data/` directory in teardown and removed tracked tessdata models and
