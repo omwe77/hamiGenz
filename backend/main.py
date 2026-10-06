@@ -412,12 +412,18 @@ async def upload_document(
         filepath, doc_id = processor.save_upload(file_bytes, filename)
 
     # Process
+    # app.state.pipeline is initialized by the lifespan() on startup.
+    # If not present, the server was started without the startup event
+    # (e.g. TestClient without with_lifespan) - return 503 so the client
+    # knows the backend is not ready.
+    if not hasattr(app.state, "pipeline"):
+        raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
     pipeline = app.state.pipeline
     try:
         result = pipeline.process_document(str(filepath), doc_id, filename)
     except Exception:
         # Malformed/corrupt documents (bad PDF structure, broken images, OCR
-        # failures) must fail cleanly — never leak a stack trace to the client.
+        # failures) must fail cleanly - never leak a stack trace to the client.
         print(f"[hamigenz] Document processing failed for {doc_id}")
         import traceback
         traceback.print_exc()
