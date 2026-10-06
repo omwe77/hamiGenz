@@ -1,4 +1,4 @@
-﻿# hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
+# hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
 
 > A local-first, privacy-centric AI platform engineered to make complex Nepali administrative notices, government forms, and civil documents universally understandable. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance and zero hallucinations.
 
