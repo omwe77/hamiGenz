@@ -134,11 +134,10 @@ hamiGenZ implements the **Open Knowledge Format (OKF v0.2)** specification as it
 - **Multi-Tier Explanation Engine:** Three selectable simplification tiers (Original Text, Simple Summary, Bullet Breakdown) with trilingual language handling (Devanagari, Romanized Nepali, English).
 - **Split-Pane Next.js 16 Workspace:** Responsive desktop, tablet, and mobile interface with interactive document viewing, dynamic citation clicking, and empty-state guidance.
 - **Comprehensive Test Suite:** **282 passing unit, pipeline, security, and golden query tests** via `pytest`.
-
-### In Progress
-- **Form Assistance & Action Extraction:** Automated field extraction and guidance from official bureaucratic application forms (`backend/form_service.py`).
-- **Cloud Staging Infrastructure:** Deployment scripts and systemd unit configurations for Azure VM (Standard_B2ms_v2 with Ollama and Nginx HTTPS reverse proxy) detailed in `docs/DEPLOYMENT.md`.
-
+- **Action Layer (Form Assistance & Action Extraction):** `POST /actions` endpoint (action_extractor.py) extracts requirements (checklists), deadlines, fees, eligibility, next steps, and official links from pasted text or a document's retrieved evidence; LLM structured extraction cross-checked against deterministic regex hints; Nepali-aware normalization (Devanagari digits, day-first dates, currency); official-link safety (only gov.np / org.np / edu.np URLs ever displayed).
+- **Official Source Answering:** `/ask-general` endpoint answers official-information questions (fees, procedures, laws, deadlines) from VERIFIED REGISTRY SOURCES via a local knowledge cache — evidence from curated sources only, SSRF-safe, never model memory dressed as official (PR-012).
+- **Official Source Registry:** Curated registry of 10 authoritative Nepali sources (passport, national ID/civil registration, immigration, traffic, laws, judiciary, tax, citizenship, supreme court, govt portal) with full metadata (organization, domain, title, category, source type, authority level, verified status, current/outdated status) (PR-011).
+- **Evaluation System:** Gold dataset (12+ human-verified cases across 11 categories with alternative-form key facts, forbidden facts, and sentence-level negation guards), retrieval benchmark (Hit@k / MRR / negative probes across English, Nepali, romanized, mixed), explanation evaluator (deterministic fact checks, no LLM judge in CI) — results recorded in docs/EVALUATION.md.
 ### Planned (Future Roadmap)
 - **Offline Standalone Desktop Executable:** Packaging the frontend and local inference runtime into a self-contained Tauri/Electron desktop application for remote civic workers without internet connectivity.
 - **Government Gazette Web Scraping:** Automated indexing pipeline for new circulars from official `.gov.np` portals.
