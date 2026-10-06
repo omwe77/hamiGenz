@@ -145,7 +145,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 from fastapi.testclient import TestClient
 from main import app
 
-client = TestClient(app)
+client = TestClient(app, with_lifespan=True)
 
 # ---- TestUploadValidation ----
 class TestUploadValidation:
