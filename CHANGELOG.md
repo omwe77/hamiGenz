@@ -67,10 +67,9 @@ Devanagari + English tags, verified flags, owner metadata, resource links.
   source_type, and filename — sufficient for document-context-aware retrieval
 
 ### Documentation — Modern Nepali OCR path noted
-- README documents the four-stage Devanagari OCR architecture (PaddleOCR
-  devanagari_PP-v5 for printed labels + TrOCR paudelanil/trocr-devanagari-2
-  for handwritten values + SpaCy NER) as the modern alternative to Tesseract,
-  with links to Sandip Acharya's engineering write-up and the HuggingFace model
+- README documents the Tesseract-based OCR architecture: Tesseract 5.x with
+  custom Nepali language data (`nep.traineddata`) for scanned images, with
+  automated script selector selecting between pure Nepali and bilingual modes.
 
 ### Added — Official Nepal knowledge base (expanded — Phase 2)
 - Added **driving license (गाडी सबैभन्दा पत्र)** concept (DocumentType) — structure,
