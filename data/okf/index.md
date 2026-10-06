@@ -37,7 +37,8 @@ identity cards, and form-filling processes.
 
 ## Directory structure
 
-* [Document Types](document-types/) — Passport, Citizenship, NID, Voter ID
+* [Document Types](document-types/) — Passport, Citizenship, NID, Voter ID, Driving License
 * [Field Definitions](fields/) — What each field on Nepal documents means
 * [Form Filling Guidelines](forms/) — How to fill Nepal government forms
 * [OCR Post-Processing Rules](ocr/) — Rules for cleaning OCR output
+* [Government Services](reference/) — Passport, Citizenship, NID, Driving License, Voter ID, Traffic rules
