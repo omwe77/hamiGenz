@@ -13,7 +13,7 @@ class TestUploadValidation:
             cls.skip_server = True
 
     def test_rejects_file_too_small(self):
-        if getattr(self, "skip_server", False):
+        if self.skip_server:
             pytest.skip("Server not initialized (lifespan not run)")
         response = client.post(
             "/upload",
@@ -23,7 +23,7 @@ class TestUploadValidation:
         assert "too small" in response.text.lower()
 
     def test_rejects_file_too_large(self):
-        if getattr(self, "skip_server", False):
+        if self.skip_server:
             pytest.skip("Server not initialized (lifespan not run)")
         large_data = b"%PDF-1.4" + b"X" * (50 * 1024 * 1024 + 1)
         response = client.post(
@@ -34,7 +34,7 @@ class TestUploadValidation:
         assert "too large" in response.text.lower()
 
     def test_rejects_unsupported_extension(self):
-        if getattr(self, "skip_server", False):
+        if self.skip_server:
             pytest.skip("Server not initialized (lifespan not run)")
         response = client.post(
             "/upload",
@@ -44,7 +44,7 @@ class TestUploadValidation:
         assert "Unsupported" in response.text
 
     def test_rejects_pdf_invalid_content(self):
-        if getattr(self, "skip_server", False):
+        if self.skip_server:
             pytest.skip("Server not initialized (lifespan not run)")
         # Provide enough bytes to pass the minimum size check (100 bytes)
         response = client.post(
@@ -55,7 +55,7 @@ class TestUploadValidation:
         assert "content does not match" in response.text.lower()
 
     def test_accepts_pdf_with_valid_magic(self):
-        if getattr(self, "skip_server", False):
+        if self.skip_server:
             pytest.skip("Server not initialized (lifespan not run)")
         # May fail if Ollama is not running - that's acceptable for this test
         if response.status_code in (503, 502, 504):
