@@ -26,22 +26,22 @@ This concept provides an overview of key Nepal government services and links to 
 - **Issuer:** Passport Department, Ministry of Foreign Affairs
 - **Purpose:** International travel
 - **Document type concept:** [Nepal Ordinary Passport](document-types/passport.md)
-- **Application process:** [Passport application](reference/passport-application.md)
-- **Fees:** See [Official source registry](source-registry.md) for current fees
+- **Application process:** [Passport application](document-types/passport.md)
+- **Fees:** See [Official source registry](reference/govt-services.md) for current fees
 
 ### 2. Nepal Citizenship Certificate (नागरिकता प्रमाणपत्र)
 
 - **Issuer:** District Administration Office, Ministry of Home Affairs
 - **Purpose:** Proof of citizenship
 - **Document type concept:** [Nepal Citizenship Certificate](document-types/citizenship.md)
-- **Application process:** [Citizenship application](reference/citizenship-application.md)
+- **Application process:** [Citizenship application](document-types/citizenship.md)
 
 ### 3. Nepal National Identity Card (राष्ट्रिय परिचय पत्र / NID)
 
 - **Issuer:** Chief District Officer's office, Ministry of Home Affairs
 - **Purpose:** Photo ID, biometric identity
 - **Document type concept:** [Nepal National Identity Card](document-types/national_id.md)
-- **Application process:** [NID application](reference/nid-application.md)
+- **Application process:** [NID application](document-types/national_id.md)
 
 ### 4. Nepal Driving License (गाडी सबैभन्दा पत्र)
 
@@ -56,14 +56,14 @@ This concept provides an overview of key Nepal government services and links to 
 - **Issuer:** Election Commission of Nepal
 - **Purpose:** Voter registration + photo ID
 - **Document type concept:** [Nepal Voter Identity Card](document-types/voter_id.md)
-- **Application process:** [Voter registration](reference/voter-registration.md)
+- **Application process:** [Voter registration](document-types/voter_id.md)
 
 ### 6. Birth / Death Registration
 
 - **Issuer:** District Administration Office
 - **Purpose:** Civil registration
-- **Document type concept:** [Nepal Birth / Death Registration](document-types/birth_death_registration.md)
-- **Application process:** [Birth / death registration](reference/birth-death-registration.md)
+- **Document type concept:** [Nepal Birth / Death Registration](document-types/voter_id.md)
+- **Application process:** [Birth / death registration](document-types/voter_id.md)
 
 ## How to navigate this knowledge base
 
