@@ -72,3 +72,6 @@ tests/tmp_search/
 .claude/
 .codex/
 .playwright-mcp/
+
+# Documentation assets (orphaned screenshots, not referenced in docs or README)
+docs/assets/
