@@ -125,19 +125,23 @@ hamiGenZ implements the **Open Knowledge Format (OKF v0.2)** specification as it
 
 ## 4. Implementation Status
 
-| Feature / Subsystem | Status | Details |
-|---|---|---|
-| **OKF v0.2 Specification Conformance** | Implemented | Conformance validator, YAML frontmatter parser, graph linker, and test suite. |
-| **Bilingual OCR Engine** | Implemented | Tesseract Devanagari + English engine with automated script detection. |
-| **Multilingual Vector Retrieval** | Implemented | FAISS CPU index with `paraphrase-multilingual-MiniLM-L12-v2`. |
-| **Prompt Injection Armor** | Implemented | Evidence delimiters, zero-width char filter, role hijack neutralization. |
-| **Multi-Tier Explanation Engine** | Implemented | 3 complexity tiers (Original, Simple Summary, Bullet Breakdown). |
-| **Comprehensive Test Suite** | Implemented | **282 passing tests** across unit, pipeline, security, and golden queries. |
-| **Split-Pane Next.js Workspace** | Implemented | Responsive desktop, tablet, and mobile interface with citation chips. |
-| **Official Source Registry** | Implemented | Verified `.gov.np` directory with authority ranking and freshness audits. |
-| **Form Assistance & Action Extraction**| In Progress | Schema extraction from standard bureaucratic application templates. |
-| **Azure VM Staging Deployment** | In Progress | Nginx HTTPS reverse proxy + systemd service specifications (`docs/DEPLOYMENT.md`). |
-| **Offline Desktop Executable** | Planned | Local bundle via Tauri/Electron for fully isolated, zero-internet field operations. |
+### Implemented (Verified in Active Codebase)
+- **Open Knowledge Format (OKF v0.2) Layer:** Conformance validator (`backend/okf_validator.py`), YAML frontmatter parser, graph link traversal, and concept router covering Nepal Passport, Citizenship, National ID, Voter ID, and form-fill guidelines.
+- **Bilingual OCR Pipeline:** Dual-engine OCR with Tesseract 5.x (using `nep.traineddata` and `eng.traineddata`) and PyMuPDF/pdfplumber, with automated Devanagari script detection.
+- **Multilingual Vector Retrieval:** FAISS CPU dense vector index populated by `paraphrase-multilingual-MiniLM-L12-v2` (384-dim) with model-switch checksum protection.
+- **Prompt Injection Defense:** Evidence isolation wrapping untrusted document text in `<evidence>` delimiters, role hijack neutralization, and zero-width unicode character stripping.
+- **Grounding & Contradiction Verification:** Secondary inference layer that compares LLM responses against retrieved source passages and enforces refusal on ungrounded claims.
+- **Multi-Tier Explanation Engine:** Three selectable simplification tiers (Original Text, Simple Summary, Bullet Breakdown) with trilingual language handling (Devanagari, Romanized Nepali, English).
+- **Split-Pane Next.js 16 Workspace:** Responsive desktop, tablet, and mobile interface with interactive document viewing, dynamic citation clicking, and empty-state guidance.
+- **Comprehensive Test Suite:** **282 passing unit, pipeline, security, and golden query tests** via `pytest`.
+
+### In Progress
+- **Form Assistance & Action Extraction:** Automated field extraction and guidance from official bureaucratic application forms (`backend/form_service.py`).
+- **Cloud Staging Infrastructure:** Deployment scripts and systemd unit configurations for Azure VM (Standard_B2ms_v2 with Ollama and Nginx HTTPS reverse proxy) detailed in `docs/DEPLOYMENT.md`.
+
+### Planned (Future Roadmap)
+- **Offline Standalone Desktop Executable:** Packaging the frontend and local inference runtime into a self-contained Tauri/Electron desktop application for remote civic workers without internet connectivity.
+- **Government Gazette Web Scraping:** Automated indexing pipeline for new circulars from official `.gov.np` portals.
 
 ---
 
