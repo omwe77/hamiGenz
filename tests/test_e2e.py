@@ -28,7 +28,7 @@ TESTS_DIR = BASE_DIR / "tests"
 
 # ---- Ensure Tesseract env vars are set for standalone test runs ----
 if "TESSERACT_BIN" not in os.environ or not os.environ["TESSERACT_BIN"]:
-    _default_bin = Path(r"C:\Program Files\Tesseract-OCR	esseract.exe")
+    _default_bin = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
     if _default_bin.exists():
         os.environ["TESSERACT_BIN"] = str(_default_bin)
 if "TESSDATA_PREFIX" not in os.environ or not os.environ["TESSDATA_PREFIX"]:
@@ -118,6 +118,7 @@ def clean_test_artifacts():
             except:
                 pass
 
+
 def record_result(results_list, question, lang, status, answer_preview, details=""):
     results_list.append({
         "timestamp": datetime.now().isoformat(),
@@ -127,6 +128,7 @@ def record_result(results_list, question, lang, status, answer_preview, details=
         "answer_preview": answer_preview[:200] if answer_preview else "",
         "details": details,
     })
+
 
 # ---- Nepali OCR verification ----
 def test_nepali_ocr():
@@ -145,46 +147,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 from fastapi.testclient import TestClient
 from main import app
 
-# Initialize app state by running the lifespan
-import asyncio
-from contextlib import asynccontextmanager
-
-if not hasattr(app.state, 'pipeline'):
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(app.lifespan(app))
-    loop.close()
-
 client = TestClient(app)
 
 # ---- TestUploadValidation ----
 class TestUploadValidation:
     """Verify the /upload endpoint rejects invalid file types,
     oversized files, and malformed content with proper 400 errors."""
-
-    @classmethod
-    def setup_class(cls):
-        # Initialize app state the same way the server does
-        from document_processor import DocumentProcessor
-        from vector_store import EmbeddingService, VectorStore
-        import tempfile
-
-        cls.tmp_dir = tempfile.mkdtemp(prefix="hamigenz_test_")
-        cls.processor = DocumentProcessor(upload_dir=os.path.join(cls.tmp_dir, "uploads"))
-        cls.embedder = EmbeddingService(model_name="all-MiniLM-L6-v2")
-        cls.vector_store = VectorStore(
-            vectors_dir=os.path.join(cls.tmp_dir, "vectors"),
-            dimension=cls.embedder.dimension,
-        )
-        cls.metadata = MetadataStore(db_path=os.path.join(cls.tmp_dir, "test.db"))
-        cls.pipeline = Pipeline(
-            embedding_service=cls.embedder,
-            vector_store=cls.vector_store,
-            chunker=cls.processor.chunker,
-            metadata_store=cls.metadata,
-        )
-        app.state.pipeline = cls.pipeline
-        app.state.metadata = cls.metadata
-        app.state.processor = cls.processor
 
     def test_rejects_file_too_small(self):
         response = client.post(
@@ -213,6 +181,7 @@ class TestUploadValidation:
 
     def test_rejects_pdf_invalid_content(self):
         """A file named .pdf must have %PDF- magic bytes."""
+        # Provide enough bytes to pass the minimum size check (100 bytes)
         response = client.post(
             "/upload",
             files={"file": ("evil.pdf", b"%PDF-1.4" + b"X" * 100, "application/pdf")},
@@ -227,6 +196,7 @@ class TestUploadValidation:
             "/upload",
             files={"file": ("valid.pdf", valid_pdf, "application/pdf")},
         )
+        # May fail if Ollama is not running - that's acceptable for this test
         if response.status_code in (503, 502, 504):
             pytest.skip("Ollama LLM not reachable - skipping")
         assert response.status_code in (200, 400, 127, 503, 502, 504)
