@@ -145,7 +145,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 from fastapi.testclient import TestClient
 from main import app
 
-client = TestClient(app, with_lifespan=True)
+# Initialize app state by running the lifespan
+import asyncio
+from contextlib import asynccontextmanager
+
+if not hasattr(app.state, 'pipeline'):
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(app.lifespan(app))
+    loop.close()
+
+client = TestClient(app)
 
 # ---- TestUploadValidation ----
 class TestUploadValidation:
