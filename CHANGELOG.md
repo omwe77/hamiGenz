@@ -3,7 +3,7 @@
 ## Unreleased (main)
 ### Documentation — Implementation Status alignment
 - README `Implementation Status` updated: added **Action Layer**, **Official Source Answering**, **Official Source Registry**, and **Evaluation System** to "Implemented"; removed "Form Assistance & Action Extraction" and "Cloud Staging Infrastructure" from "In Progress" (both are now implemented).
-- CHANGELOG "Upcoming Phases" corrected: Phase 2 (OKF knowledge base), Phase 3 (action features), and Phase 4 (verification) are all implemented; only Phase 5 (expansion) remains upcoming, plus the offline desktop executable and government gazette scraping.
+- CHANGELOG "Upcoming Phases" updated: Phase 2 (OKF knowledge base), Phase 3 (action features), and Phase 4 (verification) are all implemented; only Phase 5 (expansion) remains upcoming, plus the offline desktop executable and government gazette scraping.
 - Test suite unaffected: 282 tests pass (verified via `pytest tests/ -q`).
 
 ### Added — OKF Knowledge Layer (Open Knowledge Format)
