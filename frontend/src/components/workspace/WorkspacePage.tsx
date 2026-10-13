@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   explainText,
@@ -95,6 +96,7 @@ export default function WorkspacePage() {
   }>({ rating: null, confirmed: false, aggregate: null });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
   // ── Load documents once ─────────────────────────────────────────────
   useEffect(() => {
@@ -1050,8 +1052,7 @@ export default function WorkspacePage() {
                         <button
                           style={styles.docItemOpen}
                           onClick={() => {
-                            setActiveDocId(doc.doc_id);
-                            clearHighlights();
+                            router.push(`/workspace/${doc.doc_id}`);
                           }}
                         >
                           {activeDocId === doc.doc_id ? "Viewing" : "Open"}
