@@ -239,6 +239,65 @@ class DocumentProcessor:
             print(f"render_page_image failed for {filepath} page {page_num}: {e}")
             return None
 
+    def _render_page_pil(self, filepath: str, page_num: int, dpi: int = 200) -> Optional[Image.Image]:
+        """Render one PDF page to a PIL Image at `dpi` for compositing answers."""
+        try:
+            doc = fitz.open(filepath)
+            page = doc[page_num - 1]
+            mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+            pix = page.get_pixmap(matrix=mat)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            doc.close()
+            return img
+        except Exception as e:
+            print(f"_render_page_pil failed for {filepath} page {page_num}: {e}")
+            return None
+
+    def _tesseract_word_boxes(self, filepath: str, page_num: int) -> list[dict]:
+        """Word-level bounding boxes via Tesseract TSV at 300 DPI.
+
+        Coordinates are in 300-DPI image pixels (same basis as OCR text), so
+        they can be scaled to the 200-DPI render used for display.
+        """
+        try:
+            doc = fitz.open(filepath)
+            page = doc[page_num - 1]
+            mat = fitz.Matrix(300 / 72, 300 / 72)  # 300 DPI for OCR
+            pix = page.get_pixmap(matrix=mat)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            doc.close()
+
+            available = set(get_available_languages())
+            lang = "nep" if "nep" in available else "eng"
+            data = pytesseract.image_to_data(
+                img, lang=lang, output_type=pytesseract.Output.DICT
+            )
+            boxes = []
+            n = len(data["text"])
+            for i in range(n):
+                text = data["text"][i].strip()
+                conf = data["conf"][i]
+                # conf is int in recent pytesseract, str in older versions
+                if isinstance(conf, int):
+                    conf_val = conf
+                elif isinstance(conf, str):
+                    conf_val = int(conf) if conf.isdigit() else -1
+                else:
+                    conf_val = -1
+                if text and conf_val >= 0:
+                    boxes.append({
+                        "text": text,
+                        "x": int(data["left"][i]),
+                        "y": int(data["top"][i]),
+                        "w": int(data["width"][i]),
+                        "h": int(data["height"][i]),
+                        "page": page_num,
+                    })
+            return boxes
+        except Exception as e:
+            print(f"_tesseract_word_boxes failed for {filepath} page {page_num}: {e}")
+            return []
+
 
     def _ocr_page_fitx(self, filepath: str, page_num: int) -> str:
         """OCR a single PDF page using PyMuPDF rendering + Tesseract.
@@ -375,7 +434,8 @@ class MetadataStore:
                 upload_date TEXT NOT NULL,
                 page_count INTEGER DEFAULT 0,
                 language_hint TEXT,
-                source_type TEXT DEFAULT 'unknown'
+                source_type TEXT DEFAULT 'unknown',
+                form_fields TEXT  -- JSON array of {label, value} used for form preview
             );
             CREATE TABLE IF NOT EXISTS chunks (
                 chunk_id TEXT PRIMARY KEY,
@@ -455,3 +515,31 @@ class MetadataStore:
             "doc_id": r[0], "filename": r[1], "filepath": r[2],
             "upload_date": r[3], "page_count": r[4], "language_hint": r[5]
         } for r in rows]
+
+    def get_form_fields(self, doc_id: str) -> list[dict]:
+        """Return the stored {label, value} list for a document's form preview."""
+        conn = sqlite3.connect(str(self.db_path))
+        row = conn.execute(
+            "SELECT form_fields FROM documents WHERE doc_id=?", (doc_id,)
+        ).fetchone()
+        conn.close()
+        if not row or not row[0]:
+            return []
+        data = row[0]
+        try:
+            import json
+            data = json.loads(data)
+            if isinstance(data, list):
+                return data
+        except (ValueError, TypeError):
+            pass
+        return []
+
+    def set_form_fields(self, doc_id: str, values: list[dict]) -> None:
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute(
+            "UPDATE documents SET form_fields=? WHERE doc_id=?",
+            (json.dumps(values), doc_id),
+        )
+        conn.commit()
+        conn.close()
