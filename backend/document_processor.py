@@ -6,9 +6,11 @@ Document Understanding Pipeline
 import os
 import re
 import uuid
+import json
 import sqlite3
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timezone
 
 import pdfplumber
 import fitz  # PyMuPDF
@@ -537,9 +539,37 @@ class MetadataStore:
 
     def set_form_fields(self, doc_id: str, values: list[dict]) -> None:
         conn = sqlite3.connect(str(self.db_path))
-        conn.execute(
-            "UPDATE documents SET form_fields=? WHERE doc_id=?",
-            (json.dumps(values), doc_id),
-        )
+        # Preserve existing document fields (filename, filepath, upload_date,
+        # page_count, language_hint, source_type) when the document was already
+        # uploaded, so INSERT OR REPLACE does not violate any NOT NULL columns.
+        existing = conn.execute(
+            "SELECT filename, filepath, upload_date, page_count, language_hint, source_type "
+            "FROM documents WHERE doc_id=?", (doc_id,)
+        ).fetchone()
+        if existing:
+            filename, filepath, upload_date, page_count, language_hint, source_type = existing
+            # UPDATE only form_fields; use UPDATE instead of INSERT OR REPLACE so
+            # that ON DELETE CASCADE on the chunks table does not delete indexed
+            # content.
+            conn.execute(
+                """UPDATE documents
+                   SET filename=?, filepath=?, upload_date=?, page_count=?, language_hint=?, source_type=?, form_fields=?
+                   WHERE doc_id=?""",
+                (
+                    filename, filepath, upload_date, page_count, language_hint, source_type,
+                    json.dumps(values), doc_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO documents
+                   (doc_id, filename, filepath, upload_date, page_count, language_hint, source_type, form_fields)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    doc_id, doc_id, str(self.db_path),
+                    datetime.now(timezone.utc).isoformat(), 0, None, "unknown",
+                    json.dumps(values),
+                ),
+            )
         conn.commit()
         conn.close()

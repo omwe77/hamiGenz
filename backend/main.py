@@ -3,6 +3,7 @@ hamigenz — FastAPI Backend
 Main application entry point.
 """
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,7 @@ from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
 from form_understanding import FormUnderstandingService
 import form_understanding  # module-level helpers used by fill-image endpoint
+import form_preview  # form preview compositing used by fill-image endpoint
 from feedback_store import FeedbackStore
 import source_registry
 from official_answer import OfficialAnswerService
@@ -44,8 +46,10 @@ from llm_service import (
 
 
 # ─── Configuration ───────────────────────────────────────────────
-BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
+# data/ and uploads/ live under backend/, not the repo root
+_BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = _BASE_DIR.parent
+DATA_DIR = BASE_DIR / "backend" / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 VECTORS_DIR = DATA_DIR / "vectors"
 DB_PATH = DATA_DIR / "hamigenz.db"
@@ -1175,7 +1179,8 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
 async def set_form_fields(doc_id: str, req: dict, _rl: None = Depends(rate_limit("ai"))):
     """Persist a list of {label, value, page} for a document's form preview."""
     try:
-        values = [FormFieldValue(**v) for v in (req.get("values") or [])]
+        # Accept both 'values' and 'fields' keys for compatibility
+        values = [v for v in (req.get("values") or req.get("fields") or [])]
     except Exception as e:
         raise HTTPException(400, f"Invalid form fields: {e}") from e
 

@@ -28,6 +28,7 @@ import DocumentViewer from "./DocumentViewer";
 import ProvenanceBadge from "./ProvenanceBadge";
 import ActionPanel from "./ActionPanel";
 import FormPanel from "./FormPanel";
+import FillPanel from "./FillPanel";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type ExplainLevel = "original" | "simple" | "very_simple";
@@ -658,8 +659,11 @@ export default function WorkspacePage() {
               <FormPanel
                 text={inputText.trim() || undefined}
                 docId={activeDocId}
-                targetLang={targetLang}
+                targetLang={targetLang ?? ""}
               />
+
+              {/* Reference-filled form preview */}
+              <FillPanel docId={activeDocId} />
 
               <p style={styles.hint}>
                 Ctrl+Enter to explain · Select text in the Document tab to explain it
@@ -1100,64 +1104,31 @@ export default function WorkspacePage() {
                   <p style={styles.emptySubtitle}>Loading document viewer...</p>
                 </div>
               ) : (
-                <>
-                  <div style={styles.viewerToolbar}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, flex: 1 }}>
-                      <span style={styles.pageNavLabel}>
-                        {viewerPages.length} page{viewerPages.length !== 1 ? "s" : ""}
-                        {activeDoc ? ` · ${activeDoc.filename}` : ""}
-                      </span>
-                      {explanation && (
-                        <button
-                          type="button"
-                          style={styles.returnToExplainBtn}
-                          onClick={() => setActiveTab(typeof window !== "undefined" && window.innerWidth >= 1100 ? "split" : "explain")}
-                          title="Return to explanation"
-                        >
-                          ← Return to explanation
-                        </button>
-                      )}
-                    </div>
-                    <div style={styles.viewerToolbarRight}>
-                      {viewerPages.length > 1 && (
-                        <select
-                          style={styles.select}
-                          value=""
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (n) jumpToPage(n);
-                          }}
-                          aria-label="Jump to page"
-                        >
-                          <option value="">Jump to page…</option>
-                          {viewerPages.map((p) => (
-                            <option key={p.page_num} value={p.page_num}>
-                              Page {p.page_num}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      {(highlightPage || selectedText || activeSearchMatchIdx !== null) && (
-                        <button style={styles.pageNavBtn} onClick={clearHighlights}>
-                          Clear highlights
-                        </button>
-                      )}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    gap: "var(--space-4)",
+                  }}
+                >
+                  <div style={{ flex: "1 1 70%", minWidth: 0 }}>
+                    <div style={styles.viewerScroll}>
+                      <DocumentViewer
+                        docId={activeDocId}
+                        pages={viewerPages}
+                        onTextHighlight={handleTextHighlight}
+                        citationsByPage={citationsByPage}
+                        searchMatches={searchResults}
+                        activeCitationPage={highlightPage}
+                        activeSearchMatchIdx={activeSearchMatchIdx}
+                        onActiveSearchMatchChange={goToMatch}
+                      />
                     </div>
                   </div>
-
-                  <div style={styles.viewerScroll}>
-                    <DocumentViewer
-                      docId={activeDocId}
-                      pages={viewerPages}
-                      onTextHighlight={handleTextHighlight}
-                      citationsByPage={citationsByPage}
-                      searchMatches={searchResults}
-                      activeCitationPage={highlightPage}
-                      activeSearchMatchIdx={activeSearchMatchIdx}
-                      onActiveSearchMatchChange={goToMatch}
-                    />
+                  <div style={{ flex: "1 1 30%", minWidth: 0 }}>
+                    <FillPanel docId={activeDocId} />
                   </div>
-                </>
+                </div>
               )}
             </div>
 
