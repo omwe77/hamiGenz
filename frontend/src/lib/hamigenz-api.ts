@@ -146,6 +146,42 @@ export async function explainFormField(
   return res.json();
 }
 
+export async function setFormFields(
+  docId: string,
+  values: FormFieldValue[]
+): Promise<{ doc_id: string; count: number; saved: boolean }> {
+  const res = await fetch(`${BASE}/documents/${docId}/form-fields`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`/form-fields failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function getFilledImage(
+  docId: string,
+  pageNum: number,
+  values: FormFieldValue[]
+): Promise<Blob> {
+  const res = await fetch(
+    `${BASE}/documents/${docId}/page/${pageNum}/fill-image`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    }
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`/fill-image failed (${res.status}): ${detail}`);
+  }
+  return res.blob();
+}
+
 export async function submitFeedback(
   question: string,
   rating: number,
@@ -177,4 +213,6 @@ import type {
   FieldExplanation,
   AskGeneralResponse,
   FeedbackResponse,
+  FormFieldValue,
+  FilledImageResponse,
 } from "./types";
