@@ -14,6 +14,14 @@ _BACKEND_DIR = Path(__file__).resolve().parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
+# Load local environment configuration (.env) if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(_BACKEND_DIR / '.env')
+    load_dotenv(_BACKEND_DIR.parent / '.env')
+except ImportError:
+    pass
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware

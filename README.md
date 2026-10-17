@@ -232,17 +232,15 @@ Create a `.env` file in the project root:
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
 
-# Embedding Configuration
-EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+# Embedding & Retrieval Model
+EMBED_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+REINDEX_ON_STARTUP=1
 
 # Security & CORS
 FRONTEND_ORIGIN=http://localhost:3000
-MAX_UPLOAD_SIZE_MB=50
+CORS_EXTRA_ORIGINS=
 
-# Storage Paths
-UPLOAD_DIR=data/uploads
-VECTOR_DIR=data/vectors
-SQLITE_DB_PATH=data/hamigenz.db
+# Note: Storage directories are managed under backend/data/ (uploads, vectors, hamigenz.db).
 ```
 
 ---
