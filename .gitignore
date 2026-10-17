@@ -81,3 +81,10 @@ tests/nepali_ocr_verify.png
 tests/test_gen_current.png
 tests/nep_exact_repro.png
 tests/test_gen_current.png
+
+# Temporary browser/Playwright check scripts (session artefacts, never committed)
+frontend/check_*.py
+frontend/test_*.py
+frontend/generate_blank_form.py
+frontend/src/components/workspace/original_page_1.png
+font_test.png
