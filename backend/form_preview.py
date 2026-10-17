@@ -1,4 +1,4 @@
-"""Reference-filled form previews.
+﻿"""Reference-filled form previews.
 
 Composites typed field answers onto the ORIGINAL uploaded PDF/image page so the
 user sees the form exactly as it would appear, with answers placed inside the
@@ -17,6 +17,7 @@ Pillow is the correct Python image tool for server-side compositing. Where the
 Frontend needs client-side image work, Sharp is the appropriate choice there.
 """
 
+import fitz  # PyMuPDF
 import os
 import textwrap
 from typing import Optional
@@ -37,26 +38,27 @@ _FONT_CANDIDATES = [
     "C:/Windows/Fonts/Nirmala.ttc",
 ]
 
-_FONT = None
+_FONT_CACHE: dict = {}
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
-    global _FONT
-    if _FONT is not None:
-        return _FONT
+    if size in _FONT_CACHE:
+        return _FONT_CACHE[size]
     for path in _FONT_CANDIDATES:
         if not path or not os.path.exists(path):
             continue
         try:
-            _FONT = ImageFont.truetype(path, size, index=0)
-            return _FONT
+            font = ImageFont.truetype(path, size, index=0)
+            _FONT_CACHE[size] = font
+            return font
         except Exception:
             continue
     # Fallback only: bitmap font (no Devanagari glyphs). A missing TTF here is
     # a real problem and must surface in the report rather than silently
     # producing tofu boxes.
-    _FONT = ImageFont.load_default()
-    return _FONT
+    font = ImageFont.load_default()
+    _FONT_CACHE[size] = font
+    return font
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, box_w: int,
