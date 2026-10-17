@@ -1,5 +1,36 @@
 # hamiGenZ Changelog
 
+## [feat/reference-filled-form-preview] 2026-10-17
+### Fixed
+- **form_preview.py**: Added missing import fitz — 
+endered_page_pil() called
+  itz.open() without importing PyMuPDF, which would raise NameError on any
+  live PDF page render.
+- **form_preview.py**: Fixed per-size font cache — _load_font() previously stored
+  a single font instance regardless of requested point size, returning the wrong size
+  on every call after the first. Changed to a size-keyed dict cache.
+- **FillPanel.tsx**: 
+enderPreviewCanvas() now returns Promise<string> and awaits
+  img.onload before drawing — previously assigned img.src then immediately called
+  drawImage(), which drew a blank canvas.
+- **WorkspacePage.tsx**: 	oggleDemoMode() moved out of the state updater function
+  to a plain event handler, preventing side effects inside React batch updates.
+- **ESLint config**: Restored standard lint rules (eslint.config.mjs) after prior
+  session weakened them globally to silence errors.
+
+### Added
+- **frontend/public/blank_form.png**: 800×600 blank registration form fixture for
+  the demo preview canvas.
+- **backend/tests/test_form_preview.py**: 9 unit tests for orm_preview.py
+  compositing helpers (font cache, field clamping, fitz import regression).
+- **backend/tests/conftest.py**: Pytest configuration for the backend test directory.
+
+### Chore
+- **.gitignore**: Added patterns for session-local browser check/test scripts and
+  temporary PNG artefacts that should never be committed.
+- **README.md**: Removed stale hard-coded test count from quick-start snippet.
+
+
 ## Unreleased (main)
 ### Documentation — Implementation Status alignment
 - README `Implementation Status` updated: added **Action Layer**, **Official Source Answering**, **Official Source Registry**, and **Evaluation System** to "Implemented"; removed "Form Assistance & Action Extraction" and "Cloud Staging Infrastructure" from "In Progress" (both are now implemented).
