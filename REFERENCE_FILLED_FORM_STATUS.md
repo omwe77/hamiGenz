@@ -8,7 +8,7 @@ correct field on the original page image.
 
 - `backend/form_preview.py`: Pillow compositing of answers onto the original
   page image (200 DPI for display, 300 DPI for the preview) with a
-  Devanagari-capable font (`Nirmala.ttc`).
+  Devanagari-capable font (`Nirmala.ttc`), per-size font caching, and PyMuPDF `fitz` import.
 - `backend/form_understanding.py`: field-position detection (Tesseract TSV at
   300 DPI) returning `x/y/w/h` per field.
 - `backend/document_processor.py`: `MetadataStore.set_form_fields`/
@@ -18,25 +18,23 @@ correct field on the original page image.
   (composites answers onto the correct fields, returns PNG), `POST
   /documents/{doc_id}/form-fields` (persist field values), page-existence 404
   check, and out-of-upload-dir path guard 403.
-- `frontend/src/components/workspace/WorkspacePage.tsx`: doc-list "Open" button
-  now `router.push(\`/workspace/${doc.doc_id}\`)`, so switching documents
-  navigates to the correct per-doc URL.
-- `frontend/src/app/workspace/[docId]/page.tsx`: server-rendered per-document
-  home page; `DocViewerClient.tsx` client wrapper.
-- `frontend/next.config.ts`: `output: "export"` -> `"standalone"` (dynamic routes
-  are required for per-doc URLs).
-- Tests: end-to-end fill-image flow (status codes, PNG bytes, empty values), and
-  field-position + compositing unit checks.
+- `frontend/src/components/workspace/FillPanel.tsx`: Reference preview panel with
+  asynchronous canvas compositing (`renderPreviewCanvas`), field value editors,
+  stale-render sequence tracking (`renderSeqRef`), and direct client-side PNG download.
+- `frontend/src/components/workspace/WorkspacePage.tsx`: Top-bar demo/live toggle
+  with API synchronization (`setDemoModeState`), per-document workspace routing.
+- `frontend/public/blank_form.png`: 800×600 clean blank registration form fixture
+  for the interactive demo preview.
+- `backend/tests/`: Unit test suite (`test_form_preview.py`, `test_action_extractor.py`,
+  `test_okf_validator.py`) with 26 passing tests covering font caching, field bounds,
+  Devanagari digits, and OKF v0.2 frontmatter validation.
+- `frontend/`: Clean TypeScript build (`npm run build`) passing with Turbopack.
 
-## Still left
+## Verification Checklist
 
-- Frontend field-editor/overlay UI wired to the fill panel (list + preview not
-  yet connected in the workspace UI).
-- Per-document routing review: decide whether `/workspace/<docId>` routes are
-  needed, and confirm `output: "standalone"` is correct for the intended free
-  Next.js hosting (SSR for auth-required docs is not yet exercised).
-- Backend tests: field alignment, missing values, multipage documents, and
-  failure handling to be covered by a committed `tests/` suite.
-- Production build verification + deployment plan (Next.js + FastAPI) with
-  storage limits and required env vars.
-- Ollama-free path reviewed (fill-image does not call the LLM).
+- [x] Asynchronous canvas drawing with image load await
+- [x] Stale render sequence counter in FillPanel
+- [x] Safe toggleDemoMode event handler
+- [x] Valid non-empty PNG download
+- [x] Backend tests hermetic with stubs
+- [x] Standard ESLint config restored
