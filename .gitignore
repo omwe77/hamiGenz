@@ -34,6 +34,9 @@ Thumbs.db
 # Data and uploads (NEVER commit user documents or vector indexes)
 data/uploads/
 data/vectors/
+backend/data/uploads/
+backend/data/vectors/
+backend/data/*.db
 *.faiss
 *_meta.json
 registry.json
