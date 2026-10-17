@@ -26,7 +26,7 @@ export default function OfficialSourcesCard({ sources, freshness }: Props) {
 
       {freshness.verdict === "stale" && (
         <div style={styles.staleWarning}>
-          ⚠️ {freshness.notes || "Some sources may be outdated."}
+          {freshness.notes || "Some sources may be outdated."}
           {freshness.stale_sources.length > 0 && (
             <div style={styles.staleDetail}>{freshness.stale_sources.join(" · ")}</div>
           )}
@@ -34,12 +34,12 @@ export default function OfficialSourcesCard({ sources, freshness }: Props) {
       )}
       {freshness.verdict === "unknown" && (
         <div style={styles.staleWarning}>
-          ℹ️ {freshness.notes || "Freshness could not be confirmed."}
+          {freshness.notes || "Freshness could not be confirmed."}
         </div>
       )}
       {freshness.verdict === "current" && currentCount > 0 && (
         <div style={styles.currentNote}>
-          ✓ Verified current as of {sources[0].fetched_date || sources[0].verified_date}
+          Verified current as of {sources[0].fetched_date || sources[0].verified_date}
         </div>
       )}
 
@@ -50,7 +50,7 @@ export default function OfficialSourcesCard({ sources, freshness }: Props) {
               <span style={styles.org}>{s.organization}</span>
               {s.verified && s.status === "current" ? (
                 <span style={styles.verifiedBadge} title={`Authority: ${s.authority_level}`}>
-                  ✓ {s.authority_level}
+                  {s.authority_level}
                 </span>
               ) : (
                 <span style={styles.statusBadge} title="Check before relying on this">

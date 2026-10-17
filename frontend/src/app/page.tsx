@@ -1,278 +1,39 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useState } from "react";
 import Link from "next/link";
 
-/* ── Homepage with anime.js scroll storytelling ───────── */
 export default function Home() {
-  const [animeReady, setAnimeReady] = useState(false);
-  const [previewMode, setPreviewMode] = useState<"notice" | "simplified">("simplified");
-  const animeFnRef = useRef<typeof import("animejs").animate | null>(null);
-
-  useEffect(() => {
-    import("animejs")
-      .then((mod) => {
-        animeFnRef.current = mod.animate;
-        setAnimeReady(true);
-      })
-      .catch(() => {
-        // anime failed to load — reveal hero content statically instead of
-        // leaving it permanently invisible (inline opacity: 0).
-        document.documentElement.classList.add("no-anime");
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!animeReady) return;
-
-    const animeFn = animeFnRef.current;
-    if (!animeFn || typeof animeFn !== "function") return;
-
-    // Don't run JS-driven animations for users who prefer reduced motion.
-    // CSS already makes all animated elements visible via !important overrides.
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    // Track running animations for cleanup (ref — no dependency loop)
-    const running = Array<ReturnType<typeof import("animejs").animate>>();
-
-    function play(a: ReturnType<typeof import("animejs").animate>) {
-      running.push(a);
-      return a;
-    }
-
-    function cancelAll() {
-      for (const a of running) {
-        try { a.cancel(); } catch { /* already-ended instances are safe */ }
-      }
-      running.length = 0;
-    }
-
-    // Stagger delay callback (v4 FunctionValue: (target?, index?, targets?, prevTween?) => number)
-    const stagger = (base: number) => (_target?: unknown, i = 0): number => i * base;
-
-    const heroBadge = document.getElementById("hero-badge");
-    const heroTitle = document.getElementById("hero-title");
-    const heroSub = document.getElementById("hero-sub");
-    const heroCtas = document.getElementById("hero-ctas");
-    const heroPreview = document.getElementById("hero-preview-sandbox");
-    const finalCta = document.getElementById("final-cta");
-
-    // ── Hero badge + title + subtitle: fade in + rise ─────────────
-    const heroTextElements = [heroBadge, heroTitle, heroSub].filter(Boolean);
-    if (heroTextElements.length) {
-      play(
-        animeFn(heroTextElements, {
-          opacity: [0, 1],
-          translateY: [24, 0],
-          duration: 800,
-          easing: "outCubic",
-          delay: stagger(110),
-        })
-      );
-    }
-
-    // ── Hero CTAs: fade + scale ────────────────────────────────────
-    if (heroCtas) {
-      play(
-        animeFn([heroCtas], {
-          opacity: [0, 1],
-          scale: [0.92, 1],
-          duration: 600,
-          easing: "outCubic",
-          delay: 450,
-        })
-      );
-    }
-
-    // ── Hero Preview Sandbox: rise + subtle scale ─────────────────
-    if (heroPreview) {
-      play(
-        animeFn([heroPreview], {
-          opacity: [0, 1],
-          translateY: [25, 0],
-          scale: [0.98, 1],
-          duration: 750,
-          easing: "outCubic",
-          delay: 600,
-        })
-      );
-    }
-
-    // Final CTA
-    if (finalCta) {
-      play(
-        animeFn([finalCta], {
-          opacity: [0, 1],
-          scale: [0.97, 1],
-          translateY: [20, 0],
-          duration: 800,
-          easing: "outCubic",
-        })
-      );
-    }
-
-    // ── Scroll-driven story (Intersection Observer) ────────────────
-    const steps = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-scroll-step]")
-    );
-    const scanline = document.getElementById("scanline");
-
-    if (!steps.length) {
-      cancelAll();
-      return;
-    }
-
-    const stepObs = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-
-          const el = entry.target as HTMLElement;
-          const step = parseInt(el.dataset.scrollStep || "0", 10);
-          const delay = step * 180;
-
-          // Animate step in when it enters viewport
-          play(
-            animeFn([el], {
-              opacity: [0, 1],
-              translateY: [30, 0],
-              scale: [0.97, 1],
-              duration: 700,
-              delay,
-              easing: "outCubic",
-            })
-          );
-
-          // Scanline sweep on document card
-          if (el.id === "doc-card" && scanline) {
-            play(
-              animeFn([scanline], {
-                translateY: [-20, 400],
-                opacity: [0, 1, 0],
-                duration: 2200,
-                delay: 300,
-                easing: "linear",
-              })
-            );
-          }
-
-          // Extracted-box items: stagger
-          if (el.id === "extracted-box") {
-            const items = Array.from(
-              el.querySelectorAll<HTMLElement>("[data-extract-item]")
-            );
-            if (items.length) {
-              play(
-                animeFn(items, {
-                  opacity: [0, 1],
-                  translateY: [16, 0],
-                  scale: [0.94, 1],
-                  duration: 500,
-                  delay: stagger(100),
-                  easing: "outCubic",
-                })
-              );
-            }
-          }
-
-          // Simple-explanation items: stagger
-          if (el.id === "simple-box") {
-            const items = Array.from(
-              el.querySelectorAll<HTMLElement>("[data-simple-item]")
-            );
-            if (items.length) {
-              play(
-                animeFn(items, {
-                  opacity: [0, 1],
-                  translateY: [16, 0],
-                  scale: [0.94, 1],
-                  duration: 500,
-                  delay: stagger(120),
-                  easing: "outCubic",
-                })
-              );
-            }
-          }
-
-          // Evidence items: stagger (translateX)
-          if (el.id === "evidence-box") {
-            const items = Array.from(
-              el.querySelectorAll<HTMLElement>("[data-evidence-item]")
-            );
-            if (items.length) {
-              play(
-                animeFn(items, {
-                  opacity: [0, 1],
-                  translateX: [-12, 0],
-                  duration: 500,
-                  delay: stagger(130),
-                  easing: "outCubic",
-                })
-              );
-            }
-          }
-
-          // Final CTA inside scroll story
-          if (el.id === "final-cta") {
-            play(
-              animeFn([el], {
-                opacity: [0, 1],
-                scale: [0.97, 1],
-                translateY: [20, 0],
-                duration: 800,
-                easing: "outCubic",
-              })
-            );
-          }
-
-          stepObs.unobserve(el);
-        });
-      },
-      { threshold: 0.25, rootMargin: "0px 0px -40px 0px" }
-    );
-
-    steps.forEach((el) => stepObs.observe(el));
-
-    // Cleanup on unmount (also covers React dev-mode remounts)
-    return () => {
-      stepObs.disconnect();
-      cancelAll();
-    };
-  }, [animeReady]);
+  const [activeTab, setActiveTab] = useState<"simplified" | "original">("simplified");
 
   return (
     <div
       style={{
         minHeight: "100vh",
         background: "var(--color-bg)",
+        color: "var(--color-text-primary)",
         fontFamily: "var(--font-sans)",
       }}
     >
-      {/* ── Navigation ──────────────────────────────────── */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
+      {/* ── Top Navigation ─────────────────────────────────── */}
       <header
         className="glass-header"
+        id="main-nav"
         style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 200,
-          padding: "0 var(--space-8)",
           height: "var(--header-height)",
+          padding: "0 var(--space-6)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}
-        id="main-nav"
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-4)",
-          }}
-        >
-          <div
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
+          <Link
+            href="/"
             style={{
               display: "flex",
               alignItems: "center",
@@ -289,6 +50,7 @@ export default function Home() {
               viewBox="0 0 32 32"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
             >
               <rect width="32" height="32" rx="7" fill="#c8520b" />
               <path
@@ -300,1208 +62,607 @@ export default function Home() {
               <circle cx="24" cy="22" r="3.5" fill="white" fillOpacity="0.9" />
             </svg>
             hamiGenZ
+          </Link>
+
+          <span className="editorial-badge nav-status-badge">
+            <span
+              style={{
+                width: "7px",
+                height: "7px",
+                borderRadius: "50%",
+                background: "var(--color-success)",
+                display: "inline-block",
+              }}
+            />
+            <span>Civic Document Reader &middot; Nepal</span>
+          </span>
+        </div>
+
+        <nav
+          style={{ display: "flex", alignItems: "center", gap: "var(--space-6)" }}
+          aria-label="Primary navigation"
+        >
+          <div className="nav-text-links" style={{ display: "flex", gap: "var(--space-5)" }}>
+            <a
+              href="#capabilities"
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-secondary)",
+                fontWeight: "var(--font-medium)",
+              }}
+            >
+              Capabilities
+            </a>
+            <a
+              href="#example"
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-secondary)",
+                fontWeight: "var(--font-medium)",
+              }}
+            >
+              Example
+            </a>
+            <a
+              href="#how-it-works"
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-secondary)",
+                fontWeight: "var(--font-medium)",
+              }}
+            >
+              How it works
+            </a>
           </div>
-          <div
+
+          <Link
+            href="/workspace"
+            className="touch-target-expand"
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--space-2)",
-              fontSize: "var(--text-xs)",
-              color: "var(--color-text-secondary)",
-              background: "var(--color-bg-alt)",
-              padding: "4px 10px",
-              borderRadius: "var(--radius-full)",
-              border: "1px solid var(--color-border)",
-            }}
-            className="nav-status-badge"
-          >
-            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--color-success)", flexShrink: 0 }} />
-            <span style={{ fontWeight: "var(--font-medium)" }}>Verified Nepal Document Engine · Local &amp; Grounded</span>
-          </div>
-        </div>
-        <nav
-          className="nav-text-links"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-6)",
-          }}
-        >
-          {["Product", "How it works", "Sources"].map((label) => (
-            <a
-              key={label}
-              href={`#${label.toLowerCase().replaceAll(" ", "-")}`}
-              style={{
-                color: "var(--color-text-secondary)",
-                fontSize: "var(--text-sm)",
-                fontWeight: "var(--font-medium)",
-                transition: "color var(--duration-fast) var(--ease-default)",
-              }}
-            >
-              {label}
-            </a>
-          ))}
-          <Link
-            href="/workspace"
-            style={{
               background: "var(--color-accent)",
-              color: "white",
-              padding: "var(--space-2) var(--space-5)",
-              borderRadius: "var(--radius-md)",
+              color: "#ffffff",
               fontSize: "var(--text-sm)",
               fontWeight: "var(--font-semibold)",
-              transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default)",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-hover)";
-              (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-1px)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent)";
-              (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
+              padding: "8px 18px",
+              borderRadius: "var(--radius-md)",
+              transition: "background var(--duration-fast) var(--ease-default)",
             }}
           >
-            Open hamiGenZ
+            Open workspace
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 8h10M9 4l4 4-4 4" />
+            </svg>
           </Link>
         </nav>
       </header>
 
-      {/* ── Hero ────────────────────────────────────────── */}
-      <section
-        id="main-content"
-        style={{
-          minHeight: "92vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          textAlign: "center",
-          padding: "var(--space-24) var(--space-6) var(--space-16)",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        {/* Subtle background grid pattern */}
-        <div
+      {/* ── Main Content ──────────────────────────────────── */}
+      <main id="main-content">
+        {/* ── Hero Section ─────────────────────────────────── */}
+        <section
           style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage: `linear-gradient(var(--color-border-soft) 1px, transparent 1px),
-                              linear-gradient(90deg, var(--color-border-soft) 1px, transparent 1px)`,
-            backgroundSize: "60px 60px",
-            opacity: 0.3,
-            pointerEvents: "none",
-          }}
-        />
-
-        <div
-          style={{
-            position: "relative",
-            maxWidth: "840px",
-            width: "100%",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            marginTop: "var(--space-8)",
+            padding: "var(--space-16) var(--space-6) var(--space-12)",
+            maxWidth: "var(--max-width)",
+            margin: "0 auto",
+            textAlign: "center",
           }}
         >
-          {/* Hero Top Badge */}
-          <div
-            id="hero-badge"
-            className="editorial-badge"
-            style={{
-              opacity: 0,
-              transform: "translateY(24px)",
-              marginBottom: "var(--space-5)",
-            }}
-          >
-            <span>🇳🇵 Nepal&apos;s Open Document Intelligence</span>
-            <span style={{ opacity: 0.4 }}>•</span>
-            <span>100% Free &amp; Offline-Capable</span>
-          </div>
-
-          <h1
-            id="hero-title"
-            className="hero-title"
-            style={{
-              opacity: 0,
-              transform: "translateY(24px)",
-              margin: "0 0 var(--space-6)",
-              fontFamily: "var(--font-serif)",
-              fontSize: "var(--text-6xl)",
-              color: "var(--color-text-primary)",
-              lineHeight: "1.12",
-              letterSpacing: "-0.03em",
-            }}
-          >
-            Don&apos;t understand it?{" "}
-            <span style={{ color: "var(--color-accent)" }}>Ask hamiGenZ.</span>
-          </h1>
-
-          <div
-            id="hero-sub"
-            style={{
-              opacity: 0,
-              transform: "translateY(24px)",
-              color: "var(--color-text-secondary)",
-              fontSize: "var(--text-xl)",
-              lineHeight: "1.55",
-              maxWidth: "580px",
-              marginBottom: "var(--space-8)",
-            }}
-          >
-            Upload a document, ask a question, or describe what you need. hamiGenZ reads it,
-            explains it simply, and shows you the evidence you can check.
-          </div>
-
-          <div
-            id="hero-ctas"
-            style={{
-              opacity: 0,
-              transform: "scale(0.92)",
-              display: "flex",
-              gap: "var(--space-4)",
-              flexWrap: "wrap",
-              justifyContent: "center",
-            }}
-          >
-            <Link
-              href="/workspace"
-              style={{
-                background: "var(--color-accent)",
-                color: "white",
-                padding: "var(--space-4) var(--space-8)",
-                borderRadius: "var(--radius-lg)",
-                fontSize: "var(--text-lg)",
-                fontWeight: "var(--font-semibold)",
-                textDecoration: "none",
-                boxShadow: "0 2px 6px rgba(200, 82, 11, 0.25)",
-                transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-hover)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-1px)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
-              }}
+          <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+            <div
+              className="editorial-badge"
+              style={{ marginBottom: "var(--space-4)" }}
+              id="hero-badge"
             >
-              Try hamiGenZ
-            </Link>
-            <a
-              href="#story"
+              <span>Evidence-based civic document assistance</span>
+            </div>
+
+            <h1
+              className="hero-title"
+              id="hero-title"
               style={{
+                fontSize: "clamp(2.4rem, 5vw, 3.75rem)",
+                fontWeight: "var(--font-bold)",
+                letterSpacing: "-0.03em",
                 color: "var(--color-text-primary)",
-                padding: "var(--space-4) var(--space-8)",
-                borderRadius: "var(--radius-lg)",
-                fontSize: "var(--text-lg)",
-                fontWeight: "var(--font-medium)",
-                textDecoration: "none",
-                border: "1px solid var(--color-border)",
-                background: "var(--color-surface)",
-                transition: "border-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default), background var(--duration-fast) var(--ease-default)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.borderColor = "var(--color-accent)";
-                (e.currentTarget as HTMLAnchorElement).style.color = "var(--color-accent)";
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-soft)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.borderColor = "var(--color-border)";
-                (e.currentTarget as HTMLAnchorElement).style.color = "var(--color-text-primary)";
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-surface)";
+                marginBottom: "var(--space-4)",
+                lineHeight: "1.15",
               }}
             >
-              See how it works
-            </a>
+              Understand Nepal&apos;s official documents.
+            </h1>
+
+            <p
+              id="hero-sub"
+              style={{
+                fontSize: "clamp(1.05rem, 2vw, 1.25rem)",
+                color: "var(--color-text-secondary)",
+                lineHeight: "var(--leading-relaxed)",
+                maxWidth: "680px",
+                margin: "0 auto var(--space-8)",
+              }}
+            >
+              Upload a notice, form or letter. Get a plain-language explanation and
+              find the passage that supports it.
+            </p>
+
+            <div
+              id="hero-ctas"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "var(--space-4)",
+                flexWrap: "wrap",
+                marginBottom: "var(--space-12)",
+              }}
+            >
+              <Link
+                href="/workspace"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--space-2)",
+                  background: "var(--color-accent)",
+                  color: "#ffffff",
+                  fontSize: "var(--text-base)",
+                  fontWeight: "var(--font-semibold)",
+                  padding: "12px 24px",
+                  borderRadius: "var(--radius-md)",
+                  boxShadow: "0 2px 4px rgba(200, 82, 11, 0.2)",
+                  transition: "background var(--duration-fast) var(--ease-default)",
+                }}
+              >
+                Open workspace
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              </Link>
+
+              <a
+                href="#example"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--space-2)",
+                  background: "var(--color-surface)",
+                  color: "var(--color-text-primary)",
+                  border: "1px solid var(--color-border)",
+                  fontSize: "var(--text-base)",
+                  fontWeight: "var(--font-medium)",
+                  padding: "12px 22px",
+                  borderRadius: "var(--radius-md)",
+                }}
+              >
+                View an example
+              </a>
+            </div>
           </div>
 
-          {/* ── Interactive Transformation Sandbox (Before / After) ── */}
+          {/* ── Interactive Before / After Example Sandbox ──── */}
           <div
-            id="hero-preview-sandbox"
+            id="example"
             className="editorial-card"
             style={{
-              marginTop: "var(--space-10)",
-              width: "100%",
-              maxWidth: "800px",
-              padding: "var(--space-6)",
+              maxWidth: "1000px",
+              margin: "0 auto",
               textAlign: "left",
-              opacity: 0,
-              transform: "translateY(25px)",
+              overflow: "hidden",
             }}
           >
+            {/* Disclaimer & Mode Switcher Bar */}
             <div
               style={{
+                padding: "var(--space-3) var(--space-5)",
+                background: "var(--color-bg-alt)",
+                borderBottom: "1px solid var(--color-border)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
                 flexWrap: "wrap",
                 gap: "var(--space-3)",
-                paddingBottom: "var(--space-4)",
-                borderBottom: "1px solid var(--color-border-soft)",
-                marginBottom: "var(--space-4)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-bold)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-tertiary)" }}>
-                  Transformation Comparison
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: "#d97706",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    fontWeight: "var(--font-medium)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  Illustrative example &mdash; not official information.
                 </span>
               </div>
+
               <div
                 style={{
                   display: "inline-flex",
-                  background: "var(--color-bg-alt)",
-                  padding: "3px",
-                  borderRadius: "var(--radius-full)",
+                  background: "var(--color-surface)",
                   border: "1px solid var(--color-border)",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setPreviewMode("notice")}
-                  style={{
-                    border: "none",
-                    background: previewMode === "notice" ? "var(--color-surface)" : "transparent",
-                    color: previewMode === "notice" ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-                    fontWeight: previewMode === "notice" ? "var(--font-semibold)" : "var(--font-normal)",
-                    padding: "6px 14px",
-                    borderRadius: "var(--radius-full)",
-                    fontSize: "var(--text-xs)",
-                    cursor: "pointer",
-                    boxShadow: previewMode === "notice" ? "var(--shadow-xs)" : "none",
-                    transition: "all var(--duration-fast) var(--ease-default)",
-                  }}
-                >
-                  🏛️ Official Notice (Before)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewMode("simplified")}
-                  style={{
-                    border: "none",
-                    background: previewMode === "simplified" ? "var(--color-accent)" : "transparent",
-                    color: previewMode === "simplified" ? "white" : "var(--color-text-secondary)",
-                    fontWeight: previewMode === "simplified" ? "var(--font-semibold)" : "var(--font-normal)",
-                    padding: "6px 14px",
-                    borderRadius: "var(--radius-full)",
-                    fontSize: "var(--text-xs)",
-                    cursor: "pointer",
-                    boxShadow: previewMode === "simplified" ? "var(--shadow-sm)" : "none",
-                    transition: "all var(--duration-fast) var(--ease-default)",
-                  }}
-                >
-                  ✨ hamiGenZ Meaning (After)
-                </button>
-              </div>
-            </div>
-
-            {previewMode === "notice" ? (
-              <div className="doc-gazette">
-                <div className="doc-gazette-header">
-                  <div>
-                    <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-bold)", color: "var(--color-nepal-red)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      नेपाल सरकार · परराष्ट्र मन्त्रालय
-                    </span>
-                    <span style={{ display: "block", fontSize: "11px", color: "var(--color-text-tertiary)" }}>
-                      राहदानी विभाग सूचना नं. २४/०८१ (विद्युतीय राहदानी सम्बन्धी)
-                    </span>
-                  </div>
-                  <span style={{ fontSize: "11px", background: "#f5ece1", color: "var(--color-text-secondary)", padding: "2px 8px", borderRadius: "var(--radius-sm)", fontWeight: "var(--font-medium)" }}>
-                    Official Gazette Notice
-                  </span>
-                </div>
-                <p style={{ fontSize: "var(--text-sm)", lineHeight: "1.8", color: "var(--color-text-primary)", margin: 0 }}>
-                  “राहदानी नियमावली, २०७७ को परिच्छेद २, नियम ५ बमोजिम विद्युतीय राहदानी (e-Passport) का लागि अनलाइन प्रि-एनरोलमेन्ट फारम पेश गर्दा अनिवार्य रूपमा राष्ट्रिय परिचयपत्र वा सोको प्रमाणीकरण नम्बर, नागरिकता प्रमाणपत्रको सक्कल प्रति तथा तोकिएको राजस्व रकम (६६ पृष्ठका लागि रु. १०,०००/- र ३४ पृष्ठका लागि रु. ५,०००/-) दाखिला भएको सक्कल बैंक भौचर अनिवार्य रूपमा संलग्न हुनुपर्नेछ। म्याद गुज्रेको वा अपूर्ण विवरण भएका आवेदन स्वतः बदर हुनेछन्।”
-                </p>
-                <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-2)", borderTop: "1px dashed #d5cbbf", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "11px", color: "var(--color-text-tertiary)" }}>प्रमाणीकरण: नेपाल राजपत्र भाग ३ · नियम ५</span>
-                  <span style={{ fontSize: "11px", color: "var(--color-nepal-red)", fontWeight: "var(--font-medium)" }}>कानुनी मान्यता प्राप्त मूल स्रोत</span>
-                </div>
-              </div>
-            ) : (
-              <div
-                style={{
-                  background: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderLeft: "4px solid var(--color-accent)",
                   borderRadius: "var(--radius-md)",
-                  padding: "var(--space-5)",
+                  padding: "2px",
                 }}
+                role="tablist"
+                aria-label="Document view toggle"
               >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-3)", paddingBottom: "var(--space-2)", borderBottom: "1px solid var(--color-border-soft)" }}>
-                  <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--font-semibold)", color: "var(--color-accent)" }}>
-                    ✨ नागरिक सारांश (Plain-Language Explanation)
-                  </span>
-                  <span style={{ fontSize: "11px", background: "var(--color-evidence)", color: "var(--color-info)", padding: "2px 8px", borderRadius: "var(--radius-sm)", fontWeight: "var(--font-medium)" }}>
-                    Rule 5 · 100% Grounded
-                  </span>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
-                    <span style={{ color: "var(--color-success)", fontWeight: "bold" }}>✓</span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)", lineHeight: 1.6 }}>
-                      <strong>के चाहिन्छ:</strong> नागरिकताको सक्कल प्रति (Original), राष्ट्रिय परिचयपत्र नम्बर (NID), र बैंक रसिद।
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
-                    <span style={{ color: "var(--color-success)", fontWeight: "bold" }}>✓</span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)", lineHeight: 1.6 }}>
-                      <strong>दस्तुर (Fees):</strong> ३४ पृष्ठको साधारण पासपोर्टलाई <strong>रु ५,०००</strong>, ६६ पृष्ठकोलाई <strong>रु १०,०००</strong>।
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
-                    <span style={{ color: "var(--color-warning)", fontWeight: "bold" }}>⚠</span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)", lineHeight: 1.6 }}>
-                      <strong>चेतावनी:</strong> सक्कल नागरिकता नलिई गएमा वा म्याद कटेमा आवेदन स्वतः रद्द हुनेछ।
-                    </span>
-                  </div>
-                </div>
-                <div style={{ marginTop: "var(--space-4)", paddingTop: "var(--space-2)", borderTop: "1px solid var(--color-border-soft)", display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "11px", color: "var(--color-text-tertiary)" }}>प्रमाणित आधार:</span>
-                  <span style={{ fontSize: "11px", background: "var(--color-surface)", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
-                    Page 1 · दस्तुर र नियम
-                  </span>
-                  <span style={{ fontSize: "11px", background: "var(--color-surface)", padding: "2px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}>
-                    राहदानी ऐन २०७६
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Impact & Trust Ledger ─────────────────────────── */}
-      <section className="ledger-strip">
-        <div className="container ledger-grid">
-          {[
-            { value: "100% Local", label: "Runs entirely on your machine — zero cloud data transfer" },
-            { value: "0 Hallucinations", label: "Sentence-level citation grounding for all extracted facts" },
-            { value: "3 Clarification Levels", label: "Original legal text, Simple language, and Very Simple" },
-            { value: "Tri-Lingual Support", label: "Full comprehension in नेपाली, English & Romanized Nepali" },
-          ].map((stat) => (
-            <div key={stat.value} style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", textAlign: "left" }}>
-              <span
-                style={{
-                  fontFamily: "var(--font-serif)",
-                  fontSize: "var(--text-2xl)",
-                  fontWeight: "var(--font-bold)",
-                  color: "var(--color-text-primary)",
-                }}
-              >
-                {stat.value}
-              </span>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-                {stat.label}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── Scroll Story ────────────────────────────────── */}
-      <section
-        id="story"
-        style={{
-          padding: "var(--space-24) var(--space-6)",
-          maxWidth: "1100px",
-          margin: "0 auto",
-        }}
-      >
-        <div
-          style={{
-            textAlign: "center",
-            marginBottom: "var(--space-16)",
-          }}
-        >
-          <h2
-            style={{
-              fontFamily: "var(--font-serif)",
-              fontSize: "var(--text-4xl)",
-              color: "var(--color-text-primary)",
-              marginBottom: "var(--space-4)",
-            }}
-          >
-            How hamiGenZ works
-          </h2>
-          <p
-            style={{
-              color: "var(--color-text-secondary)",
-              fontSize: "var(--text-lg)",
-              maxWidth: "520px",
-              margin: "0 auto",
-            }}
-          >
-            Information is complicated. Here&apos;s what happens when you let hamiGenZ understand it for you.
-          </p>
-        </div>
-
-        {/* Pinned visual + scrolling narrative */}
-        <div
-          id="scroll-story-wrap"
-          style={{
-            position: "relative",
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "var(--space-16)",
-            alignItems: "start",
-          }}
-        >
-          {/* ── Left: Document visual (stays in view) ──── */}
-          <div
-            style={{
-              position: "sticky",
-              top: "calc(var(--header-height) + var(--space-12))",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            {/* Document card */}
-            <div
-              id="doc-card"
-              data-scroll-step="0"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                width: "340px",
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-xl)",
-                padding: "var(--space-6)",
-                boxShadow: "var(--shadow-lg)",
-                position: "relative",
-              }}
-            >
-              {/* Scan line */}
-              <div
-                id="scanline"
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  height: "3px",
-                  background: "linear-gradient(90deg, transparent, var(--color-accent), transparent)",
-                  opacity: 0,
-                  boxShadow: "0 0 8px var(--color-accent)",
-                }}
-              />
-
-              {/* Document header */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-4)",
-                  paddingBottom: "var(--space-4)",
-                  borderBottom: "1px solid var(--color-border)",
-                }}
-              >
-                <div
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "simplified"}
+                  onClick={() => setActiveTab("simplified")}
                   style={{
-                    width: "28px",
-                    height: "28px",
-                    background: "var(--color-accent)",
-                    borderRadius: "var(--radius-sm)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
+                    padding: "4px 12px",
                     fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
+                    fontWeight: "var(--font-medium)",
+                    borderRadius: "var(--radius-sm)",
+                    border: "none",
+                    cursor: "pointer",
+                    background: activeTab === "simplified" ? "var(--color-accent-soft)" : "transparent",
+                    color: activeTab === "simplified" ? "var(--color-accent)" : "var(--color-text-secondary)",
                   }}
                 >
-                  DP
-                </div>
+                  Plain-language guide
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "original"}
+                  onClick={() => setActiveTab("original")}
+                  style={{
+                    padding: "4px 12px",
+                    fontSize: "var(--text-xs)",
+                    fontWeight: "var(--font-medium)",
+                    borderRadius: "var(--radius-sm)",
+                    border: "none",
+                    cursor: "pointer",
+                    background: activeTab === "original" ? "var(--color-accent-soft)" : "transparent",
+                    color: activeTab === "original" ? "var(--color-accent)" : "var(--color-text-secondary)",
+                  }}
+                >
+                  Original document notice
+                </button>
+              </div>
+            </div>
+
+            {/* Sandbox Content View */}
+            <div style={{ padding: "var(--space-6)" }}>
+              {activeTab === "simplified" ? (
                 <div>
-                  <p
-                    style={{
-                      fontWeight: "var(--font-semibold)",
-                      fontSize: "var(--text-sm)",
-                      color: "var(--color-text-primary)",
-                    }}
-                  >
-                    Department of Passports
-                  </p>
-                  <p
-                    style={{
-                      fontSize: "var(--text-xs)",
-                      color: "var(--color-text-tertiary)",
-                    }}
-                  >
-                    ePassport Pre-enrollment Form
-                  </p>
-                </div>
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-tertiary)",
-                    background: "var(--color-bg-alt)",
-                    padding: "var(--space-1) var(--space-2)",
-                    borderRadius: "var(--radius-sm)",
-                  }}
-                >
-                  Page 1 of 6
-                </span>
-              </div>
-
-              {/* Fake form content */}
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-3)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--color-text-secondary)",
-                }}
-              >
-                {[
-                  { label: "Applicant Name", value: "___________________________" },
-                  { label: "Citizenship No.", value: "___________________________" },
-                  { label: "Application Type", value: "☐ Ordinary (34 pages)  ☐ Ordinary (66 pages)" },
-                  { label: "Appointment Location", value: "___________________________" },
-                  { label: "Select Date", value: "☐ 15 Ashadh 2082" },
-                ].map((field) => (
                   <div
-                    key={field.label}
                     style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "var(--space-1)",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontWeight: "var(--font-medium)",
-                        fontSize: "var(--text-xs)",
-                        color: "var(--color-text-tertiary)",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      {field.label}
-                    </span>
-                    <span
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        color: "var(--color-text-primary)",
-                        borderBottom: "1px dashed var(--color-border)",
-                        paddingBottom: "var(--space-1)",
-                      }}
-                    >
-                      {field.value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Status badge */}
-              <div
-                style={{
-                  marginTop: "var(--space-5)",
-                  padding: "var(--space-2) var(--space-3)",
-                  background: "var(--color-evidence)",
-                  border: "1px solid var(--color-evidence-border)",
-                  borderRadius: "var(--radius-md)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  fontSize: "var(--text-xs)",
-                  color: "var(--color-info)",
-                }}
-              >
-                <span style={{ display: "inline-block", width: "6px", height: "6px", background: "var(--color-info)", borderRadius: "50%" }} />
-                Document loaded
-              </div>
-            </div>
-
-            {/* Arrow / connector */}
-            <div
-              style={{
-                marginTop: "var(--space-6)",
-                color: "var(--color-text-tertiary)",
-                fontSize: "var(--text-sm)",
-              }}
-            >
-              ↓ hamiGenZ reads this
-            </div>
-          </div>
-
-          {/* ── Right: Narrative steps ─────────────────── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-            {/* Step 1: Document becomes understood */}
-            <div
-              data-scroll-step="1"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-lg)",
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-accent-soft)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--color-accent)",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  1
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  hamiGenZ reads your document
-                </h3>
-              </div>
-              <p style={{ color: "var(--color-text-secondary)", fontSize: "var(--text-sm)" }}>
-                Every page is extracted — text, scanned images, everything.
-                hamiGenZ understands Nepali, English, and Romanized Nepali.
-              </p>
-            </div>
-
-            {/* Step 2: Important fields highlighted */}
-            <div
-              data-scroll-step="2"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-lg)",
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-highlight)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--color-warning)",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  2
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  Key information is found
-                </h3>
-              </div>
-              <p style={{ color: "var(--color-text-secondary)", fontSize: "var(--text-sm)" }}>
-                Deadlines, fees, required documents, form fields — hamiGenZ identifies what matters
-                and where it appears in the document.
-              </p>
-              <div
-                style={{
-                  marginTop: "var(--space-3)",
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "var(--space-2)",
-                }}
-              >
-                {["Deadline", "Fee amount", "Citizenship copy", "Appointment date"].map(
-                  (item) => (
-                    <span
-                      key={item}
-                      style={{
-                        background: "var(--color-highlight)",
-                        border: "1px solid #fde68a",
-                        borderRadius: "var(--radius-full)",
-                        padding: "var(--space-1) var(--space-3)",
-                        fontSize: "var(--text-xs)",
-                        color: "var(--color-warning)",
-                        fontWeight: "var(--font-medium)",
-                      }}
-                    >
-                      {item}
-                    </span>
-                  )
-                )}
-              </div>
-            </div>
-
-            {/* Step 3: Text extracted */}
-            <div
-              data-scroll-step="3"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-lg)",
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-evidence)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--color-info)",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  3
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  Text is extracted & organized
-                </h3>
-              </div>
-              <p style={{ color: "var(--color-text-secondary)", fontSize: "var(--text-sm)" }}>
-                hamiGenZ breaks the document into meaningful pieces and stores them with page references.
-                You can always ask “where does it say that?”
-              </p>
-            </div>
-
-            {/* Step 4: Information reorganized */}
-            <div
-              id="extracted-box"
-              data-scroll-step="4"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-accent-soft)",
-                border: "1px solid #fed7aa",
-                borderRadius: "var(--radius-lg)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-accent)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  4
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  Information is reorganized
-                </h3>
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "var(--space-3)",
-                }}
-              >
-                {[
-                  { label: "Deadline", value: "15 Ashadh 2082" },
-                  { label: "Fee", value: "Rs. 500" },
-                  { label: "Required", value: "Citizenship copy" },
-                  { label: "Form type", value: "Pre-enrollment" },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    data-extract-item
-                    style={{
-                      opacity: 0,
-                      background: "var(--color-surface)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: "var(--radius-md)",
-                      padding: "var(--space-3)",
-                    }}
-                  >
-                    <p
-                      style={{
-                        fontSize: "var(--text-xs)",
-                        color: "var(--color-text-tertiary)",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                        marginBottom: "var(--space-1)",
-                      }}
-                    >
-                      {item.label}
-                    </p>
-                    <p
-                      style={{
-                        fontWeight: "var(--font-semibold)",
-                        fontSize: "var(--text-sm)",
-                        color: "var(--color-text-primary)",
-                      }}
-                    >
-                      {item.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Step 5: Simple explanation */}
-            <div
-              id="simple-box"
-              data-scroll-step="5"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-lg)",
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-success)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  5
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  Explained in simple language
-                </h3>
-              </div>
-              <p
-                style={{
-                  color: "var(--color-text-secondary)",
-                  fontSize: "var(--text-sm)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                hamiGenZ turns complex government language into clear steps anyone can follow.
-              </p>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-2)",
-                }}
-              >
-                {[
-                  "बुझ्न सक्नुहुन्छ: यो फारम भर्नको लागि आफ्नो नागरिकता प्रतिलिपि र फोटो चाहिएको छ।",
-                  "Deadline: Submit before 15 Ashadh 2082.",
-                  "Fee: Rs. 500 for ordinary passport.",
-                ].map((item, i) => (
-                  <p
-                    key={i}
-                    data-simple-item
-                    style={{
-                      opacity: 0,
-                      fontSize: "var(--text-sm)",
-                      color: "var(--color-text-primary)",
-                      paddingLeft: "var(--space-4)",
-                      borderLeft: "2px solid var(--color-accent)",
-                      margin: 0,
-                    }}
-                  >
-                    {item}
-                  </p>
-                ))}
-              </div>
-            </div>
-
-            {/* Step 6: Evidence appears */}
-            <div
-              id="evidence-box"
-              data-scroll-step="6"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-evidence)",
-                border: "1px solid var(--color-evidence-border)",
-                borderRadius: "var(--radius-lg)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-info)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  ✓
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  Evidence you can check
-                </h3>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-2)",
-                }}
-              >
-                {[
-                  { claim: "Deadline is 15 Ashadh 2082", source: "Page 3" },
-                  { claim: "Fee is Rs. 500", source: "Page 2" },
-                  { claim: "Requires citizenship copy", source: "Page 1" },
-                ].map((item) => (
-                  <div
-                    key={item.source}
-                    data-evidence-item
-                    style={{
-                      opacity: 0,
                       display: "flex",
                       justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "var(--space-3)",
-                      background: "var(--color-surface)",
-                      border: "1px solid var(--color-evidence-border)",
-                      borderRadius: "var(--radius-md)",
-                      fontSize: "var(--text-sm)",
-                      color: "var(--color-text-primary)",
+                      alignItems: "flex-start",
+                      marginBottom: "var(--space-4)",
+                      flexWrap: "wrap",
+                      gap: "var(--space-2)",
                     }}
                   >
-                    <span>{item.claim}</span>
-                    <span
+                    <div>
+                      <span className="section-label" style={{ color: "var(--color-accent)" }}>
+                        Plain-Language Summary
+                      </span>
+                      <h3
+                        style={{
+                          fontSize: "var(--text-xl)",
+                          fontWeight: "var(--font-bold)",
+                          marginTop: "2px",
+                        }}
+                      >
+                        राहदानी नवीकरणका लागि आवश्यक कागजात र शुल्क
+                      </h3>
+                      <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)" }}>
+                        Passport Renewal Notice &middot; Plain summary extracted with page citations
+                      </p>
+                    </div>
+
+                    <div
                       style={{
-                        background: "var(--color-evidence-border)",
-                        color: "var(--color-info)",
-                        padding: "var(--space-1) var(--space-2)",
-                        borderRadius: "var(--radius-sm)",
                         fontSize: "var(--text-xs)",
+                        color: "var(--color-success)",
+                        background: "var(--color-verified)",
+                        padding: "4px 10px",
+                        borderRadius: "var(--radius-full)",
                         fontWeight: "var(--font-medium)",
+                        border: "1px solid var(--color-verified-border)",
                       }}
                     >
-                      {item.source}
-                    </span>
+                      3 passages verified
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Step 7: What action to take */}
-            <div
-              data-scroll-step="7"
-              style={{
-                opacity: 0,
-                transform: "translateY(30px) scale(0.97)",
-                padding: "var(--space-5)",
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-lg)",
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  marginBottom: "var(--space-3)",
-                }}
-              >
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    background: "var(--color-accent)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                  }}
-                >
-                  →
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                  }}
-                >
-                  What you need to do
-                </h3>
-              </div>
-              <ol
-                style={{
-                  paddingLeft: "var(--space-6)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-2)",
-                }}
-              >
-                {[
-                  "Prepare your citizenship copy and photograph.",
-                  "Fill in the pre-enrollment form online.",
-                  "Choose an appointment date before 15 Ashadh.",
-                  "Submit at the selected enrollment center.",
-                ].map((step, i) => (
-                  <li
-                    key={i}
+                  <div
                     style={{
-                      fontSize: "var(--text-sm)",
-                      color: "var(--color-text-primary)",
-                      paddingLeft: "var(--space-2)",
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                      gap: "var(--space-4)",
+                      marginBottom: "var(--space-6)",
                     }}
                   >
-                    {step}
-                  </li>
-                ))}
-              </ol>
+                    <div
+                      style={{
+                        padding: "var(--space-4)",
+                        background: "var(--color-bg-alt)",
+                        borderRadius: "var(--radius-md)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      <h4
+                        style={{
+                          fontSize: "var(--text-sm)",
+                          fontWeight: "var(--font-semibold)",
+                          marginBottom: "var(--space-2)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      >
+                        आवश्यक कागजात (Required Documents)
+                      </h4>
+                      <ul
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-secondary)",
+                          lineHeight: "1.7",
+                          paddingLeft: "var(--space-4)",
+                        }}
+                      >
+                        <li>पुरानो राहदानीको सक्कल प्रति (Original old passport)</li>
+                        <li>नागरिकता प्रमाणपत्रको सक्कल र प्रतिलिपि</li>
+                        <li>राष्ट्रिय परिचयपत्र नम्बर वा कार्ड (NID Number)</li>
+                        <li>अनलाइन आवेदन फारामको प्रमाणित प्रिन्ट</li>
+                      </ul>
+                    </div>
+
+                    <div
+                      style={{
+                        padding: "var(--space-4)",
+                        background: "var(--color-bg-alt)",
+                        borderRadius: "var(--radius-md)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      <h4
+                        style={{
+                          fontSize: "var(--text-sm)",
+                          fontWeight: "var(--font-semibold)",
+                          marginBottom: "var(--space-2)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      >
+                        दस्तुर तथा समयसीमा (Fees &amp; Timeline)
+                      </h4>
+                      <ul
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-secondary)",
+                          lineHeight: "1.7",
+                          paddingLeft: "var(--space-4)",
+                        }}
+                      >
+                        <li>साधारण ३४ पृष्ठ: रु ५,०००/- (जिल्ला प्रशासन कार्यालय)</li>
+                        <li>द्रुत सेवा (काठमाडौँ विभाग): रु १०,०००/-</li>
+                        <li>म्याद समाप्त हुनुभन्दा १ वर्ष अगावै नवीकरण गर्न सकिनेछ</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Grounded Citation Preview */}
+                  <div
+                    style={{
+                      padding: "var(--space-4)",
+                      background: "var(--color-doc-surface)",
+                      border: "1px solid var(--color-citation-border)",
+                      borderRadius: "var(--radius-md)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: "var(--space-2)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          fontWeight: "var(--font-semibold)",
+                          color: "var(--color-citation-text)",
+                        }}
+                      >
+                        Verified Source Passage &middot; Page 1, Section 2.1
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-tertiary)",
+                        }}
+                      >
+                        Exact match
+                      </span>
+                    </div>
+                    <blockquote
+                      style={{
+                        fontFamily: "var(--font-devanagari)",
+                        fontSize: "var(--text-sm)",
+                        color: "var(--color-text-primary)",
+                        lineHeight: "var(--leading-relaxed)",
+                        fontStyle: "normal",
+                      }}
+                    >
+                      &ldquo;...साधारण राहदानी नवीकरण प्रयोजनका लागि निवेदक स्वयं उपस्थित भई पुरानो
+                      राहदानीको सक्कल तथा नेपाली नागरिकता प्रमाणपत्रको सक्कल पेश गर्नुपर्नेछ।
+                      राष्ट्रिय परिचयपत्र नम्बर अनिवार्य गरिएको छ।&rdquo;
+                    </blockquote>
+                  </div>
+                </div>
+              ) : (
+                <div className="doc-gazette">
+                  <div className="doc-gazette-header">
+                    <div>
+                      <span
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          fontWeight: "var(--font-bold)",
+                          letterSpacing: "0.05em",
+                          color: "var(--color-nepal-red)",
+                        }}
+                      >
+                        नेपाल सरकार &middot; राहदानी विभाग
+                      </span>
+                      <div
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-tertiary)",
+                        }}
+                      >
+                        सूचना सङ्ख्या: ०८०-८१/०४ &middot; प्रकाशित मिति: २०८०/०६/१५
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: "var(--text-xs)",
+                        padding: "2px 8px",
+                        background: "var(--color-bg-alt)",
+                        borderRadius: "var(--radius-sm)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      Official Notice Excerpt
+                    </span>
+                  </div>
+
+                  <p
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      lineHeight: "1.8",
+                      color: "var(--color-text-primary)",
+                      marginBottom: "var(--space-3)",
+                    }}
+                  >
+                    सर्वसाधारणको जानकारीका लागि यो सूचना प्रकाशित गरिएको छ। वि.सं. २०८० कार्तिक १
+                    गतेदेखि लागु हुने गरी विद्युतीय राहदानी (e-Passport) नवीकरण तथा नयाँ जारी गर्दा
+                    राष्ट्रिय परिचयपत्र (NID) अनिवार्य गरिएको छ।
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      lineHeight: "1.8",
+                      color: "var(--color-text-primary)",
+                    }}
+                  >
+                    जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र विभागबाट
+                    द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।
+                  </p>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* ── Product Capabilities ───────────────────────── */}
-      <section
-        id="product"
-        style={{
-          padding: "var(--space-24) var(--space-6)",
-          background: "var(--color-bg-alt)",
-        }}
-      >
-        <div className="container">
-          <div style={{ textAlign: "center", marginBottom: "var(--space-16)" }}>
+        {/* ── Civic Ledger / Values Strip ───────────────────── */}
+        <section className="ledger-strip" aria-label="Core operational principles">
+          <div className="container">
+            <div className="ledger-grid">
+              <div>
+                <span className="section-label">Evidence Grounding</span>
+                <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginTop: "4px" }}>
+                  Every claim is cited
+                </h4>
+                <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)", marginTop: "4px" }}>
+                  Answers cite the exact page and paragraph so you can verify the original text yourself.
+                </p>
+              </div>
+
+              <div>
+                <span className="section-label">Privacy First</span>
+                <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginTop: "4px" }}>
+                  Your documents stay private
+                </h4>
+                <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)", marginTop: "4px" }}>
+                  Uploaded files remain within your active workspace and are never used to train public models.
+                </p>
+              </div>
+
+              <div>
+                <span className="section-label">Contradiction Alerts</span>
+                <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginTop: "4px" }}>
+                  Discrepancy detection
+                </h4>
+                <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)", marginTop: "4px" }}>
+                  The engine flags conflicting requirements, superseded notices, and outdated dates.
+                </p>
+              </div>
+
+              <div>
+                <span className="section-label">Bilingual Accessibility</span>
+                <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginTop: "4px" }}>
+                  Nepali &amp; English
+                </h4>
+                <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)", marginTop: "4px" }}>
+                  Read explanations in clear conversational Nepali, Romanized Nepali, or English.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 3 Core Capabilities: Read, Understand, Verify ─── */}
+        <section
+          id="capabilities"
+          style={{
+            padding: "var(--space-16) var(--space-6)",
+            maxWidth: "var(--max-width)",
+            margin: "0 auto",
+          }}
+        >
+          <div style={{ textAlign: "center", maxWidth: "600px", margin: "0 auto var(--space-12)" }}>
+            <span className="section-label">Platform Capabilities</span>
             <h2
               style={{
-                fontFamily: "var(--font-serif)",
-                fontSize: "var(--text-4xl)",
-                color: "var(--color-text-primary)",
-                marginBottom: "var(--space-4)",
+                fontSize: "var(--text-3xl)",
+                fontWeight: "var(--font-bold)",
+                letterSpacing: "-0.02em",
+                marginTop: "var(--space-2)",
+                marginBottom: "var(--space-3)",
               }}
             >
-              What hamiGenZ can do
+              Built specifically for civic documents.
             </h2>
-            <p
-              style={{
-                color: "var(--color-text-secondary)",
-                fontSize: "var(--text-lg)",
-                maxWidth: "520px",
-                margin: "0 auto",
-              }}
-            >
-              Built for real documents and real questions from people in Nepal.
+            <p style={{ fontSize: "var(--text-base)", color: "var(--color-text-secondary)" }}>
+              General-purpose AI frequently misinterprets regional administrative language.
+              hamiGenZ is structured around three precise steps.
             </p>
           </div>
 
@@ -1513,575 +674,426 @@ export default function Home() {
               gap: "var(--space-6)",
             }}
           >
-            {[
-              {
-                title: "Understand any document",
-                desc: "Passports, forms, notices, government letters — hamiGenZ reads them all.",
-                icon: (
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <rect x="4" y="4" width="20" height="20" rx="3" stroke="var(--color-accent)" strokeWidth="1.5" />
-                    <path d="M9 10h10M9 14h10M9 18h6" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                ),
-              },
-              {
-                title: "Ask in your language",
-                desc: "English, Nepali script, or Romanized Nepali — hamiGenZ understands all three.",
-                icon: (
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <circle cx="14" cy="14" r="10" stroke="var(--color-accent)" strokeWidth="1.5" />
-                    <path d="M10 14h8M14 10v8" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                ),
-              },
-              {
-                title: "See the evidence",
-                desc: "Every answer shows where it came from — page numbers, document references.",
-                icon: (
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <path d="M8 18l-4 4 4-4M14 14l4 4-4-4M18 12l4 4-4-4" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <circle cx="14" cy="14" r="10" stroke="var(--color-accent)" strokeWidth="1.5" />
-                  </svg>
-                ),
-              },
-              {
-                title: "Simple explanations",
-                desc: "Legal and technical terms are explained in plain language you can understand.",
-                icon: (
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <path d="M14 4l4 8-4 8-4-8z" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinejoin="round" />
-                    <path d="M10 14h8M14 10v8" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                ),
-              },
-              {
-                title: "Form-filling help",
-                desc: "Upload a form and ask “how do I fill this?” Get a sample with explanations.",
-                icon: (
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <rect x="4" y="6" width="20" height="16" rx="2" stroke="var(--color-accent)" strokeWidth="1.5" />
-                    <path d="M8 10h12M8 14h8M8 18h10" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                ),
-              },
-              {
-                title: "Fully local & free",
-                desc: "No paid APIs, no cloud dependency. Your documents stay on your machine.",
-                icon: (
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <circle cx="14" cy="14" r="10" stroke="var(--color-accent)" strokeWidth="1.5" />
-                    <path d="M8 14h12M11 11v6M17 11v6" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                ),
-              },
-            ].map((cap) => (
+            {/* Capability 1: Read */}
+            <div
+              className="editorial-card"
+              style={{
+                padding: "var(--space-6)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--space-3)",
+              }}
+            >
               <div
-                key={cap.title}
-                className="interactive-card glass-card"
                 style={{
-                  borderRadius: "var(--radius-xl)",
-                  padding: "var(--space-6)",
-                  cursor: "default",
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-alt)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--color-accent)",
                 }}
               >
-                <div
-                  style={{
-                    width: "48px",
-                    height: "48px",
-                    background: "var(--color-accent-soft)",
-                    borderRadius: "var(--radius-lg)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginBottom: "var(--space-4)",
-                  }}
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
                 >
-                  {cap.icon}
-                </div>
-                <h3
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--color-text-primary)",
-                    fontWeight: "var(--font-semibold)",
-                    marginBottom: "var(--space-2)",
-                  }}
-                >
-                  {cap.title}
-                </h3>
-                <p
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    color: "var(--color-text-secondary)",
-                    lineHeight: "1.5",
-                  }}
-                >
-                  {cap.desc}
-                </p>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                  <polyline points="10 9 9 9 8 9" />
+                </svg>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      {/* ── Interactive Demo ────────────────────────────── */}
-      <section
-        id="demo"
-        style={{
-          padding: "var(--space-24) var(--space-6)",
-        }}
-      >
-        <div className="container">
-          <div style={{ textAlign: "center", marginBottom: "var(--space-12)" }}>
+              <span className="section-label" style={{ color: "var(--color-accent)" }}>
+                Step 01
+              </span>
+              <h3 style={{ fontSize: "var(--text-xl)", fontWeight: "var(--font-bold)" }}>
+                Read
+              </h3>
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", lineHeight: "1.6" }}>
+                Extracts text and table layout from scanned notices, letters, or PDF forms—even with
+                low-contrast stamps, faint seals, or complex Devanagari typography.
+              </p>
+            </div>
+
+            {/* Capability 2: Understand */}
+            <div
+              className="editorial-card"
+              style={{
+                padding: "var(--space-6)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--space-3)",
+              }}
+            >
+              <div
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-alt)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--color-accent)",
+                }}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
+
+              <span className="section-label" style={{ color: "var(--color-accent)" }}>
+                Step 02
+              </span>
+              <h3 style={{ fontSize: "var(--text-xl)", fontWeight: "var(--font-bold)" }}>
+                Understand
+              </h3>
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", lineHeight: "1.6" }}>
+                Translates dense bureaucratic phrasing, legal conditions, and administrative rules
+                into clear, step-by-step checklists in plain Nepali and English.
+              </p>
+            </div>
+
+            {/* Capability 3: Verify */}
+            <div
+              className="editorial-card"
+              style={{
+                padding: "var(--space-6)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--space-3)",
+              }}
+            >
+              <div
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-alt)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--color-accent)",
+                }}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <polyline points="9 12 11 14 15 10" />
+                </svg>
+              </div>
+
+              <span className="section-label" style={{ color: "var(--color-accent)" }}>
+                Step 03
+              </span>
+              <h3 style={{ fontSize: "var(--text-xl)", fontWeight: "var(--font-bold)" }}>
+                Verify
+              </h3>
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", lineHeight: "1.6" }}>
+                Strict provenance grounding. Every fact, fee, and requirement links directly
+                to the exact page and paragraph of the official document, flagging any ambiguous clauses.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── How It Works ──────────────────────────────────── */}
+        <section
+          id="how-it-works"
+          style={{
+            padding: "var(--space-12) var(--space-6) var(--space-16)",
+            maxWidth: "var(--max-width)",
+            margin: "0 auto",
+          }}
+        >
+          <div style={{ textAlign: "center", maxWidth: "600px", margin: "0 auto var(--space-12)" }}>
+            <span className="section-label">Workflow</span>
             <h2
               style={{
-                fontFamily: "var(--font-serif)",
-                fontSize: "var(--text-4xl)",
-                color: "var(--color-text-primary)",
-                marginBottom: "var(--space-4)",
+                fontSize: "var(--text-3xl)",
+                fontWeight: "var(--font-bold)",
+                letterSpacing: "-0.02em",
+                marginTop: "var(--space-2)",
               }}
             >
-              Try it right now
+              How to use the workspace.
             </h2>
-            <p
-              style={{
-                color: "var(--color-text-secondary)",
-                fontSize: "var(--text-lg)",
-                maxWidth: "480px",
-                margin: "0 auto",
-              }}
-            >
-              Ask a question or upload a document. hamiGenZ is running on your machine — no sign-up needed.
-            </p>
           </div>
 
           <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "var(--space-4)",
-            }}
-          >
-            <Link
-              href="/workspace"
-              style={{
-                background: "var(--color-accent)",
-                color: "white",
-                padding: "var(--space-5) var(--space-10)",
-                borderRadius: "var(--radius-xl)",
-                fontSize: "var(--text-xl)",
-                fontWeight: "var(--font-semibold)",
-                textDecoration: "none",
-                boxShadow: "var(--shadow-lg)",
-                transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-hover)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-2px)";
-                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "var(--shadow-xl)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
-                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "var(--shadow-lg)";
-              }}
-            >
-              Open hamiGenZ →
-            </Link>
-            <p
-              style={{
-                color: "var(--color-text-tertiary)",
-                fontSize: "var(--text-sm)",
-              }}
-            >
-              Runs entirely on your machine — your documents never leave your computer.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Trust Section ───────────────────────────────── */}
-      <section
-        id="sources"
-        style={{
-          padding: "var(--space-24) var(--space-6)",
-          background: "var(--color-bg-alt)",
-        }}
-      >
-        <div className="container">
-          <div
-            className="trust-grid"
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "var(--space-16)",
-              alignItems: "start",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: "var(--space-6)",
             }}
           >
-            <div>
-              <h2
+            <div
+              style={{
+                borderLeft: "2px solid var(--color-accent)",
+                paddingLeft: "var(--space-4)",
+              }}
+            >
+              <div
                 style={{
-                  fontFamily: "var(--font-serif)",
-                  fontSize: "var(--text-3xl)",
-                  color: "var(--color-text-primary)",
-                  marginBottom: "var(--space-6)",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--font-bold)",
+                  color: "var(--color-accent)",
+                  marginBottom: "var(--space-1)",
                 }}
               >
-                Trust is built in
-              </h2>
-              <ul
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-4)",
-                }}
-              >
-                {[
-                  {
-                    label: "Based on your document",
-                    desc: "Answers come from the document you uploaded, not from vague AI memory.",
-                  },
-                  {
-                    label: "Evidence shown with every claim",
-                    desc: "Page numbers and document references appear next to what hamiGenZ says.",
-                  },
-                  {
-                    label: "When it doesn&apos;t know, it says so",
-                    desc: "If information isn&apos;t in the document, hamiGenZ tells you rather than guessing.",
-                  },
-                  {
-                    label: "Your data stays local",
-                    desc: "Nothing is sent to external APIs. Documents stay on your machine.",
-                  },
-                ].map((item) => (
-                  <li
-                    key={item.label}
-                    style={{
-                      display: "flex",
-                      gap: "var(--space-4)",
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: "20px",
-                        height: "20px",
-                        background: "var(--color-success)",
-                        borderRadius: "50%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        color: "white",
-                        fontSize: "var(--text-xs)",
-                        fontWeight: "var(--font-bold)",
-                        flexShrink: 0,
-                        marginTop: "2px",
-                      }}
-                    >
-                      ✓
-                    </span>
-                    <div>
-                      <p
-                        style={{
-                          fontWeight: "var(--font-semibold)",
-                          fontSize: "var(--text-base)",
-                          color: "var(--color-text-primary)",
-                          marginBottom: "var(--space-1)",
-                        }}
-                      >
-                        {item.label}
-                      </p>
-                      <p
-                        style={{
-                          fontSize: "var(--text-sm)",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
-                        {item.desc}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                1. Select or upload
+              </div>
+              <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginBottom: "var(--space-2)" }}>
+                Choose a document
+              </h4>
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", lineHeight: "1.6" }}>
+                Select from verified reference documents or upload your own notice, citizenship form, or passport directive.
+              </p>
             </div>
 
             <div
               style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-xl)",
-                padding: "var(--space-8)",
-                boxShadow: "var(--shadow-sm)",
+                borderLeft: "2px solid var(--color-border)",
+                paddingLeft: "var(--space-4)",
               }}
             >
-              <p
-                style={{
-                  fontFamily: "var(--font-serif)",
-                  fontSize: "var(--text-2xl)",
-                  color: "var(--color-text-primary)",
-                  marginBottom: "var(--space-6)",
-                  textAlign: "center",
-                }}
-              >
-                “I could not verify this from the available sources.”
-              </p>
-              <p
-                style={{
-                  color: "var(--color-text-secondary)",
-                  fontSize: "var(--text-sm)",
-                  textAlign: "center",
-                  lineHeight: "1.6",
-                }}
-              >
-                That&apos;s a feature, not a failure. hamiGenZ tells you when it doesn&apos;t have enough
-                evidence — so you know when to check the original source yourself.
-              </p>
               <div
                 style={{
-                  marginTop: "var(--space-6)",
-                  padding: "var(--space-4)",
-                  background: "var(--color-accent-soft)",
-                  border: "1px solid #fed7aa",
-                  borderRadius: "var(--radius-md)",
-                  textAlign: "center",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--color-accent)",
-                  fontWeight: "var(--font-medium)",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--font-bold)",
+                  color: "var(--color-text-tertiary)",
+                  marginBottom: "var(--space-1)",
                 }}
               >
-                “I could not verify this from an authoritative source.”
-                <br />
-                <span style={{ color: "var(--color-text-tertiary)", fontWeight: "var(--font-normal)" }}>
-                  — what hamiGenZ says instead of guessing
-                </span>
+                2. Ask in plain language
               </div>
+              <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginBottom: "var(--space-2)" }}>
+                Ask your question
+              </h4>
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", lineHeight: "1.6" }}>
+                Type your question in Nepali, Romanized Nepali, or English, or click one of the suggested prompts for common requirements.
+              </p>
+            </div>
+
+            <div
+              style={{
+                borderLeft: "2px solid var(--color-border)",
+                paddingLeft: "var(--space-4)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--font-bold)",
+                  color: "var(--color-text-tertiary)",
+                  marginBottom: "var(--space-1)",
+                }}
+              >
+                3. Inspect the citation
+              </div>
+              <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginBottom: "var(--space-2)" }}>
+                Check the original page
+              </h4>
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", lineHeight: "1.6" }}>
+                Click any citation tag to view the highlighted bounding box and passage in the side-by-side document viewer.
+              </p>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* ── How it works ─────────────────────────────────── */}
-      <section
-        id="how-it-works"
-        style={{
-          padding: "var(--space-24) var(--space-6)",
-        }}
-      >
-        <div className="container">
-          <div style={{ textAlign: "center", marginBottom: "var(--space-16)" }}>
-            <h2
-              style={{
-                fontFamily: "var(--font-serif)",
-                fontSize: "var(--text-4xl)",
-                color: "var(--color-text-primary)",
-                marginBottom: "var(--space-4)",
-              }}
-            >
-              How it works
-            </h2>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--space-8)",
-            }}
-          >
-            {[
-              {
-                step: "01",
-                title: "Upload a document",
-                desc: "PDF, PNG, JPG, or TIFF. hamiGenZ accepts forms, notices, passports, letters — anything with text.",
-              },
-              {
-                step: "02",
-                title: "Ask a question",
-                desc: "In English, Nepali, or Romanized Nepali. Ask what you need: “What is the deadline?” “How do I fill this?”",
-              },
-              {
-                step: "03",
-                title: "Get a clear answer",
-                desc: "Structured explanation with what it means, what you need, and what to do next — with page references.",
-              },
-              {
-                step: "04",
-                title: "Check the evidence",
-                desc: "Every claim shows where it came from. Verify for yourself, or ask follow-up questions.",
-              },
-            ].map((item) => (
-              <div
-                key={item.step}
-                style={{
-                  display: "flex",
-                  gap: "var(--space-6)",
-                  alignItems: "flex-start",
-                }}
-              >
-                <div
-                  style={{
-                    width: "48px",
-                    flexShrink: 0,
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "var(--text-lg)",
-                    fontWeight: "var(--font-bold)",
-                    color: "var(--color-accent)",
-                    paddingTop: "var(--space-1)",
-                  }}
-                >
-                  {item.step}
-                </div>
-                <div>
-                  <h3
-                    style={{
-                      fontSize: "var(--text-lg)",
-                      color: "var(--color-text-primary)",
-                      fontWeight: "var(--font-semibold)",
-                      marginBottom: "var(--space-2)",
-                    }}
-                  >
-                    {item.title}
-                  </h3>
-                  <p
-                    style={{
-                      fontSize: "var(--text-sm)",
-                      color: "var(--color-text-secondary)",
-                      lineHeight: "1.5",
-                    }}
-                  >
-                    {item.desc}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Final CTA ────────────────────────────────────── */}
-      <section
-        id="final-cta-section"
-        style={{
-          padding: "var(--space-24) var(--space-6)",
-          background: "var(--color-bg-alt)",
-          textAlign: "center",
-        }}
-      >
-        <div
-          id="final-cta"
+        {/* ── Final Call to Action ──────────────────────────── */}
+        <section
+          id="final-cta-section"
           style={{
-            opacity: 0,
-            transform: "translateY(20px) scale(0.97)",
-            maxWidth: "600px",
-            margin: "0 auto",
+            background: "var(--color-surface)",
+            borderTop: "1px solid var(--color-border)",
+            borderBottom: "1px solid var(--color-border)",
+            padding: "var(--space-16) var(--space-6)",
+            textAlign: "center",
           }}
         >
-          <p
-            style={{
-              fontFamily: "var(--font-serif)",
-              fontSize: "var(--text-3xl)",
-              color: "var(--color-text-primary)",
-              marginBottom: "var(--space-6)",
-              lineHeight: "1.3",
-            }}
-          >
-            Complex information shouldn&apos;t be difficult to understand.
-          </p>
-          <div
-            style={{
-              display: "flex",
-              gap: "var(--space-4)",
-              justifyContent: "center",
-              flexWrap: "wrap",
-              marginBottom: "var(--space-8)",
-            }}
-          >
+          <div style={{ maxWidth: "600px", margin: "0 auto" }}>
+            <h2
+              style={{
+                fontSize: "var(--text-3xl)",
+                fontWeight: "var(--font-bold)",
+                letterSpacing: "-0.02em",
+                marginBottom: "var(--space-3)",
+              }}
+            >
+              Ready to examine a document?
+            </h2>
+            <p
+              style={{
+                fontSize: "var(--text-base)",
+                color: "var(--color-text-secondary)",
+                marginBottom: "var(--space-8)",
+              }}
+            >
+              Try the interactive workspace with preloaded public notices or your own files.
+              No registration required.
+            </p>
+
             <Link
               href="/workspace"
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--space-2)",
                 background: "var(--color-accent)",
-                color: "white",
-                padding: "var(--space-4) var(--space-8)",
-                borderRadius: "var(--radius-lg)",
-                fontSize: "var(--text-lg)",
+                color: "#ffffff",
+                fontSize: "var(--text-base)",
                 fontWeight: "var(--font-semibold)",
-                textDecoration: "none",
-                transition: "background var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent-hover)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-2px)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-accent)";
-                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
+                padding: "12px 28px",
+                borderRadius: "var(--radius-md)",
+                boxShadow: "0 2px 4px rgba(200, 82, 11, 0.2)",
               }}
             >
-              Try hamiGenZ
+              Open workspace
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 8h10M9 4l4 4-4 4" />
+              </svg>
             </Link>
           </div>
-          <p
-            style={{
-              color: "var(--color-text-tertiary)",
-              fontSize: "var(--text-sm)",
-            }}
-          >
-            Don&apos;t understand it? Ask hamiGenZ.
-          </p>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      {/* ── Footer ───────────────────────────────────────── */}
+      {/* ── Footer ────────────────────────────────────────── */}
       <footer
         style={{
-          padding: "var(--space-8) var(--space-6)",
-          borderTop: "1px solid var(--color-border)",
-          textAlign: "center",
-          fontSize: "var(--text-sm)",
+          padding: "var(--space-12) var(--space-6)",
+          maxWidth: "var(--max-width)",
+          margin: "0 auto",
+          fontSize: "var(--text-xs)",
           color: "var(--color-text-tertiary)",
+          lineHeight: "1.7",
         }}
       >
         <div
           style={{
-            maxWidth: "1200px",
-            margin: "0 auto",
             display: "flex",
             justifyContent: "space-between",
+            alignItems: "flex-start",
             flexWrap: "wrap",
-            gap: "var(--space-4)",
+            gap: "var(--space-6)",
+            borderBottom: "1px solid var(--color-border)",
+            paddingBottom: "var(--space-8)",
+            marginBottom: "var(--space-6)",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              fontWeight: "var(--font-bold)",
-              color: "var(--color-text-primary)",
-              fontSize: "var(--text-base)",
-            }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 20 20"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
+          <div style={{ maxWidth: "420px" }}>
+            <div
+              style={{
+                fontWeight: "var(--font-bold)",
+                fontSize: "var(--text-base)",
+                color: "var(--color-text-primary)",
+                marginBottom: "var(--space-2)",
+              }}
             >
-              <rect width="20" height="20" rx="4" fill="#c8520b" />
-              <path
-                d="M6 7h8M6 10h8M6 13h5"
-                stroke="white"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-            hamiGenZ
+              hamiGenZ
+            </div>
+            <p style={{ color: "var(--color-text-secondary)" }}>
+              A civic clarification tool for Nepal&apos;s administrative notices, official forms,
+              and public directives. Built on Open Knowledge Format (OKF v0.2).
+            </p>
           </div>
-          <div>
-            Built for Nepal. Fully local. 100% free.
+
+          <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
+            <div>
+              <div
+                style={{
+                  fontWeight: "var(--font-semibold)",
+                  color: "var(--color-text-primary)",
+                  marginBottom: "var(--space-2)",
+                }}
+              >
+                Navigation
+              </div>
+              <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                <li>
+                  <Link href="/workspace" style={{ color: "var(--color-text-secondary)" }}>
+                    Workspace
+                  </Link>
+                </li>
+                <li>
+                  <a href="#capabilities" style={{ color: "var(--color-text-secondary)" }}>
+                    Capabilities
+                  </a>
+                </li>
+                <li>
+                  <a href="#example" style={{ color: "var(--color-text-secondary)" }}>
+                    Sample Notice
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <div
+                style={{
+                  fontWeight: "var(--font-semibold)",
+                  color: "var(--color-text-primary)",
+                  marginBottom: "var(--space-2)",
+                }}
+              >
+                Principles
+              </div>
+              <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                <li>Local &amp; private processing</li>
+                <li>Verifiable citation links</li>
+                <li>Contradiction detection</li>
+              </ul>
+            </div>
           </div>
         </div>
+
+        <p style={{ maxWidth: "800px" }}>
+          <strong>Civic Disclaimer:</strong> hamiGenZ provides informational explanations to help citizens
+          navigate complex documentation. It does not provide legal representation, certified legal advice,
+          or official government determinations. For binding legal matters, please consult the issuing ministry,
+          district administration office, or a licensed advocate.
+        </p>
       </footer>
     </div>
   );

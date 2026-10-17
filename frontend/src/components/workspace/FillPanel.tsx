@@ -248,7 +248,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
       <div style={styles.header}>
         <h3>Reference-filled form preview</h3>
         <span style={styles.subtitle}>
-          {demoMode ? "Interactive demo — synthetic sample (no backend required)" : "Overlay example answers onto the original document layout."}
+          {demoMode ? "Illustrative example — not official information." : "Overlay example answers onto the original document layout."}
         </span>
       </div>
 
@@ -334,7 +334,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
               />
               <p style={styles.previewCaption}>
                 Example answers composited onto the original document layout.
-                {demoMode && <span style={styles.demoNote}> Demo sample — not live AI output.</span>}
+                {demoMode && <span style={styles.demoNote}> Illustrative example — not official information.</span>}
               </p>
             </div>
           )}

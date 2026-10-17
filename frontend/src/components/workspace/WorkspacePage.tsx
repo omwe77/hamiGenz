@@ -37,10 +37,10 @@ type ExplainLevel = "original" | "simple" | "very_simple";
 type TargetLang = "auto" | "nepali" | "english" | "romanized_nepali";
 
 const EXAMPLE_PROMPTS = [
-  { tag: "📜 Notice", text: "यो सूचनामा वास्तवमा के भन्न खोजिएको हो?" },
-  { tag: "🔤 Romanized", text: "yo notice ko simple meaning ke ho?" },
-  { tag: "🛂 Passport", text: "passport banauna k k chainxa?" },
-  { tag: "📋 Checklist", text: "What do I need to submit?" },
+  { tag: "Notice", text: "यो सूचनामा वास्तवमा के भन्न खोजिएको हो?" },
+  { tag: "Romanized", text: "yo notice ko simple meaning ke ho?" },
+  { tag: "Passport", text: "passport banauna k k chainxa?" },
+  { tag: "Checklist", text: "What do I need to submit?" },
 ];
 
 const DEMO_SAMPLES: DocumentInfo[] = DEMO_SAMPLE_DOCS.map((d) => ({
@@ -459,7 +459,10 @@ export default function WorkspacePage() {
           <div style={styles.headerActions}>
             {activeDoc && (
               <div className="ws-header-doc-chip" style={styles.headerDocChip} title={activeDoc.filename}>
-                <span>📄</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
                 <span style={styles.headerDocName}>{activeDoc.filename}</span>
               </div>
             )}
@@ -766,8 +769,8 @@ export default function WorkspacePage() {
                       </p>
                     </div>
                     <div style={styles.emptyPreviewFooter}>
-                      <span style={styles.emptyPreviewCitation}>📄 Page 1 · Verified Evidence</span>
-                      <span style={styles.emptyPreviewProvenance}>🏛️ Department of Passports</span>
+                      <span style={styles.emptyPreviewCitation}>Page 1 · Verified Evidence</span>
+                      <span style={styles.emptyPreviewProvenance}>Department of Passports</span>
                     </div>
                   </div>
 
@@ -783,7 +786,7 @@ export default function WorkspacePage() {
                           setQuestion("के के कागजात चाहिन्छ?");
                         }}
                       >
-                        <span>🛂 राहदानी नवीकरण नियम</span>
+                        <span>राहदानी नवीकरण नियम</span>
                       </button>
                       <button
                         type="button"
@@ -793,7 +796,7 @@ export default function WorkspacePage() {
                           setQuestion("कहाँ निवेदन दिने?");
                         }}
                       >
-                        <span>🏛️ नागरिकता प्रतिलिपि सिफारिस</span>
+                        <span>नागरिकता प्रतिलिपि सिफारिस</span>
                       </button>
                       <button
                         type="button"
@@ -802,7 +805,7 @@ export default function WorkspacePage() {
                           setInputText("मालपोत कार्यालयमा जग्गा रजिष्ट्रेशन लिखत पारित गर्दा लाग्ने सेवा शुल्क र आवश्यक कागजातहरुको सूची.");
                         }}
                       >
-                        <span>📋 मालपोत लिखत कागजात</span>
+                        <span>मालपोत लिखत कागजात</span>
                       </button>
                     </div>
                   </div>
@@ -859,7 +862,15 @@ export default function WorkspacePage() {
                       ) : (
                         <div style={styles.feedbackConfirmed}>
                           <span style={styles.feedbackConfirmedIcon}>
-                            {feedback.rating === 1 ? "👍" : "👎"}
+                            {feedback.rating === 1 ? (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                              </svg>
+                            ) : (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                              </svg>
+                            )}
                           </span>
                           <span style={styles.feedbackConfirmedText}>
                             Thanks — your rating helps hamiGenZ get better.

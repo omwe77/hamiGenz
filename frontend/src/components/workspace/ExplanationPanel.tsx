@@ -133,7 +133,7 @@ export default function ExplanationPanel({
                 aria-label={`Jump to citation excerpt on page ${c.page}`}
               >
                 <div style={styles.citationHeader}>
-                  <span style={styles.citationPageNum}>📄 Page {c.page}</span>
+                  <span style={styles.citationPageNum}>Page {c.page}</span>
                   <span style={styles.citationInspectHint}>
                     {activeCitation === c.page ? "Highlighted" : "Inspect →"}
                   </span>
@@ -159,7 +159,7 @@ export default function ExplanationPanel({
       {grounding && (
         <div style={styles.groundingSection}>
           <h3 style={styles.sectionTitle}>
-            {grounding.contradiction_found ? "⚠️ Verification warning" : "Verification"}
+            {grounding.contradiction_found ? "Verification warning" : "Verification"}
           </h3>
           {grounding.contradiction_found && (
             <div style={styles.contradictionWarning}>
@@ -193,7 +193,7 @@ export default function ExplanationPanel({
             </div>
           )}
           {grounding.warning && (
-            <p style={styles.groundingWarningText}>⚠️ {grounding.warning}</p>
+            <p style={styles.groundingWarningText}>{grounding.warning}</p>
           )}
           {grounding.overall_confidence === "LOW" && !grounding.contradiction_found && (
             <p style={styles.lowEvidenceNote}>
