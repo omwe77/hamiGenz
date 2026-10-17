@@ -319,7 +319,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
               {loading ? "Rendering preview…" : "Preview filled page"}
             </button>
             {preview && (
-              <button style={styles.secondaryBtn} onClick={handleDownload}>
+              <button style={styles.secondaryBtn} onClick={handleDownload} aria-label="Download filled form image" title="Download filled form as PNG">
                 ↓ Download PNG
               </button>
             )}
