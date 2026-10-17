@@ -1,6 +1,6 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { detectFormFields, setFormFields, getFilledImage } from "../../lib/hamigenz-api";
-import type { FormField, FormFieldValue } from "../../lib/types";
+import type { FormField, FormFieldValue, FormPreviewState } from "../../lib/types";
 
 // The blank registration form is a public asset served at the site root (/blank_form.png).
 const BLANK_FORM_URL = "/blank_form.png";
@@ -112,7 +112,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
   const [values, setValues] = useState<FormFieldValue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ dataUrl: string; width: number; height: number } | null>(null);
+  const [preview, setPreview] = useState<FormPreviewState | null>(null);
   const [saving, setSaving] = useState(false);
   const isDemoMode = Boolean(demoMode && docId === "demo-registration-form");
   const [showGuide, setShowGuide] = useState(false);

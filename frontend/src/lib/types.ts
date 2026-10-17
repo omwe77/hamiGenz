@@ -225,6 +225,12 @@ export interface FormFieldValue {
   page?: number;
 }
 
+
+export interface FormPreviewState {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
 export interface FilledImageResponse {
   doc_id: string;
   page_num: number;
