@@ -252,7 +252,7 @@ SQLITE_DB_PATH=data/hamigenz.db
 hamiGenZ maintains a strict test-driven development workflow:
 
 ```bash
-# Run the full backend test suite (282 tests)
+# Run the full backend test suite
 pytest tests/ -v
 
 # Run OKF specification conformance validator directly
