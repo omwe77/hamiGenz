@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getDocumentViewer } from "@/lib/hamigenz-api";
 import DocViewerClient from "./DocViewerClient";
-import type { ViewerPage, Citation, SearchMatch } from "@/lib/types";
+import type { Citation } from "@/lib/types";
 
 /**
  * Document home page (server-rendered).
