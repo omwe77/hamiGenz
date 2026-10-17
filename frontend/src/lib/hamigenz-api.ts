@@ -26,15 +26,6 @@ export function getDemoMode(): boolean {
   return demoMode;
 }
 
-/** Check if the backend is reachable on build time (for static sites). */
-function resolveApiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (configured && configured !== "http://127.0.0.1:8000" && configured !== "http://localhost:8000") {
-    return configured;
-  }
-  return "http://127.0.0.1:8000";
-}
-
 export async function explainText(
   text: string,
   explanationLevel: "original" | "simple" | "very_simple",
@@ -341,5 +332,4 @@ import type {
   AskGeneralResponse,
   FeedbackResponse,
   FormFieldValue,
-  FilledImageResponse,
 } from "./types";
