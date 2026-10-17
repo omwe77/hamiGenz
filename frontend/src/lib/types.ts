@@ -218,6 +218,40 @@ export interface FieldExplanation {
   meta: { status: "llm" | "hints_only" | "error"; note?: string };
 }
 
+export interface FormFieldValue {
+  id: string;
+  label: string;
+  value: string;
+  page?: number;
+}
+
+
+export interface FormPreviewState {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+export interface FilledImageResponse {
+  doc_id: string;
+  page_num: number;
+  png_base64: string;
+  width: number;
+  height: number;
+}
+
+export interface FillImageRequest {
+  values: FormFieldValue[];
+}
+
+export interface FillImageResponse {
+  status: "ok" | "no_values";
+  page_num: number;
+  png_base64?: string;
+  width?: number;
+  height?: number;
+  message?: string;
+}
+
 export interface FeedbackResponse {
   status: string;
   rating: number;

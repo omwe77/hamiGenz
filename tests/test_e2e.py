@@ -26,18 +26,6 @@ BACKEND_DIR = BASE_DIR / "backend"
 DATA_DIR = BASE_DIR / "data"
 TESTS_DIR = BASE_DIR / "tests"
 
-# ─── Ensure Tesseract env vars are set for standalone test runs ──
-# (When run via the server, document_processor.py handles this at import time.
-#  When the test script runs standalone, apply the same logic here.)
-if "TESSERACT_BIN" not in os.environ or not os.environ["TESSERACT_BIN"]:
-    _default_bin = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
-    if _default_bin.exists():
-        os.environ["TESSERACT_BIN"] = str(_default_bin)
-if "TESSDATA_PREFIX" not in os.environ or not os.environ["TESSDATA_PREFIX"]:
-    _proj_tessdata = DATA_DIR / "tessdata"
-    if _proj_tessdata.is_dir():
-        os.environ["TESSDATA_PREFIX"] = str(_proj_tessdata)
-
 sys.path.insert(0, str(BACKEND_DIR))
 
 # ─── Imports ──────────────────────────────────────────────────────
@@ -142,25 +130,25 @@ def test_nepali_ocr():
 
     from PIL import Image, ImageDraw, ImageFont
 
-    nepali_text = "नेपाली"
+    nepali_text = "नेपाली राहदानीको लागि आवेदन सुपारी गर्नुहोस्"
     img_path = TESTS_DIR / "nepali_ocr_verify.png"
 
-    img = Image.new("RGB", (300, 80), color="white")
+    img = Image.new("RGB", (900, 150), color="white")
     draw = ImageDraw.Draw(img)
     try:
-        font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", 48)
+        font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", 36)
     except Exception:
         font = ImageFont.load_default()
-    draw.text((15, 15), nepali_text, fill="black", font=font)
+    draw.text((10, 40), nepali_text, fill="black", font=font)
     img.save(str(img_path))
 
-    # OCR with PSM 8 (single word mode) — this works with -l nep alone.
-    # Using -l eng+nep together garbles Devanagari; the English model
-    # interferes. With -l nep we verified: "न्रसमउसा" from the test image.
+    # OCR using the same pipeline logic the backend uses, with PSM 8
+    # (PSM 8/single-word is what extracts Nepali chars from generated images)
     import pytesseract as pt
+    lang_str = _build_lang_string("eng+nep")
     result = ""
     for psm in [8, 13, 7, 6, 3]:
-        raw = pt.image_to_string(img, lang=_build_lang_string("nep"), config=f"--psm {psm}")
+        raw = pt.image_to_string(img, lang=lang_str, config=f"--psm {psm}")
         candidate = raw.strip()
         if candidate and any("\u0900" <= c <= "\u097F" for c in candidate):
             result = candidate

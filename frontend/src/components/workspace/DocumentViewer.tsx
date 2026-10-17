@@ -278,6 +278,7 @@ export default function DocumentViewer({
                     style={styles.searchNavBtn}
                     onClick={() => goToMatch((activeSearchMatchIdx ?? 0) - 1)}
                     disabled={activeSearchMatchIdx === 0}
+                    aria-label="Previous search match"
                   >
                     ← Prev match
                   </button>
@@ -288,6 +289,7 @@ export default function DocumentViewer({
                     style={styles.searchNavBtn}
                     onClick={() => goToMatch((activeSearchMatchIdx ?? 0) + 1)}
                     disabled={activeSearchMatchIdx === searchMatches.length - 1}
+                    aria-label="Next search match"
                   >
                     Next match →
                   </button>

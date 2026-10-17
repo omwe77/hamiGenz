@@ -3,6 +3,7 @@ hamigenz — FastAPI Backend
 Main application entry point.
 """
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,16 +14,27 @@ _BACKEND_DIR = Path(__file__).resolve().parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
+# Load local environment configuration (.env) if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(_BACKEND_DIR / '.env')
+    load_dotenv(_BACKEND_DIR.parent / '.env')
+except ImportError:
+    pass
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
-from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from io import BytesIO
 
 from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
 from form_understanding import FormUnderstandingService
+import form_understanding  # module-level helpers used by fill-image endpoint
+import form_preview  # form preview compositing used by fill-image endpoint
 from feedback_store import FeedbackStore
 import source_registry
 from official_answer import OfficialAnswerService
@@ -42,8 +54,10 @@ from llm_service import (
 
 
 # ─── Configuration ───────────────────────────────────────────────
-BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
+# data/ and uploads/ live under backend/, not the repo root
+_BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = _BASE_DIR.parent
+DATA_DIR = BASE_DIR / "backend" / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 VECTORS_DIR = DATA_DIR / "vectors"
 DB_PATH = DATA_DIR / "hamigenz.db"
@@ -286,6 +300,20 @@ class FormExplainRequest(BaseModel):
     question: Optional[str] = None
 
 
+class FormFieldValue(BaseModel):
+    """One reported or proposed value for a form field."""
+
+    label: str
+    value: str
+    page: Optional[int] = None
+
+
+class FillImageRequest(BaseModel):
+    """Request body for generating a reference-filled preview page image."""
+
+    values: Optional[list[FormFieldValue]] = None
+
+
 class ViewerPage(BaseModel):
     page_num: int
     text: str
@@ -412,12 +440,18 @@ async def upload_document(
         filepath, doc_id = processor.save_upload(file_bytes, filename)
 
     # Process
+    # app.state.pipeline is initialized by the lifespan() on startup.
+    # If not present, the server was started without the startup event
+    # (e.g. TestClient without with_lifespan) - return 503 so the client
+    # knows the backend is not ready.
+    if not hasattr(app.state, "pipeline"):
+        raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
     pipeline = app.state.pipeline
     try:
         result = pipeline.process_document(str(filepath), doc_id, filename)
     except Exception:
         # Malformed/corrupt documents (bad PDF structure, broken images, OCR
-        # failures) must fail cleanly — never leak a stack trace to the client.
+        # failures) must fail cleanly - never leak a stack trace to the client.
         print(f"[hamigenz] Document processing failed for {doc_id}")
         import traceback
         traceback.print_exc()
@@ -1054,6 +1088,112 @@ async def get_document_viewer(doc_id: str):
         page_count=len(viewer_pages),
         pages=viewer_pages,
     )
+
+
+# ─── /documents/{doc_id}/page/{page_num}/fill-image: reference-filled page ─────────
+
+# ─── /documents/{doc_id}/page/{page_num}/filled-image: rendered answer overlay ──
+
+@app.post("/documents/{doc_id}/page/{page_num}/fill-image")
+async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
+                      _rl: None = Depends(rate_limit("ai"))):
+    """Return a PNG of the selected page with the user's typed answers composited
+    onto the correct fields (reference-filled preview).
+
+    Values come from ``req.values``. Stored form fields for the document are used
+    as a fallback for any field the caller did not provide. ``page_num`` selects
+    the page on multi-page documents.
+    """
+    # Resolve stored field values for this document (fallback source).
+    stored_values = app.state.metadata.get_form_fields(doc_id)
+
+    try:
+        metadata = app.state.metadata
+        doc = metadata.get_document(doc_id)
+        if not doc:
+            raise HTTPException(404, f"Document {doc_id} not found")
+
+        stored_path = Path(doc["filepath"]).resolve()
+        if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
+            raise HTTPException(403, "Invalid document path")
+
+        processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+        pages = processor.extract_text(doc["filepath"])
+        page_map = {p["page_num"]: p for p in pages}
+        # Page must exist on the document (multi-page docs otherwise satisfy
+        # the route with a 200 and an empty preview).
+        if page_num not in page_map:
+            raise HTTPException(404, f"Page {page_num} not found on document {doc_id}")
+
+        # Attach per-field positions (300 DPI) so answers can be placed on the
+        # correct fields of the original page image.
+        for p in page_map.values():
+            text = p.get("text") or ""
+            word_boxes = processor._tesseract_word_boxes(doc["filepath"], p["page_num"])
+            detection = form_understanding.detect_form_positions(text, word_boxes)
+            p["fields_with_positions"] = detection["fields"]
+
+        def _norm(v):
+            if isinstance(v, dict):
+                return v.get("label"), v.get("value") or "", v.get("page")
+            return (getattr(v, "label", None),
+                    getattr(v, "value") or "",
+                    getattr(v, "page"))
+
+        def _value_for(label, page):
+            for v in list(req.values or []):
+                l, val, p = _norm(v)
+                if l == label and p == page:
+                    return val
+            for v in stored_values:
+                l, val, p = _norm(v)
+                if l == label and p == page:
+                    return val
+            return ""
+
+        merged_values = []
+        for p in page_map.values():
+            for f in p.get("fields_with_positions", []):
+                value = _value_for(f.get("label"), f.get("page"))
+                if value:
+                    merged_values.append({"label": f.get("label"),
+                                          "value": value,
+                                          "box": f,
+                                          "page": p["page_num"]})
+
+        if not merged_values:
+            return PlainTextResponse(
+                "No form fields found or no values supplied.",
+                media_type="text/plain",
+            )
+
+        # Render the original page at preview DPI (300) and composite answers.
+        original_pil = processor._render_page_pil(doc["filepath"], page_num, dpi=300)
+        if original_pil is None:
+            raise HTTPException(500, "Could not render the page for preview.")
+
+        filled_pil = form_preview.build_filled_page(original_pil, merged_values)
+        buf = BytesIO()
+        filled_pil.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"fill_image failed for doc {doc_id}: {e}")
+        raise HTTPException(500, f"Fill preview failed: {e}")
+
+
+@app.post("/documents/{doc_id}/form-fields")
+async def set_form_fields(doc_id: str, req: dict, _rl: None = Depends(rate_limit("ai"))):
+    """Persist a list of {label, value, page} for a document's form preview."""
+    try:
+        # Accept both 'values' and 'fields' keys for compatibility
+        values = [v for v in (req.get("values") or req.get("fields") or [])]
+    except Exception as e:
+        raise HTTPException(400, f"Invalid form fields: {e}") from e
+
+    app.state.metadata.set_form_fields(doc_id, values)
+    return {"doc_id": doc_id, "count": len(values), "saved": True}
 
 
 # ─── /documents/{doc_id}/page/{page_num}/image: page image ────────

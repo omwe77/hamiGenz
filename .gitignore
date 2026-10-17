@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.so
@@ -34,6 +34,9 @@ Thumbs.db
 # Data and uploads (NEVER commit user documents or vector indexes)
 data/uploads/
 data/vectors/
+backend/data/uploads/
+backend/data/vectors/
+backend/data/*.db
 *.faiss
 *_meta.json
 registry.json
@@ -72,3 +75,19 @@ tests/tmp_search/
 .claude/
 .codex/
 .playwright-mcp/
+
+# Documentation assets (orphaned screenshots, not referenced in docs or README)
+docs/assets/
+
+# Test artifacts (regenerated on each test run)
+tests/nepali_ocr_verify.png
+tests/test_gen_current.png
+tests/nep_exact_repro.png
+tests/test_gen_current.png
+
+# Temporary browser/Playwright check scripts (session artefacts, never committed)
+frontend/check_*.py
+frontend/test_*.py
+frontend/generate_blank_form.py
+frontend/src/components/workspace/original_page_1.png
+font_test.png

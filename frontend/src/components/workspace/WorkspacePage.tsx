@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   explainText,
@@ -11,6 +12,8 @@ import {
   searchDocumentText,
   extractActions,
   submitFeedback,
+  setDemoModeState,
+  DEMO_SAMPLE_DOCS,
 } from "@/lib/hamigenz-api";
 import type {
   ViewerPage,
@@ -27,6 +30,7 @@ import DocumentViewer from "./DocumentViewer";
 import ProvenanceBadge from "./ProvenanceBadge";
 import ActionPanel from "./ActionPanel";
 import FormPanel from "./FormPanel";
+import FillPanel from "./FillPanel";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type ExplainLevel = "original" | "simple" | "very_simple";
@@ -39,7 +43,50 @@ const EXAMPLE_PROMPTS = [
   { tag: "📋 Checklist", text: "What do I need to submit?" },
 ];
 
+const DEMO_SAMPLES: DocumentInfo[] = DEMO_SAMPLE_DOCS.map((d) => ({
+  doc_id: d.docId,
+  filename: d.filename,
+  upload_date: "2026-06-01T00:00:00Z",
+  page_count: d.pageCount,
+  language_hint: "english",
+  status: "processed",
+}));
+
 export default function WorkspacePage() {
+  // ── Demo mode state. React state for the UI; the module-level `demoMode`
+  // in hamigenz-api.ts is the source of truth for the API functions so the
+  // demo-aware branches (listDocuments / getDocumentViewer / ...) stay in
+  // sync with what the user sees. Both are kept in sync here.
+  const [demoMode, setDemoMode] = useState(true);
+
+  // ── Demo mode toggle button (top bar) ────────────────────────────────
+  const toggleDemoMode = () => {
+    const nextMode = !demoMode;
+    // 1. Synchronize API module demo state
+    setDemoModeState(nextMode);
+    // 2. Pure state transition for demoMode UI
+    setDemoMode(nextMode);
+
+    // 3. Explicit event-handler logic keeping documents and activeDoc synchronized
+    if (nextMode) {
+      setDocuments(DEMO_SAMPLES);
+      setActiveDocId("demo-registration-form");
+    } else {
+      setActiveDocId(null);
+      listDocuments()
+        .then((docs) => {
+          setDocuments(docs);
+          if (docs.length > 0) {
+            setActiveDocId(docs[0].doc_id);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load live documents:", err);
+          setDocuments([]);
+        });
+    }
+  };
+
   // ── Explain state ───────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"explain" | "document" | "split">("explain");
   const [isDragging, setIsDragging] = useState(false);
@@ -52,8 +99,8 @@ export default function WorkspacePage() {
   const [error, setError] = useState<string | null>(null);
 
   // ── Document state ──────────────────────────────────────────────────
-  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
-  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<DocumentInfo[]>(DEMO_SAMPLES);
+  const [activeDocId, setActiveDocId] = useState<string | null>("demo-registration-form");
   const [viewerData, setViewerData] = useState<{ docId: string | null; pages: ViewerPage[] }>({
     docId: null,
     pages: [],
@@ -95,13 +142,15 @@ export default function WorkspacePage() {
   }>({ rating: null, confirmed: false, aggregate: null });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
-  // ── Load documents once ─────────────────────────────────────────────
+  // Load documents on mount if starting in live mode
   useEffect(() => {
-    listDocuments().then(setDocuments).catch(() => {});
-  }, []);
+    if (!demoMode) {
+      listDocuments().then(setDocuments).catch(() => {});
+    }
+  }, [demoMode]);
 
-  // ── Active doc → load viewer ────────────────────────────────────────
   useEffect(() => {
     if (!activeDocId) {
       return;
@@ -144,8 +193,7 @@ export default function WorkspacePage() {
   }, [activeDocId, searchQuery]);
 
   // ── Core explain runner ─────────────────────────────────────────────
-  const runExplain = useCallback(
-    async (
+  const runExplain = async (
       text: string,
       level: ExplainLevel,
       lang: TargetLang,
@@ -163,11 +211,9 @@ export default function WorkspacePage() {
       } finally {
         setLoading(false);
       }
-    },
-    []
-  );
+    };
 
-  const handleExplain = useCallback(() => {
+  const handleExplain = () => {
     if (!inputText.trim() || loading) return;
     runExplain(
       inputText.trim(),
@@ -176,11 +222,10 @@ export default function WorkspacePage() {
       question.trim() || undefined,
       activeDocId || undefined
     );
-  }, [inputText, loading, explainLevel, targetLang, question, activeDocId, runExplain]);
+  };
 
   // ── Explain the selected text directly (fresh values, no stale state) ──
-  const explainFromSelection = useCallback(
-    (text: string) => {
+  const explainFromSelection = (text: string) => {
       if (!text.trim()) return;
       setActiveTab("explain");
       setInputText(text);
@@ -191,12 +236,10 @@ export default function WorkspacePage() {
         question.trim() || undefined,
         activeDocId || undefined
       );
-    },
-    [explainLevel, targetLang, question, activeDocId, runExplain]
-  );
+    };
 
   // ── Upload ──────────────────────────────────────────────────────────
-  const handleFile = useCallback(async (file: File) => {
+  const handleFile = async (file: File) => {
     try {
       const res = await uploadDocument(file);
       setDocuments((prev) => [
@@ -220,37 +263,30 @@ export default function WorkspacePage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  };
 
-  const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) handleFile(file);
-    },
-    [handleFile]
-  );
+    };
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
-  }, []);
+  };
 
-  const handleDragLeave = useCallback(() => {
+  const handleDragLeave = () => {
     setIsDragging(false);
-  }, []);
+  };
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
       const file = e.dataTransfer.files?.[0];
       if (file) handleFile(file);
-    },
-    [handleFile]
-  );
+    };
 
-  const handleDeleteDoc = useCallback(
-    async (docId: string) => {
+  const handleDeleteDoc = async (docId: string) => {
       try {
         await deleteDocument(docId);
         setDocuments((prev) => prev.filter((d) => d.doc_id !== docId));
@@ -265,17 +301,15 @@ export default function WorkspacePage() {
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
-    },
-    [activeDocId]
-  );
+    };
 
   // ── Text selected in viewer → offer to explain ──────────────────────
-  const handleTextHighlight = useCallback((text: string) => {
+  const handleTextHighlight = (text: string) => {
     setSelectedText(text);
-  }, []);
+  };
 
   // ── Citation click → jump to page + highlight evidence ─────────────
-  const handleCitationClick = useCallback((citation: Citation) => {
+  const handleCitationClick = (citation: Citation) => {
     if (typeof window !== "undefined" && window.innerWidth >= 1100) {
       setActiveTab("split");
     } else {
@@ -283,15 +317,14 @@ export default function WorkspacePage() {
     }
     setHighlightPage(citation.page);
     setActiveSearchMatchIdx(null);
-    // Wait for the document panel to render/mount, then scroll smoothly
     setTimeout(() => {
       const pageEl = document.getElementById(`page-${citation.page}`);
       pageEl?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
-  }, []);
+  };
 
   // ── Search match click → jump to that match ────────────────────────
-  const handleSearchMatchClick = useCallback((idx: number) => {
+  const handleSearchMatchClick = (idx: number) => {
     setActiveSearchMatchIdx(idx);
     const page = searchResults[idx]?.page;
     if (page) {
@@ -301,29 +334,29 @@ export default function WorkspacePage() {
           ?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 60);
     }
-  }, [searchResults]);
+  };
 
-  const goToMatch = useCallback((idx: number | null) => {
+  const goToMatch = (idx: number | null) => {
     setActiveSearchMatchIdx(idx);
-  }, []);
+  };
 
   // ── Clear highlights ────────────────────────────────────────────────
-  const clearHighlights = useCallback(() => {
+  const clearHighlights = () => {
     setHighlightPage(null);
     setSelectedText("");
     setActiveSearchMatchIdx(null);
-  }, []);
+  };
 
   // ── Page jump ───────────────────────────────────────────────────────
-  const jumpToPage = useCallback((pageNum: number) => {
+  const jumpToPage = (pageNum: number) => {
     setHighlightPage(null);
     document
       .getElementById(`page-${pageNum}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  };
 
   // ── Action extraction (PR-009): from pasted text or active document ──
-  const handleExtractActions = useCallback(() => {
+  const handleExtractActions = () => {
     if (actionsLoading) return;
     const sourceText = inputText.trim();
     if (!sourceText && !activeDocId) return;
@@ -335,11 +368,10 @@ export default function WorkspacePage() {
         setActionsError(e instanceof Error ? e.message : String(e))
       )
       .finally(() => setActionsLoading(false));
-  }, [actionsLoading, inputText, activeDocId, question]);
+  };
 
   // ── Submit a thumbs up/down rating for the current explanation ─────────
-  const handleFeedback = useCallback(
-    async (rating: number) => {
+  const handleFeedback = async (rating: number) => {
       if (!explanation || feedback.confirmed) return;
       try {
         const res = await submitFeedback(
@@ -355,20 +387,15 @@ export default function WorkspacePage() {
       } catch {
         // Feedback is best-effort; never block the UX on it.
       }
-    },
-    [explanation, activeDocId, feedback.confirmed]
-  );
+    };
 
   // Keyboard shortcut: Ctrl+Enter → explain ────────────────────────
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         handleExplain();
       }
-    },
-    [handleExplain]
-  );
+    };
 
   const activeDoc = documents.find((d) => d.doc_id === activeDocId);
   const processingStatus = loading
@@ -438,7 +465,7 @@ export default function WorkspacePage() {
             )}
             <button
               type="button"
-              style={styles.headerUploadBtn}
+              style={{ ...styles.headerUploadBtn, marginLeft: "var(--space-2)" }}
               onClick={() => fileInputRef.current?.click()}
               aria-label="Upload document"
             >
@@ -448,6 +475,17 @@ export default function WorkspacePage() {
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
               <span>Upload Doc</span>
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.headerUploadBtn, backgroundColor: demoMode ? "var(--color-accent)" : "transparent", color: demoMode ? "#ffffff" : "var(--color-text-secondary)" }}
+              onClick={toggleDemoMode}
+              aria-label={demoMode ? "Switch to Live Mode" : "Switch to Demo Mode"}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+                <span>{demoMode ? "Live" : "Demo"} Mode</span>
+              </span>
             </button>
           </div>
         </div>
@@ -656,8 +694,11 @@ export default function WorkspacePage() {
               <FormPanel
                 text={inputText.trim() || undefined}
                 docId={activeDocId}
-                targetLang={targetLang}
+                targetLang={targetLang ?? ""}
               />
+
+              {/* Reference-filled form preview */}
+              <FillPanel docId={activeDocId} demoMode={demoMode} />
 
               <p style={styles.hint}>
                 Ctrl+Enter to explain · Select text in the Document tab to explain it
@@ -758,7 +799,7 @@ export default function WorkspacePage() {
                         type="button"
                         style={styles.emptyPromptBtn}
                         onClick={() => {
-                          setInputText("मालपोत कार्यालयमा जग्गा रजिष्ट्रेशन लिखत पारित गर्दा लाग्ने सेवा शुल्क र आवश्यक कागजातहरुको सूची।");
+                          setInputText("मालपोत कार्यालयमा जग्गा रजिष्ट्रेशन लिखत पारित गर्दा लाग्ने सेवा शुल्क र आवश्यक कागजातहरुको सूची.");
                         }}
                       >
                         <span>📋 मालपोत लिखत कागजात</span>
@@ -1050,8 +1091,7 @@ export default function WorkspacePage() {
                         <button
                           style={styles.docItemOpen}
                           onClick={() => {
-                            setActiveDocId(doc.doc_id);
-                            clearHighlights();
+                            router.push(`/workspace/${doc.doc_id}`);
                           }}
                         >
                           {activeDocId === doc.doc_id ? "Viewing" : "Open"}
@@ -1099,64 +1139,31 @@ export default function WorkspacePage() {
                   <p style={styles.emptySubtitle}>Loading document viewer...</p>
                 </div>
               ) : (
-                <>
-                  <div style={styles.viewerToolbar}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, flex: 1 }}>
-                      <span style={styles.pageNavLabel}>
-                        {viewerPages.length} page{viewerPages.length !== 1 ? "s" : ""}
-                        {activeDoc ? ` · ${activeDoc.filename}` : ""}
-                      </span>
-                      {explanation && (
-                        <button
-                          type="button"
-                          style={styles.returnToExplainBtn}
-                          onClick={() => setActiveTab(typeof window !== "undefined" && window.innerWidth >= 1100 ? "split" : "explain")}
-                          title="Return to explanation"
-                        >
-                          ← Return to explanation
-                        </button>
-                      )}
-                    </div>
-                    <div style={styles.viewerToolbarRight}>
-                      {viewerPages.length > 1 && (
-                        <select
-                          style={styles.select}
-                          value=""
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (n) jumpToPage(n);
-                          }}
-                          aria-label="Jump to page"
-                        >
-                          <option value="">Jump to page…</option>
-                          {viewerPages.map((p) => (
-                            <option key={p.page_num} value={p.page_num}>
-                              Page {p.page_num}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      {(highlightPage || selectedText || activeSearchMatchIdx !== null) && (
-                        <button style={styles.pageNavBtn} onClick={clearHighlights}>
-                          Clear highlights
-                        </button>
-                      )}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    gap: "var(--space-4)",
+                  }}
+                >
+                  <div style={{ flex: "1 1 70%", minWidth: 0 }}>
+                    <div style={styles.viewerScroll}>
+                      <DocumentViewer
+                        docId={activeDocId}
+                        pages={viewerPages}
+                        onTextHighlight={handleTextHighlight}
+                        citationsByPage={citationsByPage}
+                        searchMatches={searchResults}
+                        activeCitationPage={highlightPage}
+                        activeSearchMatchIdx={activeSearchMatchIdx}
+                        onActiveSearchMatchChange={goToMatch}
+                      />
                     </div>
                   </div>
-
-                  <div style={styles.viewerScroll}>
-                    <DocumentViewer
-                      docId={activeDocId}
-                      pages={viewerPages}
-                      onTextHighlight={handleTextHighlight}
-                      citationsByPage={citationsByPage}
-                      searchMatches={searchResults}
-                      activeCitationPage={highlightPage}
-                      activeSearchMatchIdx={activeSearchMatchIdx}
-                      onActiveSearchMatchChange={goToMatch}
-                    />
+                  <div style={{ flex: "1 1 30%", minWidth: 0 }}>
+                    <FillPanel docId={activeDocId} demoMode={demoMode} />
                   </div>
-                </>
+                </div>
               )}
             </div>
 
@@ -2018,10 +2025,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "4px",
     padding: "4px 10px",
     background: "var(--color-bg-alt)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-full)",
-    fontSize: "var(--text-xs)",
-    maxWidth: "180px",
   },
   headerDocName: {
     overflow: "hidden",

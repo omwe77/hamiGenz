@@ -52,6 +52,10 @@ _STRUCTURE_HINTS = (
 
 MIN_FIELDS_FOR_FORM = 4
 
+# Answer area width (in 300-DPI pixels) allocated to a field when the label's
+# own word box is narrower. Deterministic and independent of font metrics.
+FORM_FILL_WIDTH_PX = 240
+
 
 def _clean_label(raw: str) -> Optional[str]:
     label = raw.strip().strip(":•|").strip()
@@ -137,6 +141,52 @@ def extract_fields(text: str) -> list[dict]:
             break
 
     return fields
+
+
+def _assign_field_positions(fields: list[dict], word_boxes: list[dict]) -> list[dict]:
+    """Annotate existing field dicts with screen coordinates (300-DPI pixels).
+
+    Each field's answer box is anchored to its label's word box and widened to
+    a fixed fill width so typed answers land inside the field rather than the
+    label. Fields that cannot be matched get an empty box (no placement).
+    """
+    if not word_boxes:
+        return fields
+    for field in fields:
+        label = field.get("label") or ""
+        label_tokens = {t for t in re.sub(r"[^\w\u0900-\u097F]", " ", label.lower()).split() if t}
+        if not label_tokens:
+            field["x"] = field["y"] = field["w"] = field["h"] = 0
+            continue
+        best, best_score = None, -1
+        for w in word_boxes:
+            wt = re.sub(r"[^\w\u0900-\u097F]", " ", w.get("text", "")).lower()
+            if not wt:
+                continue
+            overlap = len(label_tokens & set(wt.split()))
+            if overlap > best_score:
+                best, best_score = w, overlap
+        if best is None:
+            field["x"] = field["y"] = field["w"] = field["h"] = 0
+            continue
+        field["x"] = best["x"]
+        field["y"] = best["y"]
+        field["w"] = max(best["w"], FORM_FILL_WIDTH_PX)
+        field["h"] = max(int(best["h"] * 1.4), 22)
+    return fields
+
+
+def detect_form_positions(text: str, word_boxes: list[dict]) -> dict:
+    """Form detection that also returns field coordinates (300-DPI pixels).
+
+    Returns {is_form, confidence, field_count, matched_keywords, fields} where
+    each field carries {label, page, evidence, x, y, w, h}. Coordinates are
+    scaled to the 200-DPI render used for display.
+    """
+    detection = detect_form(text)
+    fields = extract_fields(text)
+    fields = _assign_field_positions(fields, word_boxes)
+    return {**detection, "fields": fields}
 
 
 def _split_pages(text: str) -> list[tuple[int, str]]:

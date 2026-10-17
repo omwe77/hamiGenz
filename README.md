@@ -1,4 +1,4 @@
-﻿# hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
+# hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
 
 > A local-first, privacy-centric AI platform engineered to make complex Nepali administrative notices, government forms, and civil documents universally understandable. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance and zero hallucinations.
 
@@ -133,12 +133,11 @@ hamiGenZ implements the **Open Knowledge Format (OKF v0.2)** specification as it
 - **Grounding & Contradiction Verification:** Secondary inference layer that compares LLM responses against retrieved source passages and enforces refusal on ungrounded claims.
 - **Multi-Tier Explanation Engine:** Three selectable simplification tiers (Original Text, Simple Summary, Bullet Breakdown) with trilingual language handling (Devanagari, Romanized Nepali, English).
 - **Split-Pane Next.js 16 Workspace:** Responsive desktop, tablet, and mobile interface with interactive document viewing, dynamic citation clicking, and empty-state guidance.
-- **Comprehensive Test Suite:** **282 passing unit, pipeline, security, and golden query tests** via `pytest`.
-
-### In Progress
-- **Form Assistance & Action Extraction:** Automated field extraction and guidance from official bureaucratic application forms (`backend/form_service.py`).
-- **Cloud Staging Infrastructure:** Deployment scripts and systemd unit configurations for Azure VM (Standard_B2ms_v2 with Ollama and Nginx HTTPS reverse proxy) detailed in `docs/DEPLOYMENT.md`.
-
+- **Comprehensive Test Suite:** **295 passing unit, pipeline, security, form-preview, and golden query tests** via `pytest`.
+- **Action Layer (Form Assistance & Action Extraction):** `POST /actions` endpoint (action_extractor.py) extracts requirements (checklists), deadlines, fees, eligibility, next steps, and official links from pasted text or a document's retrieved evidence; LLM structured extraction cross-checked against deterministic regex hints; Nepali-aware normalization (Devanagari digits, day-first dates, currency); official-link safety (only gov.np / org.np / edu.np URLs ever displayed).
+- **Official Source Answering:** `/ask-general` endpoint answers official-information questions (fees, procedures, laws, deadlines) from VERIFIED REGISTRY SOURCES via a local knowledge cache — evidence from curated sources only, SSRF-safe, never model memory dressed as official (PR-012).
+- **Official Source Registry:** Curated registry of 10 authoritative Nepali sources (passport, national ID/civil registration, immigration, traffic, laws, judiciary, tax, citizenship, supreme court, govt portal) with full metadata (organization, domain, title, category, source type, authority level, verified status, current/outdated status) (PR-011).
+- **Evaluation System:** Gold dataset (12+ human-verified cases across 11 categories with alternative-form key facts, forbidden facts, and sentence-level negation guards), retrieval benchmark (Hit@k / MRR / negative probes across English, Nepali, romanized, mixed), explanation evaluator (deterministic fact checks, no LLM judge in CI) — results recorded in docs/EVALUATION.md.
 ### Planned (Future Roadmap)
 - **Offline Standalone Desktop Executable:** Packaging the frontend and local inference runtime into a self-contained Tauri/Electron desktop application for remote civic workers without internet connectivity.
 - **Government Gazette Web Scraping:** Automated indexing pipeline for new circulars from official `.gov.np` portals.
@@ -170,11 +169,19 @@ The hamiGenZ workspace provides an accessible interface engineered to handle com
 
 ### Prerequisites
 - **Python:** 3.12+
-- **Node.js:** 18+ (tested with v20+)
+- **Node.js:** 20.9+ (Next.js 16 minimum; tested with v20+)
 - **Ollama:** Installed and running locally (`ollama pull qwen3:8b`)
 - **Tesseract OCR:** Installed with `nep` (Nepali) and `eng` (English) trained data.
   - Windows: Install via UB-Mannheim and install Nepali language data.
   - Linux: `sudo apt install tesseract-ocr tesseract-ocr-nep tesseract-ocr-eng`
+
+### Cloud Deployment Requirements (NOT yet met)
+- **Persistent document storage:** SQLite database (`backend/data/hamigenz.db`) and uploaded documents
+  (`backend/data/uploads/`) must run on persistent storage (persistent volume or managed storage).
+  Ephemeral storage WILL LOSE ALL DATA on restart or scaling.
+- **Qwen3 8B Ollama dependency:** The backend requires a local Ollama server with `qwen3:8b` model
+  available for LLM inference. Free cloud tiers do not provide this; a dedicated GPU/VPU instance is
+  required for production. Until this is resolved, the application is NOT freely deployable.
 
 ### 1. Backend Setup
 
@@ -225,17 +232,15 @@ Create a `.env` file in the project root:
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
 
-# Embedding Configuration
-EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+# Embedding & Retrieval Model
+EMBED_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+REINDEX_ON_STARTUP=1
 
 # Security & CORS
 FRONTEND_ORIGIN=http://localhost:3000
-MAX_UPLOAD_SIZE_MB=50
+CORS_EXTRA_ORIGINS=
 
-# Storage Paths
-UPLOAD_DIR=data/uploads
-VECTOR_DIR=data/vectors
-SQLITE_DB_PATH=data/hamigenz.db
+# Note: Storage directories are managed under backend/data/ (uploads, vectors, hamigenz.db).
 ```
 
 ---
@@ -245,7 +250,7 @@ SQLITE_DB_PATH=data/hamigenz.db
 hamiGenZ maintains a strict test-driven development workflow:
 
 ```bash
-# Run the full backend test suite (282 tests)
+# Run the full backend test suite
 pytest tests/ -v
 
 # Run OKF specification conformance validator directly
