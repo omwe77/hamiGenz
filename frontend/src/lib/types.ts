@@ -219,6 +219,7 @@ export interface FieldExplanation {
 }
 
 export interface FormFieldValue {
+  id: string;
   label: string;
   value: string;
   page?: number;

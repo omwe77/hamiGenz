@@ -12,6 +12,8 @@ import {
   searchDocumentText,
   extractActions,
   submitFeedback,
+  setDemoModeState,
+  DEMO_SAMPLE_DOCS,
 } from "@/lib/hamigenz-api";
 import type {
   ViewerPage,
@@ -41,7 +43,37 @@ const EXAMPLE_PROMPTS = [
   { tag: "📋 Checklist", text: "What do I need to submit?" },
 ];
 
+const DEMO_SAMPLES: DocumentInfo[] = DEMO_SAMPLE_DOCS.map((d) => ({
+  doc_id: d.docId,
+  filename: d.filename,
+  upload_date: "2026-06-01T00:00:00Z",
+  page_count: d.pageCount,
+  language_hint: "english",
+  status: "processed",
+}));
+
 export default function WorkspacePage() {
+  // ── Demo mode state. React state for the UI; the module-level `demoMode`
+  // in hamigenz-api.ts is the source of truth for the API functions so the
+  // demo-aware branches (listDocuments / getDocumentViewer / ...) stay in
+  // sync with what the user sees. Both are kept in sync here.
+  const [demoMode, setDemoMode] = useState(true);
+
+  // ── Demo mode toggle button (top bar) ────────────────────────────────
+  const toggleDemoMode = () => {
+    setDemoModeState(prev => !prev);
+    setDemoMode(prev => {
+      const next = !prev;
+      if (next) {
+        setDocuments(DEMO_SAMPLES);
+        setActiveDocId("demo-registration-form");
+      } else {
+        listDocuments().then(setDocuments).catch(() => {});
+      }
+      return next;
+    });
+  };
+
   // ── Explain state ───────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"explain" | "document" | "split">("explain");
   const [isDragging, setIsDragging] = useState(false);
@@ -54,8 +86,8 @@ export default function WorkspacePage() {
   const [error, setError] = useState<string | null>(null);
 
   // ── Document state ──────────────────────────────────────────────────
-  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
-  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<DocumentInfo[]>(DEMO_SAMPLES);
+  const [activeDocId, setActiveDocId] = useState<string | null>("demo-registration-form");
   const [viewerData, setViewerData] = useState<{ docId: string | null; pages: ViewerPage[] }>({
     docId: null,
     pages: [],
@@ -99,12 +131,13 @@ export default function WorkspacePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  // ── Load documents once ─────────────────────────────────────────────
+  // Load documents on mount if starting in live mode
   useEffect(() => {
-    listDocuments().then(setDocuments).catch(() => {});
-  }, []);
+    if (!demoMode) {
+      listDocuments().then(setDocuments).catch(() => {});
+    }
+  }, [demoMode]);
 
-  // ── Active doc → load viewer ────────────────────────────────────────
   useEffect(() => {
     if (!activeDocId) {
       return;
@@ -286,7 +319,6 @@ export default function WorkspacePage() {
     }
     setHighlightPage(citation.page);
     setActiveSearchMatchIdx(null);
-    // Wait for the document panel to render/mount, then scroll smoothly
     setTimeout(() => {
       const pageEl = document.getElementById(`page-${citation.page}`);
       pageEl?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -441,7 +473,7 @@ export default function WorkspacePage() {
             )}
             <button
               type="button"
-              style={styles.headerUploadBtn}
+              style={{ ...styles.headerUploadBtn, marginLeft: "var(--space-2)" }}
               onClick={() => fileInputRef.current?.click()}
               aria-label="Upload document"
             >
@@ -451,6 +483,17 @@ export default function WorkspacePage() {
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
               <span>Upload Doc</span>
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.headerUploadBtn, backgroundColor: demoMode ? "var(--color-accent)" : "transparent", color: demoMode ? "#ffffff" : "var(--color-text-secondary)" }}
+              onClick={toggleDemoMode}
+              aria-label={demoMode ? "Switch to Live Mode" : "Switch to Demo Mode"}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+                <span>{demoMode ? "Live" : "Demo"} Mode</span>
+              </span>
             </button>
           </div>
         </div>
@@ -663,7 +706,7 @@ export default function WorkspacePage() {
               />
 
               {/* Reference-filled form preview */}
-              <FillPanel docId={activeDocId} />
+              <FillPanel docId={activeDocId} demoMode={demoMode} />
 
               <p style={styles.hint}>
                 Ctrl+Enter to explain · Select text in the Document tab to explain it
@@ -764,7 +807,7 @@ export default function WorkspacePage() {
                         type="button"
                         style={styles.emptyPromptBtn}
                         onClick={() => {
-                          setInputText("मालपोत कार्यालयमा जग्गा रजिष्ट्रेशन लिखत पारित गर्दा लाग्ने सेवा शुल्क र आवश्यक कागजातहरुको सूची।");
+                          setInputText("मालपोत कार्यालयमा जग्गा रजिष्ट्रेशन लिखत पारित गर्दा लाग्ने सेवा शुल्क र आवश्यक कागजातहरुको सूची.");
                         }}
                       >
                         <span>📋 मालपोत लिखत कागजात</span>
@@ -1126,7 +1169,7 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div style={{ flex: "1 1 30%", minWidth: 0 }}>
-                    <FillPanel docId={activeDocId} />
+                    <FillPanel docId={activeDocId} demoMode={demoMode} />
                   </div>
                 </div>
               )}
@@ -1990,10 +2033,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "4px",
     padding: "4px 10px",
     background: "var(--color-bg-alt)",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-full)",
-    fontSize: "var(--text-xs)",
-    maxWidth: "180px",
   },
   headerDocName: {
     overflow: "hidden",
