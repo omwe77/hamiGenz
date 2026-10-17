@@ -1,8 +1,7 @@
 # hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
 
-> A local-first, privacy-centric AI platform engineered to make complex Nepali administrative notices, government forms, and civil documents universally understandable. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance and zero hallucinations.
+> A local-first, privacy-centric AI platform engineered to make complex Nepali administrative notices, government forms, and civil documents universally understandable. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance with evidence-grounded citations and contradiction detection.
 
-[![Tests](https://img.shields.io/badge/Tests-282%20Passed-2ecc71?style=for-the-badge)](https://github.com/omwe77/hamiGenz/tree/main/tests)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org)
@@ -119,7 +118,7 @@ hamiGenZ implements the **Open Knowledge Format (OKF v0.2)** specification as it
 
 5. **Verification & Grounding (`backend/verification.py`):**
    - Secondary validation pass comparing LLM output against retrieved source chunks.
-   - Rejects unsupported hallucinations: if evidence does not substantiate a claim, the system responds: *"I could not verify this from an authoritative source."*
+   - Rejects unsupported assertions: if evidence does not substantiate a claim, the system responds: *"I could not verify this from an authoritative source."*
 
 ---
 
@@ -270,6 +269,12 @@ npm run build
 - **No Direct Filing:** hamiGenZ provides explanatory guidance and verified criteria; it does not directly submit citizen applications to government portals.
 
 ---
+
+## 9. Known Limitations & Operational Bounds
+
+- **OCR on Degraded Documents:** Devanagari OCR accuracy can drop on heavily blurred, torn, or low-contrast physical paper scans. In such cases, the system flags lower extraction confidence and prompts for manual review.
+- **Hardware Requirements for Local LLMs:** Running fully local 8B models (e.g. `qwen2.5:7b` or `qwen3:8b`) requires at least 8 GB of unified memory / RAM.
+- **Civic Clarification Scope:** hamiGenZ provides educational and informational explanations to help citizens navigate administrative processes. It is not an official government determination, legal certification, or statutory counsel. Always verify critical procedures directly with the issuing government authority.
 
 ## 10. License & Attribution
 
