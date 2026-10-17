@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -61,17 +61,30 @@ export default function WorkspacePage() {
 
   // ── Demo mode toggle button (top bar) ────────────────────────────────
   const toggleDemoMode = () => {
-    setDemoModeState(prev => !prev);
-    setDemoMode(prev => {
-      const next = !prev;
-      if (next) {
-        setDocuments(DEMO_SAMPLES);
-        setActiveDocId("demo-registration-form");
-      } else {
-        listDocuments().then(setDocuments).catch(() => {});
-      }
-      return next;
-    });
+    const nextMode = !demoMode;
+    // 1. Synchronize API module demo state
+    setDemoModeState(nextMode);
+    // 2. Pure state transition for demoMode UI
+    setDemoMode(nextMode);
+
+    // 3. Explicit event-handler logic keeping documents and activeDoc synchronized
+    if (nextMode) {
+      setDocuments(DEMO_SAMPLES);
+      setActiveDocId("demo-registration-form");
+    } else {
+      setActiveDocId(null);
+      listDocuments()
+        .then((docs) => {
+          setDocuments(docs);
+          if (docs.length > 0) {
+            setActiveDocId(docs[0].doc_id);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load live documents:", err);
+          setDocuments([]);
+        });
+    }
   };
 
   // ── Explain state ───────────────────────────────────────────────────
@@ -180,8 +193,7 @@ export default function WorkspacePage() {
   }, [activeDocId, searchQuery]);
 
   // ── Core explain runner ─────────────────────────────────────────────
-  const runExplain = useCallback(
-    async (
+  const runExplain = async (
       text: string,
       level: ExplainLevel,
       lang: TargetLang,
@@ -199,11 +211,9 @@ export default function WorkspacePage() {
       } finally {
         setLoading(false);
       }
-    },
-    []
-  );
+    };
 
-  const handleExplain = useCallback(() => {
+  const handleExplain = () => {
     if (!inputText.trim() || loading) return;
     runExplain(
       inputText.trim(),
@@ -212,11 +222,10 @@ export default function WorkspacePage() {
       question.trim() || undefined,
       activeDocId || undefined
     );
-  }, [inputText, loading, explainLevel, targetLang, question, activeDocId, runExplain]);
+  };
 
   // ── Explain the selected text directly (fresh values, no stale state) ──
-  const explainFromSelection = useCallback(
-    (text: string) => {
+  const explainFromSelection = (text: string) => {
       if (!text.trim()) return;
       setActiveTab("explain");
       setInputText(text);
@@ -227,12 +236,10 @@ export default function WorkspacePage() {
         question.trim() || undefined,
         activeDocId || undefined
       );
-    },
-    [explainLevel, targetLang, question, activeDocId, runExplain]
-  );
+    };
 
   // ── Upload ──────────────────────────────────────────────────────────
-  const handleFile = useCallback(async (file: File) => {
+  const handleFile = async (file: File) => {
     try {
       const res = await uploadDocument(file);
       setDocuments((prev) => [
@@ -256,37 +263,30 @@ export default function WorkspacePage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  };
 
-  const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) handleFile(file);
-    },
-    [handleFile]
-  );
+    };
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
-  }, []);
+  };
 
-  const handleDragLeave = useCallback(() => {
+  const handleDragLeave = () => {
     setIsDragging(false);
-  }, []);
+  };
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
       const file = e.dataTransfer.files?.[0];
       if (file) handleFile(file);
-    },
-    [handleFile]
-  );
+    };
 
-  const handleDeleteDoc = useCallback(
-    async (docId: string) => {
+  const handleDeleteDoc = async (docId: string) => {
       try {
         await deleteDocument(docId);
         setDocuments((prev) => prev.filter((d) => d.doc_id !== docId));
@@ -301,17 +301,15 @@ export default function WorkspacePage() {
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
-    },
-    [activeDocId]
-  );
+    };
 
   // ── Text selected in viewer → offer to explain ──────────────────────
-  const handleTextHighlight = useCallback((text: string) => {
+  const handleTextHighlight = (text: string) => {
     setSelectedText(text);
-  }, []);
+  };
 
   // ── Citation click → jump to page + highlight evidence ─────────────
-  const handleCitationClick = useCallback((citation: Citation) => {
+  const handleCitationClick = (citation: Citation) => {
     if (typeof window !== "undefined" && window.innerWidth >= 1100) {
       setActiveTab("split");
     } else {
@@ -323,10 +321,10 @@ export default function WorkspacePage() {
       const pageEl = document.getElementById(`page-${citation.page}`);
       pageEl?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
-  }, []);
+  };
 
   // ── Search match click → jump to that match ────────────────────────
-  const handleSearchMatchClick = useCallback((idx: number) => {
+  const handleSearchMatchClick = (idx: number) => {
     setActiveSearchMatchIdx(idx);
     const page = searchResults[idx]?.page;
     if (page) {
@@ -336,29 +334,29 @@ export default function WorkspacePage() {
           ?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 60);
     }
-  }, [searchResults]);
+  };
 
-  const goToMatch = useCallback((idx: number | null) => {
+  const goToMatch = (idx: number | null) => {
     setActiveSearchMatchIdx(idx);
-  }, []);
+  };
 
   // ── Clear highlights ────────────────────────────────────────────────
-  const clearHighlights = useCallback(() => {
+  const clearHighlights = () => {
     setHighlightPage(null);
     setSelectedText("");
     setActiveSearchMatchIdx(null);
-  }, []);
+  };
 
   // ── Page jump ───────────────────────────────────────────────────────
-  const jumpToPage = useCallback((pageNum: number) => {
+  const jumpToPage = (pageNum: number) => {
     setHighlightPage(null);
     document
       .getElementById(`page-${pageNum}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  };
 
   // ── Action extraction (PR-009): from pasted text or active document ──
-  const handleExtractActions = useCallback(() => {
+  const handleExtractActions = () => {
     if (actionsLoading) return;
     const sourceText = inputText.trim();
     if (!sourceText && !activeDocId) return;
@@ -370,11 +368,10 @@ export default function WorkspacePage() {
         setActionsError(e instanceof Error ? e.message : String(e))
       )
       .finally(() => setActionsLoading(false));
-  }, [actionsLoading, inputText, activeDocId, question]);
+  };
 
   // ── Submit a thumbs up/down rating for the current explanation ─────────
-  const handleFeedback = useCallback(
-    async (rating: number) => {
+  const handleFeedback = async (rating: number) => {
       if (!explanation || feedback.confirmed) return;
       try {
         const res = await submitFeedback(
@@ -390,20 +387,15 @@ export default function WorkspacePage() {
       } catch {
         // Feedback is best-effort; never block the UX on it.
       }
-    },
-    [explanation, activeDocId, feedback.confirmed]
-  );
+    };
 
   // Keyboard shortcut: Ctrl+Enter → explain ────────────────────────
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         handleExplain();
       }
-    },
-    [handleExplain]
-  );
+    };
 
   const activeDoc = documents.find((d) => d.doc_id === activeDocId);
   const processingStatus = loading

@@ -1,25 +1,8 @@
-/**
- * Reference-filled form preview panel.
- *
- * Lets the user request an example of how to complete an uploaded form:
- *  - detect form fields for the active document
- *  - type answers into each detected field
- *  - preview the original document page with example answers composited
- *    exactly onto their fields (original layout preserved)
- *  - download the composited PNG
- *
- * If field detection or alignment is unreliable, the panel shows a
- * field-by-field guide instead of a misleading image.
- *
- * Usage: <FillPanel docId={docId} />
- */
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { detectFormFields, setFormFields, getFilledImage } from "../../lib/hamigenz-api";
-import type { FormDetectResponse, FormField, FormFieldValue } from "../../lib/types";
+import type { FormField, FormFieldValue } from "../../lib/types";
 
-// The blank registration form is a public asset served at the site root
-// (/blank_form.png). It is composited on with the demo answers. Using the
-// public URL keeps it working in both development and production builds.
+// The blank registration form is a public asset served at the site root (/blank_form.png).
 const BLANK_FORM_URL = "/blank_form.png";
 
 type Props = {
@@ -27,11 +10,13 @@ type Props = {
   demoMode: boolean;
 };
 
-function b64ToBlob(b64: string, mime = "image/png"): Blob {
-  const bin = atob(b64.split(",")[1]);
+function dataUrlToBlob(dataUrl: string): Blob {
+  const parts = dataUrl.split(",");
+  const base64 = parts.length > 1 ? parts[1] : parts[0];
+  const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
+  return new Blob([bytes], { type: "image/png" });
 }
 
 interface FieldEditor {
@@ -64,39 +49,62 @@ const DEMO_VALUES: FormFieldValue[] = [
   { label: "Phone number", value: "9841012345", page: 1, id: "phone" },
 ];
 
-/** Render edited values onto a canvas, returning a data URL. */
-function renderPreviewCanvas(pngDataUrl: string, values: FormFieldValue[], width = 800, height = 600): string {
-  const img = new Image();
-  img.src = pngDataUrl;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0, width, height);
+/** Asynchronously render edited values onto a canvas with a blank form background, returning a full PNG data URL. */
+function renderPreviewCanvas(
+  imageSrc: string,
+  values: FormFieldValue[],
+  width = 800,
+  height = 600
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Unable to create canvas 2D context"));
+          return;
+        }
 
-  // Field positions (based on original form layout)
-  const fieldPositions: Record<string, { x: number; y: number; w: number; h: number }> = {
-    "full-name": { x: 300, y: 80, w: 240, h: 34 },
-    "fathers-name": { x: 300, y: 130, w: 240, h: 34 },
-    "dob": { x: 300, y: 180, w: 240, h: 34 },
-    "district": { x: 300, y: 230, w: 240, h: 34 },
-    "nationality": { x: 300, y: 280, w: 240, h: 34 },
-    "present-address": { x: 300, y: 330, w: 240, h: 34 },
-    "permanent-address": { x: 300, y: 380, w: 240, h: 34 },
-    "phone": { x: 300, y: 430, w: 240, h: 34 },
-  };
+        // Draw blank form template background
+        ctx.drawImage(img, 0, 0, width, height);
 
-  const font = "14px Arial";
-  for (const v of values) {
-    const pos = fieldPositions[v.id];
-    if (!pos) continue;
-    ctx.fillStyle = "#1a1a2e";
-    ctx.font = font;
-    ctx.textAlign = "left";
-    ctx.fillText(v.value, pos.x + 5, pos.y + 24);
-  }
+        // Field positions matching blank_form.png layout
+        const fieldPositions: Record<string, { x: number; y: number; w: number; h: number }> = {
+          "full-name": { x: 300, y: 80, w: 240, h: 34 },
+          "fathers-name": { x: 300, y: 130, w: 240, h: 34 },
+          "dob": { x: 300, y: 180, w: 240, h: 34 },
+          "district": { x: 300, y: 230, w: 240, h: 34 },
+          "nationality": { x: 300, y: 280, w: 240, h: 34 },
+          "present-address": { x: 300, y: 330, w: 240, h: 34 },
+          "permanent-address": { x: 300, y: 380, w: 240, h: 34 },
+          "phone": { x: 300, y: 430, w: 240, h: 34 },
+        };
 
-  return canvas.toDataURL("image/png");
+        const font = "14px Arial, sans-serif";
+        for (const v of values) {
+          const pos = fieldPositions[v.id];
+          if (!pos) continue;
+          ctx.fillStyle = "#1a1a2e";
+          ctx.font = font;
+          ctx.textAlign = "left";
+          ctx.fillText(v.value, pos.x + 8, pos.y + 22);
+        }
+
+        resolve(canvas.toDataURL("image/png"));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => {
+      reject(new Error(`Failed to load background template image from ${imageSrc}`));
+    };
+    img.src = imageSrc;
+  });
 }
 
 export default function FillPanel({ docId, demoMode }: Props) {
@@ -104,16 +112,32 @@ export default function FillPanel({ docId, demoMode }: Props) {
   const [values, setValues] = useState<FormFieldValue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ png: string; width: number; height: number } | null>(null);
+  const [preview, setPreview] = useState<{ dataUrl: string; width: number; height: number } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  // Derived demo mode: the demo toggle is on AND the sample registration form
-  // (demo-registration-form) is the active document, so we can bypass the
-  // backend and render the synthetic sample preview.
-  const isDemoMode = demoMode && docId === "demo-registration-form";
+  const isDemoMode = Boolean(demoMode && docId === "demo-registration-form");
   const [showGuide, setShowGuide] = useState(false);
 
-  // 1. Detect form fields on mount.
+  // Sequence ref to ensure stale async renders never overwrite newer edits
+  const renderSeqRef = useRef(0);
+
+  const updateDemoPreview = async (currentValues: FormFieldValue[]) => {
+    const seq = ++renderSeqRef.current;
+    try {
+      const dataUrl = await renderPreviewCanvas(BLANK_FORM_URL, currentValues);
+      if (seq === renderSeqRef.current) {
+        setPreview({ dataUrl, width: 800, height: 600 });
+        setError(null);
+      }
+    } catch (e) {
+      if (seq === renderSeqRef.current) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("Failed to render demo preview:", msg);
+        setError(`Preview error: ${msg}`);
+      }
+    }
+  };
+
+  // 1. Detect form fields on mount / docId change.
   useEffect(() => {
     let cancelled = false;
     if (!docId) {
@@ -124,26 +148,15 @@ export default function FillPanel({ docId, demoMode }: Props) {
         setLoading(true);
         setError(null);
         if (isDemoMode) {
-          // Demo mode: return static sample form fields and initial preview.
-          const demoFields = [
-            { id: "full-name", label: "Full name", page: 1, demoValue: "GIRIJA PRESIDENT" },
-            { id: "fathers-name", label: "Father's name", page: 1, demoValue: "RAMESH GIRIJA" },
-            { id: "dob", label: "Date of birth", page: 1, demoValue: "01-01-1990" },
-            { id: "district", label: "District", page: 1, demoValue: "Kathmandu" },
-            { id: "nationality", label: "Nationality", page: 1, demoValue: "Nepali" },
-            { id: "present-address", label: "Present address", page: 1, demoValue: "Kathmandu 44600, Nepal" },
-            { id: "permanent-address", label: "Permanent address", page: 1, demoValue: "Kathmandu 44600, Nepal" },
-            { id: "phone", label: "Phone number", page: 1, demoValue: "9841234567" },
-          ];
+          // Demo mode: return static sample form fields and trigger initial canvas render
+          const demoFields = DEMO_FIELDS.map((f) => ({
+            ...f,
+            demoValue: DEMO_VALUES.find((v) => v.id === f.id)?.value ?? "",
+          }));
           setFields(demoFields);
-          const initialValues = demoFields.map(f => ({ label: f.label, value: f.demoValue, page: f.page, id: f.id }));
+          const initialValues = demoFields.map((f) => ({ label: f.label, value: f.demoValue, page: f.page, id: f.id }));
           setValues(initialValues);
-          try {
-            const rendered = renderPreviewCanvas(BLANK_FORM_URL, initialValues);
-            setPreview({ png: rendered.split(",")[1], width: 800, height: 600 });
-          } catch (e) {
-            console.error("Failed to render demo preview:", e);
-          }
+          updateDemoPreview(initialValues);
         } else {
           const res = await detectFormFields(undefined, docId ?? undefined);
           if (cancelled) return;
@@ -177,9 +190,6 @@ export default function FillPanel({ docId, demoMode }: Props) {
     setSaving(true);
     try {
       await setFormFields(docId ?? "", values);
-      setSaved(true);
-      await new Promise((r) => setTimeout(r, 400));
-      setSaved(false);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -192,17 +202,14 @@ export default function FillPanel({ docId, demoMode }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const isDemoMode = demoMode && docId === "demo-registration-form";
       if (isDemoMode) {
-        // Demo mode: use canvas to render edited values onto blank form.
-        const rendered = renderPreviewCanvas(BLANK_FORM_URL, values);
-        setPreview({ png: rendered.split(",")[1], width: 800, height: 600 });
+        await updateDemoPreview(values);
         return;
       }
       const blob = await getFilledImage(docId ?? "", 1, values);
       const reader = new FileReader();
       reader.onload = () => {
-        setPreview({ png: reader.result as string, width: 0, height: 0 });
+        setPreview({ dataUrl: reader.result as string, width: 800, height: 600 });
       };
       reader.readAsDataURL(blob);
     } catch (e) {
@@ -215,13 +222,13 @@ export default function FillPanel({ docId, demoMode }: Props) {
 
   const handleDownload = () => {
     if (!preview) return;
-    const blob = b64ToBlob(preview.png);
+    const blob = dataUrlToBlob(preview.dataUrl);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = demoMode && docId === "demo-registration-form"
+    a.download = isDemoMode
       ? "registration_form_sample_filled.png"
-      : `form_filled_p${1}.png`;
+      : "form_filled_p1.png";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -286,12 +293,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
                     );
                     setValues(next);
                     if (isDemoMode) {
-                      try {
-                        const rendered = renderPreviewCanvas(BLANK_FORM_URL, next);
-                        setPreview({ png: rendered.split(",")[1], width: 800, height: 600 });
-                      } catch (err) {
-                        console.error("Failed to update demo preview:", err);
-                      }
+                      updateDemoPreview(next);
                     }
                   }}
                   placeholder="Type answer here…"
@@ -326,7 +328,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
           {preview && (
             <div style={styles.previewBox}>
               <img
-                src={`data:image/png;base64,${preview.png}`}
+                src={preview.dataUrl}
                 alt="Filled form preview"
                 style={styles.previewImg}
               />
@@ -342,7 +344,7 @@ export default function FillPanel({ docId, demoMode }: Props) {
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────
+// ── Styles ──────────────────────────────────────────────────────
 const styles: Record<string, React.CSSProperties> = {
   root: {
     display: "flex",
