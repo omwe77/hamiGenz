@@ -351,7 +351,7 @@ export default function Home() {
                     color: activeTab === "original" ? "var(--color-accent)" : "var(--color-text-secondary)",
                   }}
                 >
-                  Original document notice
+                  Sample notice excerpt
                 </button>
               </div>
             </div>
@@ -384,7 +384,7 @@ export default function Home() {
                         राहदानी नवीकरणका लागि आवश्यक कागजात र शुल्क
                       </h3>
                       <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)" }}>
-                        Passport Renewal Notice &middot; Plain summary extracted with page citations
+                        Passport Renewal (Sample) &middot; Illustrative plain-language breakdown with page citations
                       </p>
                     </div>
 
@@ -399,7 +399,7 @@ export default function Home() {
                         border: "1px solid var(--color-verified-border)",
                       }}
                     >
-                      3 passages verified
+                      3 demo citations
                     </div>
                   </div>
 
@@ -501,7 +501,7 @@ export default function Home() {
                           color: "var(--color-citation-text)",
                         }}
                       >
-                        Verified Source Passage &middot; Page 1, Section 2.1
+                        Sample Grounded Passage &middot; Page 1, Section 2.1
                       </span>
                       <span
                         style={{
@@ -539,7 +539,7 @@ export default function Home() {
                           color: "var(--color-nepal-red)",
                         }}
                       >
-                        नेपाल सरकार &middot; राहदानी विभाग
+                        नेपाल सरकार &middot; राहदानी विभाग (नमूना प्रारूप)
                       </span>
                       <div
                         style={{
@@ -559,7 +559,7 @@ export default function Home() {
                         border: "1px solid var(--color-border)",
                       }}
                     >
-                      Official Notice Excerpt
+                      Sample Notice Excerpt (Illustrative)
                     </span>
                   </div>
 
