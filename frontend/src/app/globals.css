@@ -392,7 +392,33 @@ a:hover { color: var(--color-accent-hover); }
   transform: translateY(0);
 }
 
-/* ── Skip-to-content link (keyboard / screen-reader accessibility) */
+/* ── Optional thin global scroll-progress indicator ───────────────────────
+   One DOM node (transform: scaleX), GPU-friendly. Hidden under reduced
+   motion — the content remains fully readable. */
+
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  z-index: 200;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: none;
+}
+.scroll-progress__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--color-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--duration-slower) var(--ease-out);
+}
+
 .skip-link {
   position: absolute;
   top: -100%;

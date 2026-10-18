@@ -1,10 +1,97 @@
 "use client";
 
 import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { isReducedMotion, drawTrail, useEntranceReveals } from "@/lib/motion";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"simplified" | "original">("simplified");
+  const heroRef = useRef<HTMLElement>(null);
+  const trailPathRef = useRef<SVGPathElement>(null);
+  const progressFillRef = useRef<HTMLDivElement>(null);
+  const totalLengthRef = useRef(0);
+  const rafRef = useRef(0);
+  const [heroProgress, setHeroProgress] = useState(0);
+
+  // ── Homepage motion wiring: reduced-motion init, evidence trail progress,
+  //     and the global scroll-progress indicator. Strict Mode + Next.js
+  //     client navigation safe (all listeners cleaned up on unmount/route). ──
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    initReducedMotion();
+
+    const pathEl = trailPathRef.current;
+    if (pathEl) totalLengthRef.current = Math.max(0, pathEl.getTotalLength());
+
+    const hero = heroRef.current;
+    if (!hero) return;
+    let mounted = true;
+    const tick = () => {
+      if (!mounted) return;
+      const rect = hero.getBoundingClientRect();
+      const top = rect.top + window.scrollY;
+      const bottom = top + rect.height;
+      const visible = Math.max(0, Math.min(window.innerHeight, bottom) - Math.max(0, top));
+      const total = Math.max(0, bottom - top);
+      setHeroProgress(
+        total === 0 ? 0 : Math.min(1, Math.max(0, (visible - window.innerHeight * 0.35) / total))
+      );
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    tick();
+    window.addEventListener("scroll", tick, { passive: true });
+    window.addEventListener("resize", tick);
+    return () => {
+      mounted = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      window.removeEventListener("scroll", tick);
+      window.removeEventListener("resize", tick);
+    };
+  }, []);
+
+  // Draw the evidence trail as the hero scroll progress changes (transform/
+  // opacity only; no layout recalculation).
+  useEffect(() => {
+    if (trailPathRef.current && totalLengthRef.current > 0) {
+      drawTrail(trailPathRef.current, heroProgress, totalLengthRef.current);
+    }
+  }, [heroProgress]);
+
+  // Entrance reveals for the capability cards (plus the sample sandbox
+  // explanation rows), driven by IntersectionObserver.
+  useEntranceReveals("[data-motion-reveal]", {
+    rootMargin: "0px 0px -18% 0px",
+    threshold: 0.12,
+    staggerDelayMs: 70,
+  });
+
+  // Thin global scroll-progress indicator (header/brand orientation).
+  useEffect(() => {
+    if (isReducedMotion()) return;
+    const fill = progressFillRef.current;
+    if (!fill) return;
+    let raf = 0;
+    const tick = () => {
+      const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const p = scrollHeight > 0 ? Math.min(1, window.scrollY / scrollHeight) : 0;
+      fill.style.transform = `scaleX(${p})`;
+      fill.style.webkitTransform = `scaleX(${p})`;
+      raf = 0;
+    };
+    const schedule = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, []);
 
   return (
     <div
@@ -18,6 +105,84 @@ export default function Home() {
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
+
+      {/* ── Homepage motion: hero entrance + evidence trail + sample stagger ─ */}
+      <style>{`
+        .hero-motion { position: relative; }
+
+        /* Restrained hero word-group reveal: opacity + small translateY. */
+        .hero-intro {
+          opacity: 0;
+          transform: translateY(14px);
+          animation: heroFadeUp .75s cubic-bezier(.22,1,.36,1) both;
+        }
+        .hero-intro > * { animation-name: heroFadeUp; animation-fill-mode: both; }
+        .hero-intro > .hero-entry--1 { animation-delay: .06s; }
+        .hero-intro > .hero-entry--2 { animation-delay: .16s; }
+        .hero-intro > .hero-entry--3 { animation-delay: .30s; }
+
+        @keyframes heroFadeUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Sample demonstration: measured stagger of the sandbox sub-parts. */
+        .hero-sandbox {
+          opacity: 0;
+          animation: heroFadeUp .6s cubic-bezier(.22,1,.32,1) both;
+        }
+        .hero-sandbox > * { animation-name: heroFadeUp; animation-fill-mode: both; }
+        .hero-sandbox > .sandbox-part--1 { animation-delay: .25s; }
+        .hero-sandbox > .sandbox-part--2 { animation-delay: .38s; }
+        .hero-sandbox > .sandbox-part--3 { animation-delay: .52s; }
+
+        /* The signature evidence trail: a scroll-drawn SVG ribbon connecting the
+           three workflow landmarks — document input (left), plain-language
+           interpretation (centre) and supporting source evidence (right). */
+        .hero-trail-wrap {
+          position: absolute;
+          left: 0; right: 0; bottom: calc(var(--space-8) * -1);
+          height: 72px;
+          pointer-events: none;
+          overflow: hidden;
+        }
+        .hero-trail {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          pointer-events: none;
+        }
+        .hero-trail__path {
+          fill: none;
+          stroke: var(--color-accent);
+          stroke-width: 1.5;
+          stroke-linecap: round;
+          stroke-dasharray: 2100;
+          stroke-dashoffset: 2100;
+          vector-effect: non-scaling-stroke;
+        }
+        .hero-trail__node {
+          position: absolute;
+          top: 63.9%;
+          transform: translateX(-50%);
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          background: var(--color-accent);
+          border: 1.5px solid #ffffff;
+          box-shadow: 0 0 0 1px rgba(200, 82, 11, 0.18);
+          pointer-events: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .hero-intro, .hero-sandbox { animation: none; opacity: 1 !important; transform: none !important; }
+          .hero-trail__path { stroke-dashoffset: 0; stroke-dasharray: 0; }
+        }
+      `}</style>
+      <div className="scroll-progress">
+        <div className="scroll-progress__fill" ref={progressFillRef} aria-hidden="true" />
+      </div>
 
       {/* ── Top Navigation ─────────────────────────────────── */}
       <header
@@ -154,6 +319,7 @@ export default function Home() {
         {/* ── Hero Section ─────────────────────────────────── */}
         <section
           style={{
+            position: "relative",
             padding: "var(--space-16) var(--space-6) var(--space-12)",
             maxWidth: "var(--max-width)",
             margin: "0 auto",
@@ -582,12 +748,50 @@ export default function Home() {
                       color: "var(--color-text-primary)",
                     }}
                   >
-                    जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र विभागबाट
-                    द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।
+                    जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र
+                    विभागबाट द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।
                   </p>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {/* Evidence trail: scroll-drawn SVG ribbon tying the 3 workflow steps */}
+          <div className="hero-trail-wrap">
+            <svg
+              className="hero-trail"
+              viewBox="0 0 1600 72"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                <linearGradient id="trailGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#c8520b" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#c8520b" stopOpacity="0.28" />
+                </linearGradient>
+              </defs>
+              <path
+                className="hero-trail__path"
+                d="M 64 46 C 520 46, 760 70, 860 70 C 960 70, 1536 46 1536 46"
+                ref={trailPathRef}
+                stroke="url(#trailGrad)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                fill="none"
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+            <span
+              className="hero-trail__node"
+              style={{ left: "4%", top: "63.9%" }}
+            />
+            <span
+              className="hero-trail__node"
+              style={{ left: "53.75%", top: "97.2%" }}
+            />
+            <span
+              className="hero-trail__node"
+              style={{ left: "96%", top: "63.9%" }}
+            />
           </div>
         </section>
 
@@ -676,7 +880,7 @@ export default function Home() {
           >
             {/* Capability 1: Read */}
             <div
-              className="editorial-card"
+              className="editorial-card reveal data-motion-reveal"
               style={{
                 padding: "var(--space-6)",
                 display: "flex",
@@ -729,7 +933,7 @@ export default function Home() {
 
             {/* Capability 2: Understand */}
             <div
-              className="editorial-card"
+              className="editorial-card reveal data-motion-reveal"
               style={{
                 padding: "var(--space-6)",
                 display: "flex",
@@ -778,7 +982,7 @@ export default function Home() {
 
             {/* Capability 3: Verify */}
             <div
-              className="editorial-card"
+              className="editorial-card reveal data-motion-reveal"
               style={{
                 padding: "var(--space-6)",
                 display: "flex",
