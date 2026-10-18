@@ -5,58 +5,82 @@ import { useRef, useEffect, useState } from "react";
 interface Milestone {
   id: string;
   label: string;
-  pct: number; // 0-100 along the trail
+  pct: number; // percentage along the trail (matches card centers: 16.67%, 50%, 83.33%)
 }
 
 const MILESTONES: Milestone[] = [
-  { id: "read",       label: "Read",       pct: 10 },
-  { id: "understand", label: "Understand", pct: 50 },
-  { id: "verify",     label: "Verify",     pct: 90 },
+  { id: "read",       label: "01 Read",       pct: 16.67 },
+  { id: "understand", label: "02 Understand", pct: 50.0 },
+  { id: "verify",     label: "03 Verify",     pct: 83.33 },
 ];
 
 interface EvidenceTrailProps {
-  /** 0-1 scroll progress for the section containing the trail */
+  /** 0-1 scroll progress through the capabilities section */
   progress: number;
 }
 
 export default function EvidenceTrail({ progress }: EvidenceTrailProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [pathLength, setPathLength] = useState(0);
+  const pathRef = useRef<SVGPathElement>(null);
+  const [pathLength, setPathLength] = useState(1000);
 
-  // Measure path length after mount
+  // Measure SVG path length accurately after mount
   useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const path = svg.querySelector("path");
-    if (path) setPathLength(path.getTotalLength());
+    if (pathRef.current) {
+      const len = pathRef.current.getTotalLength();
+      if (len > 0) setPathLength(len);
+    }
   }, []);
 
-  const drawn = pathLength * Math.min(1, Math.max(0, progress));
-  const dashOffset = pathLength - drawn;
+  const clampedProgress = Math.min(1, Math.max(0, progress));
+  const drawn = pathLength * clampedProgress;
+  const dashOffset = Math.max(0, pathLength - drawn);
 
-  const activeMilestones = MILESTONES.filter((m) => (m.pct / 100) <= progress);
+  const activeMilestones = MILESTONES.filter((m) => (m.pct / 100) <= clampedProgress + 0.05);
 
   return (
     <div className="evidence-trail-container" aria-hidden="true">
-      <svg ref={svgRef} className="evidence-trail-svg" preserveAspectRatio="none">
+      <svg
+        ref={svgRef}
+        viewBox="0 0 1000 64"
+        className="evidence-trail-svg"
+        preserveAspectRatio="none"
+        style={{ overflow: "visible" }}
+      >
+        <defs>
+          <linearGradient id="evidenceTrailGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#c8520b" stopOpacity="0.4" />
+            <stop offset="50%" stopColor="#c8520b" stopOpacity="1" />
+            <stop offset="100%" stopColor="#ea580c" stopOpacity="1" />
+          </linearGradient>
+          <filter id="evidenceGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#c8520b" floodOpacity="0.45" />
+          </filter>
+        </defs>
+
         {/* Ghost track */}
         <path
-          d="M 5% 50% C 20% 20%, 40% 80%, 50% 50% S 80% 20%, 95% 50%"
+          d="M 60 32 C 110 32, 130 32, 167 32 C 280 10, 380 54, 500 32 C 620 10, 720 54, 833 32 C 870 32, 910 32, 940 32"
           fill="none"
           stroke="var(--color-border)"
-          strokeWidth="1.5"
-          strokeDasharray="4 4"
+          strokeWidth="2"
+          strokeDasharray="6 6"
+          vectorEffect="non-scaling-stroke"
         />
-        {/* Animated fill */}
+
+        {/* Animated fill stroke */}
         <path
-          d="M 5% 50% C 20% 20%, 40% 80%, 50% 50% S 80% 20%, 95% 50%"
+          ref={pathRef}
+          d="M 60 32 C 110 32, 130 32, 167 32 C 280 10, 380 54, 500 32 C 620 10, 720 54, 833 32 C 870 32, 910 32, 940 32"
           fill="none"
-          stroke="var(--color-accent)"
-          strokeWidth="2.5"
+          stroke="url(#evidenceTrailGrad)"
+          strokeWidth="3"
           strokeLinecap="round"
           strokeDasharray={pathLength}
           strokeDashoffset={dashOffset}
-          style={{ transition: "stroke-dashoffset 0.08s linear" }}
+          filter="url(#evidenceGlow)"
+          vectorEffect="non-scaling-stroke"
+          style={{ transition: "stroke-dashoffset 0.12s ease-out" }}
         />
       </svg>
 
@@ -71,6 +95,22 @@ export default function EvidenceTrail({ progress }: EvidenceTrailProps) {
           >
             <span className="milestone-halo" />
             <span className="milestone-core" />
+            <span
+              style={{
+                position: "absolute",
+                top: "-22px",
+                fontSize: "10px",
+                fontFamily: "var(--font-mono)",
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+                color: isActive ? "var(--color-accent)" : "var(--color-text-tertiary)",
+                transition: "color 0.3s ease",
+              }}
+            >
+              {m.label}
+            </span>
           </div>
         );
       })}

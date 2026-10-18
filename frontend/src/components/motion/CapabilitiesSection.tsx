@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import EvidenceTrail from "./EvidenceTrail";
-import { useGlobalScrollProgress } from "@/lib/motion";
+import { useSectionScrollProgress } from "@/lib/motion";
 
 const CAPABILITIES = [
   {
@@ -58,26 +58,30 @@ const CAPABILITIES = [
 
 export default function CapabilitiesSection() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const scrollProgress = useGlobalScrollProgress();
+  // Section-scoped scroll progress from when top of section enters to when it reaches upper viewport
+  const scrollProgress = useSectionScrollProgress(containerRef, { offsetStart: 0.85, offsetEnd: 0.25 });
 
-  // Intersection observer for card reveals
+  // Intersection observer for both section header reveal and individual card reveals
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const revealTargets = el.querySelectorAll<HTMLElement>(".section-reveal, .capability-card-reveal");
     const observers: IntersectionObserver[] = [];
-    cardRefs.current.forEach((card) => {
-      if (!card) return;
+
+    revealTargets.forEach((target) => {
       const obs = new IntersectionObserver(
         ([entry]) => {
           if (entry.isIntersecting) {
-            card.classList.add("visible");
+            target.classList.add("visible");
             obs.disconnect();
           }
         },
-        { threshold: 0.15 }
+        { threshold: 0.1 }
       );
-      obs.observe(card);
+      obs.observe(target);
       observers.push(obs);
     });
+
     return () => observers.forEach((o) => o.disconnect());
   }, []);
 
@@ -92,7 +96,7 @@ export default function CapabilitiesSection() {
       }}
     >
       {/* Section header */}
-      <div className="section-reveal" style={{ textAlign: "center", maxWidth: "600px", margin: "0 auto var(--space-12)" }}>
+      <div className="section-reveal" style={{ textAlign: "center", maxWidth: "640px", margin: "0 auto var(--space-12)" }}>
         <span className="section-label">Platform Capabilities</span>
         <h2
           style={{
@@ -125,10 +129,9 @@ export default function CapabilitiesSection() {
             zIndex: 1,
           }}
         >
-          {CAPABILITIES.map((cap, i) => (
+          {CAPABILITIES.map((cap) => (
             <div
               key={cap.id}
-              ref={(el) => { cardRefs.current[i] = el; }}
               className="capability-card-reveal editorial-card"
               style={{ transitionDelay: `${cap.delay}s` }}
             >

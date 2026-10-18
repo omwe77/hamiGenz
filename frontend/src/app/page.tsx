@@ -7,9 +7,11 @@ import { AmbientDepthCanvas } from "@/components/motion/AmbientDepthCanvas";
 import HeroTypography from "@/components/motion/HeroTypography";
 import AnimatedDocumentSandbox from "@/components/motion/AnimatedDocumentSandbox";
 import CapabilitiesSection from "@/components/motion/CapabilitiesSection";
+import { useEntranceReveals } from "@/lib/motion";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"simplified" | "original">("simplified");
+  useEntranceReveals(".section-reveal");
 
   return (
     <div
@@ -244,7 +246,7 @@ export default function Home() {
             margin: "0 auto",
           }}
         >
-          <div style={{ textAlign: "center", maxWidth: "600px", margin: "0 auto var(--space-12)" }}>
+          <div className="section-reveal" style={{ textAlign: "center", maxWidth: "600px", margin: "0 auto var(--space-12)" }}>
             <span className="section-label">Workflow</span>
             <h2
               style={{
