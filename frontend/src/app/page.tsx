@@ -1,89 +1,60 @@
 "use client";
 
-import { useState } from "react";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { isReducedMotion, drawTrail, useEntranceReveals } from "@/lib/motion";
+import { isReducedMotion, drawTrail, useEntranceReveals, useSectionScrollProgress } from "@/lib/motion";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"simplified" | "original">("simplified");
-  const heroRef = useRef<HTMLElement>(null);
+  const capsRef = useRef<HTMLElement>(null);
   const trailPathRef = useRef<SVGPathElement>(null);
   const progressFillRef = useRef<HTMLDivElement>(null);
   const totalLengthRef = useRef(0);
-  const rafRef = useRef(0);
-  const [heroProgress, setHeroProgress] = useState(0);
 
-  // ── Homepage motion wiring: reduced-motion init, evidence trail progress,
-  //     and the global scroll-progress indicator. Strict Mode + Next.js
-  //     client navigation safe (all listeners cleaned up on unmount/route). ──
+  // Normalized scroll progress for the 3 capabilities section (Read -> Understand -> Verify)
+  const capsProgress = useSectionScrollProgress(capsRef);
+
+  // SVG Trail initialization and scroll-driven drawing
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    initReducedMotion();
-
     const pathEl = trailPathRef.current;
-    if (pathEl) totalLengthRef.current = Math.max(0, pathEl.getTotalLength());
-
-    const hero = heroRef.current;
-    if (!hero) return;
-    let mounted = true;
-    const tick = () => {
-      if (!mounted) return;
-      const rect = hero.getBoundingClientRect();
-      const top = rect.top + window.scrollY;
-      const bottom = top + rect.height;
-      const visible = Math.max(0, Math.min(window.innerHeight, bottom) - Math.max(0, top));
-      const total = Math.max(0, bottom - top);
-      setHeroProgress(
-        total === 0 ? 0 : Math.min(1, Math.max(0, (visible - window.innerHeight * 0.35) / total))
-      );
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    tick();
-    window.addEventListener("scroll", tick, { passive: true });
-    window.addEventListener("resize", tick);
-    return () => {
-      mounted = false;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      window.removeEventListener("scroll", tick);
-      window.removeEventListener("resize", tick);
-    };
+    if (pathEl) {
+      totalLengthRef.current = Math.max(0, pathEl.getTotalLength());
+      if (isReducedMotion()) {
+        pathEl.style.strokeDashoffset = "0";
+        pathEl.style.strokeDasharray = "none";
+      }
+    }
   }, []);
 
-  // Draw the evidence trail as the hero scroll progress changes (transform/
-  // opacity only; no layout recalculation).
   useEffect(() => {
     if (trailPathRef.current && totalLengthRef.current > 0) {
-      drawTrail(trailPathRef.current, heroProgress, totalLengthRef.current);
+      drawTrail(trailPathRef.current, capsProgress, totalLengthRef.current);
     }
-  }, [heroProgress]);
+  }, [capsProgress]);
 
-  // Entrance reveals for the capability cards (plus the sample sandbox
-  // explanation rows), driven by IntersectionObserver.
-  useEntranceReveals("[data-motion-reveal]", {
-    rootMargin: "0px 0px -18% 0px",
+  // Entrance reveals for capability cards driven by IntersectionObserver
+  useEntranceReveals(".data-motion-reveal", {
+    rootMargin: "0px 0px -10% 0px",
     threshold: 0.12,
-    staggerDelayMs: 70,
+    staggerDelayMs: 80,
   });
 
-  // Thin global scroll-progress indicator (header/brand orientation).
+  // Thin global scroll-progress indicator in top fixed bar
   useEffect(() => {
     if (isReducedMotion()) return;
     const fill = progressFillRef.current;
     if (!fill) return;
     let raf = 0;
-    const tick = () => {
+    const updateProgress = () => {
       const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-      const p = scrollHeight > 0 ? Math.min(1, window.scrollY / scrollHeight) : 0;
+      const p = scrollHeight > 0 ? Math.min(1, Math.max(0, window.scrollY / scrollHeight)) : 0;
       fill.style.transform = `scaleX(${p})`;
-      fill.style.webkitTransform = `scaleX(${p})`;
       raf = 0;
     };
     const schedule = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(tick);
+      if (!raf) raf = requestAnimationFrame(updateProgress);
     };
-    tick();
+    updateProgress();
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
     return () => {
@@ -106,83 +77,93 @@ export default function Home() {
         Skip to main content
       </a>
 
-      {/* ── Homepage motion: hero entrance + evidence trail + sample stagger ─ */}
-      <style>{`
-        .hero-motion { position: relative; }
+      {/* ── Top thin global scroll-progress indicator ── */}
+      <div className="scroll-progress" aria-hidden="true">
+        <div className="scroll-progress__fill" ref={progressFillRef} />
+      </div>
 
-        /* Restrained hero word-group reveal: opacity + small translateY. */
+      {/* ── Motion & Responsive Styles ── */}
+      <style>{`
+        /* Skiper 31 Restrained hero entrance: opacity + gentle translateY */
         .hero-intro {
-          opacity: 0;
-          transform: translateY(14px);
-          animation: heroFadeUp .75s cubic-bezier(.22,1,.36,1) both;
+          animation: heroFadeUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
         }
-        .hero-intro > * { animation-name: heroFadeUp; animation-fill-mode: both; }
-        .hero-intro > .hero-entry--1 { animation-delay: .06s; }
-        .hero-intro > .hero-entry--2 { animation-delay: .16s; }
-        .hero-intro > .hero-entry--3 { animation-delay: .30s; }
+        .hero-entry--1 { animation: heroFadeUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both; }
+        .hero-entry--2 { animation: heroFadeUp 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both; }
+        .hero-entry--3 { animation: heroFadeUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both; }
 
         @keyframes heroFadeUp {
-          from { opacity: 0; transform: translateY(16px); }
+          from { opacity: 0; transform: translateY(14px); }
           to   { opacity: 1; transform: translateY(0); }
         }
 
-        /* Sample demonstration: measured stagger of the sandbox sub-parts. */
         .hero-sandbox {
-          opacity: 0;
-          animation: heroFadeUp .6s cubic-bezier(.22,1,.32,1) both;
+          animation: heroFadeUp 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both;
         }
-        .hero-sandbox > * { animation-name: heroFadeUp; animation-fill-mode: both; }
-        .hero-sandbox > .sandbox-part--1 { animation-delay: .25s; }
-        .hero-sandbox > .sandbox-part--2 { animation-delay: .38s; }
-        .hero-sandbox > .sandbox-part--3 { animation-delay: .52s; }
 
-        /* The signature evidence trail: a scroll-drawn SVG ribbon connecting the
-           three workflow landmarks — document input (left), plain-language
-           interpretation (centre) and supporting source evidence (right). */
-        .hero-trail-wrap {
+        /* Skiper 19 Signature evidence trail: scroll-drawn SVG ribbon across Read -> Understand -> Verify */
+        .capabilities-trail-wrap {
           position: absolute;
-          left: 0; right: 0; bottom: calc(var(--space-8) * -1);
-          height: 72px;
+          top: -28px;
+          left: 0;
+          right: 0;
+          height: 56px;
           pointer-events: none;
-          overflow: hidden;
+          z-index: 2;
         }
-        .hero-trail {
+        .capabilities-trail {
           position: absolute;
           inset: 0;
           width: 100%;
           height: 100%;
-          pointer-events: none;
         }
-        .hero-trail__path {
-          fill: none;
+        .capabilities-trail__path {
           stroke: var(--color-accent);
-          stroke-width: 1.5;
+          stroke-width: 2;
           stroke-linecap: round;
-          stroke-dasharray: 2100;
-          stroke-dashoffset: 2100;
+          stroke-linejoin: round;
+          fill: none;
           vector-effect: non-scaling-stroke;
         }
-        .hero-trail__node {
+        .capabilities-trail__node {
           position: absolute;
-          top: 63.9%;
-          transform: translateX(-50%);
-          width: 9px;
-          height: 9px;
+          width: 12px;
+          height: 12px;
           border-radius: 50%;
+          background: var(--color-bg);
+          border: 2px solid var(--color-accent);
+          transform: translate(-50%, -50%);
+          box-shadow: 0 0 0 2px var(--color-bg);
+          transition: background 0.3s ease, transform 0.3s ease;
+        }
+        .capabilities-trail__node.is-active {
           background: var(--color-accent);
-          border: 1.5px solid #ffffff;
-          box-shadow: 0 0 0 1px rgba(200, 82, 11, 0.18);
-          pointer-events: none;
+          transform: translate(-50%, -50%) scale(1.2);
+        }
+
+        /* Responsive safety: hide ribbon on mobile/tablet to avoid overflow or awkward wrap */
+        @media (max-width: 768px) {
+          .capabilities-trail-wrap {
+            display: none !important;
+          }
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .hero-intro, .hero-sandbox { animation: none; opacity: 1 !important; transform: none !important; }
-          .hero-trail__path { stroke-dashoffset: 0; stroke-dasharray: 0; }
+          .hero-intro, .hero-entry--1, .hero-entry--2, .hero-entry--3, .hero-sandbox {
+            animation: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+          }
+          .capabilities-trail__path {
+            stroke-dashoffset: 0 !important;
+            stroke-dasharray: none !important;
+          }
+          .capabilities-trail__node {
+            background: var(--color-accent) !important;
+            transform: translate(-50%, -50%) !important;
+          }
         }
       `}</style>
-      <div className="scroll-progress">
-        <div className="scroll-progress__fill" ref={progressFillRef} aria-hidden="true" />
-      </div>
 
       {/* ── Top Navigation ─────────────────────────────────── */}
       <header
@@ -326,9 +307,9 @@ export default function Home() {
             textAlign: "center",
           }}
         >
-          <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+          <div className="hero-intro" style={{ maxWidth: "800px", margin: "0 auto" }}>
             <div
-              className="editorial-badge"
+              className="editorial-badge hero-entry--1"
               style={{ marginBottom: "var(--space-4)" }}
               id="hero-badge"
             >
@@ -336,7 +317,7 @@ export default function Home() {
             </div>
 
             <h1
-              className="hero-title"
+              className="hero-title hero-entry--2"
               id="hero-title"
               style={{
                 fontSize: "clamp(2.4rem, 5vw, 3.75rem)",
@@ -352,6 +333,7 @@ export default function Home() {
 
             <p
               id="hero-sub"
+              className="hero-entry--3"
               style={{
                 fontSize: "clamp(1.05rem, 2vw, 1.25rem)",
                 color: "var(--color-text-secondary)",
@@ -366,6 +348,7 @@ export default function Home() {
 
             <div
               id="hero-ctas"
+              className="hero-entry--3"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -752,46 +735,8 @@ export default function Home() {
                     विभागबाट द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।
                   </p>
                 </div>
-              </div>
-            )}
-
-            {/* Evidence trail: scroll-drawn SVG ribbon tying the 3 workflow steps */}
-          <div className="hero-trail-wrap">
-            <svg
-              className="hero-trail"
-              viewBox="0 0 1600 72"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-            >
-              <defs>
-                <linearGradient id="trailGrad" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#c8520b" stopOpacity="0.95" />
-                  <stop offset="100%" stopColor="#c8520b" stopOpacity="0.28" />
-                </linearGradient>
-              </defs>
-              <path
-                className="hero-trail__path"
-                d="M 64 46 C 520 46, 760 70, 860 70 C 960 70, 1536 46 1536 46"
-                ref={trailPathRef}
-                stroke="url(#trailGrad)"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                fill="none"
-                vectorEffect="non-scaling-stroke"
-              />
-            </svg>
-            <span
-              className="hero-trail__node"
-              style={{ left: "4%", top: "63.9%" }}
-            />
-            <span
-              className="hero-trail__node"
-              style={{ left: "53.75%", top: "97.2%" }}
-            />
-            <span
-              className="hero-trail__node"
-              style={{ left: "96%", top: "63.9%" }}
-            />
+              )}
+            </div>
           </div>
         </section>
 
@@ -845,7 +790,9 @@ export default function Home() {
         {/* ── 3 Core Capabilities: Read, Understand, Verify ─── */}
         <section
           id="capabilities"
+          ref={capsRef}
           style={{
+            position: "relative",
             padding: "var(--space-16) var(--space-6)",
             maxWidth: "var(--max-width)",
             margin: "0 auto",
@@ -873,11 +820,51 @@ export default function Home() {
           <div
             className="caps-grid"
             style={{
+              position: "relative",
               display: "grid",
               gridTemplateColumns: "repeat(3, 1fr)",
               gap: "var(--space-6)",
             }}
           >
+            {/* Evidence trail: scroll-drawn SVG ribbon connecting Read -> Understand -> Verify */}
+            <div className="capabilities-trail-wrap" aria-hidden="true">
+              <svg
+                className="capabilities-trail"
+                viewBox="0 0 1200 48"
+                preserveAspectRatio="none"
+              >
+                <defs>
+                  <linearGradient id="trailGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#c8520b" stopOpacity="0.85" />
+                    <stop offset="50%" stopColor="#c8520b" stopOpacity="1" />
+                    <stop offset="100%" stopColor="#c8520b" stopOpacity="0.85" />
+                  </linearGradient>
+                </defs>
+                <path
+                  ref={trailPathRef}
+                  className="capabilities-trail__path"
+                  d="M 200 24 C 400 24, 500 24, 600 24 C 700 24, 800 24, 1000 24"
+                  stroke="url(#trailGrad)"
+                  strokeWidth="2"
+                  strokeDasharray="1000"
+                  strokeDashoffset="1000"
+                  fill="none"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </svg>
+              <span
+                className={`capabilities-trail__node ${capsProgress >= 0.16 ? "is-active" : ""}`}
+                style={{ left: "16.66%", top: "50%" }}
+              />
+              <span
+                className={`capabilities-trail__node ${capsProgress >= 0.5 ? "is-active" : ""}`}
+                style={{ left: "50%", top: "50%" }}
+              />
+              <span
+                className={`capabilities-trail__node ${capsProgress >= 0.83 ? "is-active" : ""}`}
+                style={{ left: "83.33%", top: "50%" }}
+              />
+            </div>
             {/* Capability 1: Read */}
             <div
               className="editorial-card reveal data-motion-reveal"
