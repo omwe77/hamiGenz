@@ -537,3 +537,79 @@ a:hover { color: var(--color-accent-hover); }
     display: none !important;
   }
 }
+
+
+/* ── Thin Global Scroll-Depth Indicator ─────────────────────── */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2.5px;
+  z-index: 999;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: none;
+}
+.scroll-progress__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--color-accent) 0%, #d97706 70%, #15803d 100%);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--duration-subtle) var(--ease-out);
+  will-change: transform;
+}
+
+/* ── Ambient Background Depth Layer ─────────────────────────── */
+.ambient-depth-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+.ambient-grid-pattern {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(28, 25, 23, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(28, 25, 23, 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 60%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 60%, transparent 100%);
+}
+.ambient-glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.45;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ── OCR Scanner Sweep & Citation Pulses ─────────────────────── */
+@keyframes ocrScanSweep {
+  0%   { top: 0%; opacity: 0; }
+  15%  { opacity: 0.85; }
+  85%  { opacity: 0.85; }
+  100% { top: 100%; opacity: 0; }
+}
+@keyframes pulseCitationNode {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(200, 82, 11, 0.4); }
+  50%      { transform: scale(1.15); box-shadow: 0 0 0 6px rgba(200, 82, 11, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-progress,
+  .ambient-glow-orb,
+  .reveal {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
