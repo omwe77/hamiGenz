@@ -3,28 +3,28 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getDocumentViewer } from "@/lib/hamigenz-api";
 import DocViewerClient from "./DocViewerClient";
-import type { Citation } from "@/lib/types";
 
 /**
  * Document home page (server-rendered).
  *
- * Each uploaded document has its own URL (/workspace/<docId>). Selecting a
- * document navigates directly to its dedicated page instead of re-rendering
- * the shared workspace in place. The shared workspace (/workspace) stays the
- * browser for the document list.
- *
- * `generateStaticParams()` returns [] because document IDs are created at
- * runtime (uploaded documents) and are not known at build time. This route is
- * therefore client-navigable and fetches the viewer data on demand.
+ * Each document has its own URL (/workspace/<docId>).
+ * In demo mode, the sample document is pre-rendered at build time so recruiters
+ * can directly open or refresh /workspace/demo-registration-form on Vercel.
  */
 export async function generateStaticParams() {
-  return [];
+  return [
+    { docId: "demo-registration-form" },
+  ];
 }
 
 async function getViewer(docId: string) {
-  const res = await getDocumentViewer(docId);
-  if (!res?.doc_id || !Array.isArray(res.pages)) notFound();
-  return res;
+  try {
+    const res = await getDocumentViewer(docId);
+    if (!res?.doc_id || !Array.isArray(res.pages)) notFound();
+    return res;
+  } catch {
+    notFound();
+  }
 }
 
 export default async function DocHomePage({
@@ -75,12 +75,6 @@ export default async function DocHomePage({
       <DocViewerClient
         docId={viewer.doc_id}
         pages={viewer.pages}
-        onTextHighlight={() => undefined}
-        citationsByPage={new Map<number, Citation[]>()}
-        searchMatches={[]}
-        activeCitationPage={null}
-        activeSearchMatchIdx={null}
-        onActiveSearchMatchChange={() => undefined}
       />
     </div>
   );

@@ -13,6 +13,7 @@ import {
   extractActions,
   submitFeedback,
   setDemoModeState,
+  hasLiveBackend,
   DEMO_SAMPLE_DOCS,
 } from "@/lib/hamigenz-api";
 import type {
@@ -58,17 +59,19 @@ export default function WorkspacePage() {
   // demo-aware branches (listDocuments / getDocumentViewer / ...) stay in
   // sync with what the user sees. Both are kept in sync here.
   const [demoMode, setDemoMode] = useState(true);
+  const [showLiveNotice, setShowLiveNotice] = useState(false);
 
   // ── Demo mode toggle button (top bar) ────────────────────────────────
   const toggleDemoMode = () => {
+    if (!hasLiveBackend()) {
+      setShowLiveNotice(true);
+      return;
+    }
     const nextMode = !demoMode;
-    // 1. Synchronize API module demo state
-    setDemoModeState(nextMode);
-    // 2. Pure state transition for demoMode UI
-    setDemoMode(nextMode);
+    const applied = setDemoModeState(nextMode);
+    setDemoMode(applied);
 
-    // 3. Explicit event-handler logic keeping documents and activeDoc synchronized
-    if (nextMode) {
+    if (applied) {
       setDocuments(DEMO_SAMPLES);
       setActiveDocId("demo-registration-form");
     } else {
@@ -258,6 +261,9 @@ export default function WorkspacePage() {
         setActiveTab("split");
       } else {
         setActiveTab("document");
+      }
+      if (demoMode) {
+        setError("Demo Mode: Your document is held strictly in local browser memory and was not transmitted across the network. Full OCR & embeddings run on the self-hosted backend. Explore the registration sample below for complete interactive testing.");
       }
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (e) {
@@ -481,13 +487,28 @@ export default function WorkspacePage() {
             </button>
             <button
               type="button"
-              style={{ ...styles.headerUploadBtn, backgroundColor: demoMode ? "var(--color-accent)" : "transparent", color: demoMode ? "#ffffff" : "var(--color-text-secondary)" }}
+              style={{
+                ...styles.headerUploadBtn,
+                backgroundColor: demoMode ? "rgba(16, 185, 129, 0.12)" : "transparent",
+                borderColor: demoMode ? "rgba(16, 185, 129, 0.4)" : "var(--color-border)",
+                color: demoMode ? "var(--color-text)" : "var(--color-text-secondary)",
+              }}
               onClick={toggleDemoMode}
-              aria-label={demoMode ? "Switch to Live Mode" : "Switch to Demo Mode"}
+              aria-label={demoMode ? "Demo Mode (Sample Data) active" : "Switch to Demo Mode"}
+              title={hasLiveBackend() ? "Toggle Demo / Live mode" : "Portfolio Demo Mode — Click for details"}
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
-                <span>{demoMode ? "Live" : "Demo"} Mode</span>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    backgroundColor: demoMode ? "#10b981" : "#9ca3af",
+                    display: "inline-block",
+                  }}
+                  aria-hidden="true"
+                />
+                <span>Demo Mode</span>
               </span>
             </button>
           </div>
@@ -1288,6 +1309,89 @@ export default function WorkspacePage() {
         <span style={styles.footerBrand}>hamiGenZ</span>
         <span style={styles.footerTagline}>Don&apos;t understand it? Ask hamiGenZ.</span>
       </footer>
+
+      {/* ── Live Mode Info Modal for public demo ────────────────────── */}
+      {showLiveNotice && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "var(--space-4)",
+          }}
+          onClick={() => setShowLiveNotice(false)}
+        >
+          <div
+            className="glass-card"
+            style={{
+              maxWidth: "520px",
+              width: "100%",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xl)",
+              padding: "var(--space-6)",
+              boxShadow: "var(--shadow-xl)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-labelledby="live-mode-notice-title"
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
+              <div
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: "50%",
+                  backgroundColor: "rgba(197, 82, 11, 0.12)",
+                  color: "var(--color-accent)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div>
+                <h3 id="live-mode-notice-title" style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: "var(--font-bold)" }}>
+                  Portfolio Demo Mode
+                </h3>
+                <p style={{ margin: "var(--space-1) 0 0", fontSize: "var(--text-sm)", color: "var(--color-text-secondary)" }}>
+                  Self-hosted AI backend is not connected
+                </p>
+              </div>
+            </div>
+            <p style={{ fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--color-text)", margin: 0 }}>
+              This public Vercel deployment operates in <strong>offline demo mode</strong> with verified civic document samples.
+              Live AI inference requires the self-hosted FastAPI and local Ollama stack running on a GPU workstation.
+            </p>
+            <p style={{ fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--color-text-secondary)", marginTop: "var(--space-3)" }}>
+              All features below — including multi-level explanations, page citations, document search, form field assistance, and action checklists — are fully interactive using the pre-loaded registration sample.
+            </p>
+            <div style={{ marginTop: "var(--space-5)", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.button,
+                  padding: "var(--space-2) var(--space-5)",
+                }}
+                onClick={() => setShowLiveNotice(false)}
+              >
+                Explore Demo Samples
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

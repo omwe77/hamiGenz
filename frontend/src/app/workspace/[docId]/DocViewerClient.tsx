@@ -1,42 +1,33 @@
 // app/workspace/[docId]/DocViewerClient.tsx
 "use client";
 
+import { useMemo } from "react";
 import DocumentViewer from "@/components/workspace/DocumentViewer";
-import type { ViewerPage, Citation, SearchMatch } from "@/lib/types";
+import type { ViewerPage, Citation } from "@/lib/types";
 
 /**
- * Thin client wrapper around DocumentViewer so the document home page can be
- * server-rendered while the viewer itself stays a client component.
+ * Client wrapper around DocumentViewer providing default client callbacks.
+ * Server component DocHomePage passes serializable data (docId, pages).
  */
 export default function DocViewerClient({
   docId,
   pages,
-  onTextHighlight,
-  citationsByPage,
-  searchMatches,
-  activeCitationPage,
-  activeSearchMatchIdx,
-  onActiveSearchMatchChange,
 }: {
   docId: string;
   pages: ViewerPage[];
-  onTextHighlight: (text: string) => void;
-  citationsByPage: Map<number, Citation[]>;
-  searchMatches: SearchMatch[];
-  activeCitationPage: number | null;
-  activeSearchMatchIdx: number | null;
-  onActiveSearchMatchChange: (idx: number | null) => void;
 }) {
+  const citationsByPage = useMemo(() => new Map<number, Citation[]>(), []);
+
   return (
     <DocumentViewer
       docId={docId}
       pages={pages}
-      onTextHighlight={onTextHighlight}
+      onTextHighlight={() => undefined}
       citationsByPage={citationsByPage}
-      searchMatches={searchMatches}
-      activeCitationPage={activeCitationPage}
-      activeSearchMatchIdx={activeSearchMatchIdx}
-      onActiveSearchMatchChange={onActiveSearchMatchChange}
+      searchMatches={[]}
+      activeCitationPage={null}
+      activeSearchMatchIdx={null}
+      onActiveSearchMatchChange={() => undefined}
     />
   );
 }
