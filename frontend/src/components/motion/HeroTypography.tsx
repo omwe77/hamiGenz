@@ -1,184 +1,95 @@
 "use client";
 
-import React from "react";
-import Link from "next/link";
-
-export function HeroTypography() {
+/**
+ * HeroTypography
+ * Cinematic staggered-entry hero text. All animation via globals.css
+ * .hero-anim-item class; no styled-jsx needed.
+ */
+export default function HeroTypography() {
   return (
     <div className="hero-typography-wrap">
-      {/* 1. Civic Badge */}
-      <div className="hero-anim-item hero-entry--badge">
-        <div className="editorial-badge" id="hero-badge">
-          <span className="badge-dot" />
-          <span>Evidence-based civic document assistance &middot; Nepal</span>
-        </div>
+      <div className="editorial-badge hero-anim-item hero-entry--badge">
+        <span className="badge-dot" aria-hidden="true" />
+        <span>Evidence-based civic document assistance</span>
       </div>
 
-      {/* 2. Cinematic Headline */}
-      <div className="hero-anim-item hero-entry--title">
-        <h1
-          className="hero-title"
-          id="hero-title"
-          style={{
-            fontSize: "clamp(2.5rem, 5.2vw, 4rem)",
-            fontWeight: "var(--font-bold)",
-            letterSpacing: "-0.035em",
-            color: "var(--color-text-primary)",
-            lineHeight: "1.12",
-            marginBottom: "var(--space-5)",
-          }}
-        >
-          Understand Nepal&apos;s{" "}
-          <span className="hero-headline-accent">official documents</span> with cited certainty.
-        </h1>
-      </div>
+      <h1
+        className="hero-anim-item hero-entry--title"
+        style={{
+          fontSize: "clamp(2.25rem, 5vw, 3.75rem)",
+          fontWeight: "var(--font-bold)",
+          letterSpacing: "-0.03em",
+          lineHeight: "1.08",
+          marginBottom: "var(--space-5)",
+          color: "var(--color-text-primary)",
+        }}
+      >
+        Understand documents.{" "}
+        <span className="hero-headline-accent">Verify the answer.</span>
+      </h1>
 
-      {/* 3. Subtitle / Mission Statement */}
-      <div className="hero-anim-item hero-entry--sub">
-        <p
-          id="hero-sub"
-          style={{
-            fontSize: "clamp(1.05rem, 2vw, 1.25rem)",
-            color: "var(--color-text-secondary)",
-            lineHeight: "var(--leading-relaxed)",
-            maxWidth: "680px",
-            margin: "0 auto var(--space-8)",
-          }}
-        >
-          Upload a notice, gazette, or circular. Get an instant plain-language explanation
-          in Nepali or English, backed by exact paragraph references you can verify.
-        </p>
-      </div>
+      <p
+        className="hero-anim-item hero-entry--sub"
+        style={{
+          fontSize: "clamp(1rem, 2vw, 1.2rem)",
+          color: "var(--color-text-secondary)",
+          lineHeight: "1.65",
+          maxWidth: "600px",
+          margin: "0 auto var(--space-8)",
+        }}
+      >
+        hamiGenZ reads complex Nepali civic and legal documents, grounds every
+        answer in cited source passages, and presents the information in clear,
+        accessible language—with full provenance you can verify.
+      </p>
 
-      {/* 4. Action CTAs */}
-      <div className="hero-anim-item hero-entry--ctas">
-        <div
-          id="hero-ctas"
+      <div
+        className="hero-anim-item hero-entry--ctas"
+        style={{
+          display: "flex",
+          gap: "var(--space-3)",
+          justifyContent: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        <a
+          href="/workspace"
+          className="btn-editorial"
           style={{
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: "var(--space-4)",
-            flexWrap: "wrap",
-            marginBottom: "var(--space-12)",
+            gap: "6px",
+            padding: "0.7rem 1.6rem",
+            background: "var(--color-accent)",
+            color: "#ffffff",
+            borderRadius: "6px",
+            fontWeight: "var(--font-semibold)",
+            fontSize: "var(--text-sm)",
+            letterSpacing: "0.01em",
+            textDecoration: "none",
+            transition: "background 0.18s ease, transform 0.18s ease",
           }}
         >
-          <Link
-            href="/workspace"
-            className="btn-editorial"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              background: "var(--color-accent)",
-              color: "#ffffff",
-              fontSize: "var(--text-base)",
-              fontWeight: "var(--font-semibold)",
-              padding: "13px 26px",
-              borderRadius: "var(--radius-md)",
-              boxShadow: "0 2px 6px rgba(200, 82, 11, 0.25)",
-              transition: "transform var(--duration-fast) var(--ease-default), background var(--duration-fast) var(--ease-default)",
-            }}
-          >
-            Open interactive workspace
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 8h10M9 4l4 4-4 4" />
-            </svg>
-          </Link>
-
-          <a
-            href="#example"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              background: "var(--color-surface)",
-              color: "var(--color-text-primary)",
-              border: "1px solid var(--color-border)",
-              fontSize: "var(--text-base)",
-              fontWeight: "var(--font-medium)",
-              padding: "13px 24px",
-              borderRadius: "var(--radius-md)",
-              transition: "border-color var(--duration-fast) var(--ease-default), background var(--duration-fast) var(--ease-default)",
-            }}
-          >
-            Examine sample document
-          </a>
-        </div>
+          Open Workspace
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a
+          href="#capabilities"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            padding: "0.7rem 1.4rem",
+            border: "1px solid var(--color-border)",
+            borderRadius: "6px",
+            fontWeight: "var(--font-medium)",
+            fontSize: "var(--text-sm)",
+            color: "var(--color-text-secondary)",
+            textDecoration: "none",
+          }}
+        >
+          See how it works
+        </a>
       </div>
-
-      <style jsx>{`
-        .hero-typography-wrap {
-          max-width: 840px;
-          margin: 0 auto;
-          position: relative;
-          z-index: 1;
-        }
-        .hero-headline-accent {
-          background: linear-gradient(135deg, var(--color-accent) 0%, #b45309 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          display: inline-block;
-        }
-        .badge-dot {
-          display: inline-block;
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          background: #15803d;
-          margin-right: 6px;
-        }
-
-        /* ── Choreographed Hero Cascade ── */
-        .hero-anim-item {
-          animation: heroFadeUp 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
-        }
-        .hero-entry--badge {
-          animation-delay: 0.05s;
-          margin-bottom: var(--space-4);
-        }
-        .hero-entry--title {
-          animation-delay: 0.16s;
-        }
-        .hero-entry--sub {
-          animation-delay: 0.28s;
-        }
-        .hero-entry--ctas {
-          animation-delay: 0.40s;
-        }
-
-        @keyframes heroFadeUp {
-          from {
-            opacity: 0;
-            transform: translateY(18px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .hero-anim-item {
-            animation: none !important;
-            opacity: 1 !important;
-            transform: none !important;
-          }
-          .hero-headline-accent {
-            -webkit-text-fill-color: var(--color-accent);
-          }
-        }
-      `}</style>
     </div>
   );
 }

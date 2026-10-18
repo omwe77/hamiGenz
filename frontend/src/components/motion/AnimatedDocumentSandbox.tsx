@@ -1,426 +1,265 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
-export function AnimatedDocumentSandbox() {
-  const [activeTab, setActiveTab] = useState<"simplified" | "original">("simplified");
-  const [highlightedPassage, setHighlightedPassage] = useState(false);
+const DOC_TABS = [
+  { id: "simplified", label: "Simplified" },
+  { id: "original",   label: "Original (Nepali)" },
+] as const;
+
+type TabId = (typeof DOC_TABS)[number]["id"];
+
+const SIMPLIFIED_PASSAGES = [
+  {
+    id: "p1",
+    cited: true,
+    text: "Applicants must submit a citizenship certificate (nagarikta) copy certified by a ward office.",
+    citation: "Section 3.1, Paragraph 2",
+  },
+  {
+    id: "p2",
+    cited: false,
+    text: "Processing fees are non-refundable once the application is reviewed.",
+    citation: null,
+  },
+  {
+    id: "p3",
+    cited: true,
+    text: "District administration offices charge Rs 5,000 for a 34-page passport; express service costs Rs 10,000.",
+    citation: "Section 7.4, Fee Schedule",
+  },
+];
+
+const ORIGINAL_TEXT =
+  "जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र विभागबाट द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।";
+
+const QUESTION_DEMOS = [
+  "What fee do I pay for a passport?",
+  "Which documents must I submit?",
+  "How long does processing take?",
+];
+
+// Cycle through demo questions every 4 s
+function useCyclingQuestion(): string {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setIdx((i) => (i + 1) % QUESTION_DEMOS.length), 4000);
+    return () => clearInterval(id);
+  }, []);
+  return QUESTION_DEMOS[idx];
+}
+
+export default function AnimatedDocumentSandbox() {
+  const [activeTab, setActiveTab] = useState<TabId>("simplified");
+  const [pulsingId, setPulsingId] = useState<string | null>(null);
+  const scanRef = useRef<HTMLDivElement>(null);
+  const cycledQuestion = useCyclingQuestion();
+
+  // Pulse a random cited passage every 3.5 s
+  useEffect(() => {
+    const cited = SIMPLIFIED_PASSAGES.filter((p) => p.cited);
+    let i = 0;
+    const id = setInterval(() => {
+      setPulsingId(cited[i % cited.length].id);
+      setTimeout(() => setPulsingId(null), 1400);
+      i++;
+    }, 3500);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div
-      id="example"
-      className="editorial-card hero-sandbox"
+      className="hero-sandbox editorial-card"
       style={{
-        maxWidth: "1000px",
+        width: "100%",
+        maxWidth: "680px",
         margin: "0 auto",
-        textAlign: "left",
         overflow: "hidden",
-        position: "relative",
       }}
     >
-      {/* ── Top Bar: Mode Switcher & Disclaimer ── */}
+      {/* ── Chrome bar ────────────────────────────────────────── */}
       <div
         style={{
-          padding: "var(--space-3) var(--space-5)",
-          background: "var(--color-bg-alt)",
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
+          padding: "10px 14px",
+          borderBottom: "1px solid var(--color-border)",
+          background: "var(--color-surface-raised)",
+        }}
+      >
+        {["#ff5f57", "#febc2e", "#28c840"].map((c, i) => (
+          <span
+            key={i}
+            style={{ width: 10, height: 10, borderRadius: "50%", background: c, flexShrink: 0 }}
+            aria-hidden="true"
+          />
+        ))}
+        <span
+          style={{
+            flex: 1,
+            fontSize: "11px",
+            fontFamily: "var(--font-mono)",
+            color: "var(--color-text-muted)",
+            textAlign: "center",
+          }}
+        >
+          hamiGenZ Workspace · Document Analysis
+        </span>
+      </div>
+
+      {/* ── Question bar ─────────────────────────────────────── */}
+      <div
+        style={{
+          padding: "10px 14px",
+          background: "var(--color-surface)",
           borderBottom: "1px solid var(--color-border)",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: "var(--space-3)",
+          gap: "10px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-          <span
-            style={{
-              display: "inline-block",
-              width: "8px",
-              height: "8px",
-              borderRadius: "50%",
-              background: "#d97706",
-            }}
-          />
-          <span
-            style={{
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--font-medium)",
-              color: "var(--color-text-secondary)",
-            }}
-          >
-            Illustrative example &mdash; not official information.
-          </span>
-        </div>
-
-        {/* Tab Controls */}
-        <div
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <span
           style={{
-            display: "inline-flex",
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-md)",
-            padding: "2px",
+            fontSize: "var(--text-sm)",
+            color: "var(--color-text-secondary)",
+            fontStyle: "italic",
           }}
-          role="tablist"
-          aria-label="Document view toggle"
+          aria-live="polite"
         >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "simplified"}
-            onClick={() => setActiveTab("simplified")}
-            style={{
-              padding: "5px 14px",
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--font-medium)",
-              borderRadius: "var(--radius-sm)",
-              border: "none",
-              cursor: "pointer",
-              background: activeTab === "simplified" ? "var(--color-accent-soft)" : "transparent",
-              color: activeTab === "simplified" ? "var(--color-accent)" : "var(--color-text-secondary)",
-              transition: "all var(--duration-fast) var(--ease-default)",
-            }}
-          >
-            Plain-language guide
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "original"}
-            onClick={() => setActiveTab("original")}
-            style={{
-              padding: "5px 14px",
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--font-medium)",
-              borderRadius: "var(--radius-sm)",
-              border: "none",
-              cursor: "pointer",
-              background: activeTab === "original" ? "var(--color-accent-soft)" : "transparent",
-              color: activeTab === "original" ? "var(--color-accent)" : "var(--color-text-secondary)",
-              transition: "all var(--duration-fast) var(--ease-default)",
-            }}
-          >
-            Sample notice excerpt
-          </button>
-        </div>
+          {cycledQuestion}
+        </span>
       </div>
 
-      {/* ── Sandbox Content Container ── */}
-      <div style={{ padding: "var(--space-6)", position: "relative" }}>
-        {activeTab === "simplified" ? (
-          <div className="sandbox-tab-content anim-fade-in">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginBottom: "var(--space-4)",
-                flexWrap: "wrap",
-                gap: "var(--space-2)",
-              }}
-            >
-              <div>
-                <span className="section-label" style={{ color: "var(--color-accent)" }}>
-                  Plain-Language Summary
-                </span>
-                <h3
-                  style={{
-                    fontSize: "var(--text-xl)",
-                    fontWeight: "var(--font-bold)",
-                    marginTop: "2px",
-                  }}
-                >
-                  राहदानी नवीकरणका लागि आवश्यक कागजात र शुल्क
-                </h3>
-                <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)" }}>
-                  Passport Renewal (Sample) &middot; Illustrative plain-language breakdown with page citations
+      {/* ── Tabs ─────────────────────────────────────────────── */}
+      <div
+        style={{
+          display: "flex",
+          borderBottom: "1px solid var(--color-border)",
+          background: "var(--color-surface)",
+        }}
+        role="tablist"
+        aria-label="Document view"
+      >
+        {DOC_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: "8px 16px",
+              fontSize: "var(--text-xs)",
+              fontWeight: "var(--font-medium)",
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === tab.id ? "2px solid var(--color-accent)" : "2px solid transparent",
+              color: activeTab === tab.id ? "var(--color-accent)" : "var(--color-text-muted)",
+              cursor: "pointer",
+              letterSpacing: "0.01em",
+              transition: "color 0.18s ease",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Document Body ─────────────────────────────────────── */}
+      <div
+        ref={scanRef}
+        style={{
+          position: "relative",
+          padding: "var(--space-4)",
+          maxHeight: "320px",
+          overflowY: "auto",
+          background: "var(--color-bg)",
+        }}
+      >
+        {/* OCR Scan Beam */}
+        <div className="ocr-scan-beam" aria-hidden="true" />
+
+        {activeTab === "simplified" && (
+          <div className="anim-fade-in">
+            {SIMPLIFIED_PASSAGES.map((p) => (
+              <div
+                key={p.id}
+                className={`citation-preview-box${pulsingId === p.id ? " is-pulsing" : ""}`}
+                onClick={() => setPulsingId(p.id)}
+                style={{
+                  marginBottom: "var(--space-3)",
+                  padding: "var(--space-3)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "6px",
+                  background: "var(--color-surface)",
+                  cursor: p.cited ? "pointer" : "default",
+                }}
+              >
+                <p style={{ fontSize: "var(--text-sm)", lineHeight: "1.7", margin: 0 }}>
+                  {p.text}
                 </p>
+                {p.cited && (
+                  <div style={{ marginTop: "var(--space-2)", display: "flex", alignItems: "center", gap: "5px" }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                    </svg>
+                    <span style={{ fontSize: "10px", color: "var(--color-accent)", fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}>
+                      {p.citation}
+                    </span>
+                  </div>
+                )}
               </div>
+            ))}
+          </div>
+        )}
 
-              <div
-                style={{
-                  fontSize: "var(--text-xs)",
-                  color: "var(--color-success)",
-                  background: "var(--color-verified)",
-                  padding: "4px 10px",
-                  borderRadius: "var(--radius-full)",
-                  fontWeight: "var(--font-medium)",
-                  border: "1px solid var(--color-verified-border)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#15803d" }} />
-                3 demo citations
-              </div>
-            </div>
-
+        {activeTab === "original" && (
+          <div className="anim-fade-in">
             <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                gap: "var(--space-4)",
-                marginBottom: "var(--space-6)",
-              }}
-            >
-              {/* Card 1: Documents */}
-              <div
-                style={{
-                  padding: "var(--space-4)",
-                  background: "var(--color-bg-alt)",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                <h4
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    fontWeight: "var(--font-semibold)",
-                    marginBottom: "var(--space-2)",
-                    color: "var(--color-text-primary)",
-                  }}
-                >
-                  आवश्यक कागजात (Required Documents)
-                </h4>
-                <ul
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-secondary)",
-                    lineHeight: "1.7",
-                    paddingLeft: "var(--space-4)",
-                  }}
-                >
-                  <li>पुरानो राहदानीको सक्कल प्रति (Original old passport)</li>
-                  <li>नागरिकता प्रमाणपत्रको सक्कल र प्रतिलिपि</li>
-                  <li>राष्ट्रिय परिचयपत्र नम्बर वा कार्ड (NID Number)</li>
-                  <li>अनलाइन आवेदन फारामको प्रमाणित प्रिन्ट</li>
-                </ul>
-              </div>
-
-              {/* Card 2: Fees & Timelines */}
-              <div
-                style={{
-                  padding: "var(--space-4)",
-                  background: "var(--color-bg-alt)",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                <h4
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    fontWeight: "var(--font-semibold)",
-                    marginBottom: "var(--space-2)",
-                    color: "var(--color-text-primary)",
-                  }}
-                >
-                  राजश्व र समयसीमा (Fees & Timeline)
-                </h4>
-                <ul
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-secondary)",
-                    lineHeight: "1.7",
-                    paddingLeft: "var(--space-4)",
-                  }}
-                >
-                  <li>साधारण सेवा (३४ पृष्ठ): रु ५,०००/- (जिल्लाबाट)</li>
-                  <li>द्रुत सेवा: रु १०,०००/- (राहदानी विभाग, काठमाडौँबाट)</li>
-                  <li>म्याद समाप्त हुनुभन्दा १ वर्ष अगावै नवीकरण गर्न सकिनेछ</li>
-                </ul>
-              </div>
-            </div>
-
-            {/* Interactive Grounded Citation Preview */}
-            <div
-              className={`citation-preview-box ${highlightedPassage ? "is-pulsing" : ""}`}
-              onClick={() => setHighlightedPassage(!highlightedPassage)}
+              className="ocr-target-highlight"
               style={{
                 padding: "var(--space-4)",
-                background: "var(--color-doc-surface)",
-                border: "1px solid var(--color-citation-border)",
-                borderRadius: "var(--radius-md)",
-                cursor: "pointer",
-                transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+                borderRadius: "6px",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
               }}
             >
-              <div
+              <p
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: "var(--space-2)",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-semibold)",
-                    color: "var(--color-citation-text)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M4 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4zm0 1h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
-                  </svg>
-                  Sample Grounded Passage &middot; Page 1, Section 2.1
-                </span>
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-tertiary)",
-                    textDecoration: "underline",
-                  }}
-                >
-                  {highlightedPassage ? "Source passage highlighted" : "Click to spotlight source"}
-                </span>
-              </div>
-              <blockquote
-                style={{
-                  fontFamily: "var(--font-devanagari)",
                   fontSize: "var(--text-sm)",
+                  lineHeight: "1.8",
                   color: "var(--color-text-primary)",
-                  lineHeight: "var(--leading-relaxed)",
-                  fontStyle: "normal",
-                  paddingLeft: "var(--space-3)",
-                  borderLeft: "2px solid var(--color-accent)",
+                  margin: 0,
+                  direction: "ltr",
                 }}
               >
-                &ldquo;...साधारण राहदानी नवीकरण प्रयोजनका लागि निवेदक स्वयं उपस्थित भई पुरानो
-                राहदानीको सक्कल तथा नेपाली नागरिकता प्रमाणपत्रको सक्कल पेश गर्नुपर्नेछ।
-                राष्ट्रिय परिचयपत्र नम्बर अनिवार्य गरिएको छ।&rdquo;
-              </blockquote>
+                {ORIGINAL_TEXT}
+              </p>
             </div>
-          </div>
-        ) : (
-          <div className="doc-gazette anim-fade-in" style={{ position: "relative" }}>
-            {/* Luminous OCR Laser Scan Sweep Beam */}
-            <div className="ocr-scan-beam" aria-hidden="true" />
-
-            <div className="doc-gazette-header">
-              <div>
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-bold)",
-                    letterSpacing: "0.05em",
-                    color: "var(--color-nepal-red)",
-                  }}
-                >
-                  नेपाल सरकार &middot; राहदानी विभाग (नमूना प्रारूप)
-                </span>
-                <div
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-tertiary)",
-                  }}
-                >
-                  सूचना सङ्ख्या: ०८०-८१/०४ &middot; प्रकाशित मिति: २०८०/०६/१५
-                </div>
-              </div>
-              <span
-                style={{
-                  fontSize: "var(--text-xs)",
-                  padding: "2px 8px",
-                  background: "var(--color-bg-alt)",
-                  borderRadius: "var(--radius-sm)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                Sample Notice Excerpt (Illustrative)
-              </span>
-            </div>
-
-            <p
-              className={highlightedPassage ? "ocr-target-highlight" : ""}
-              style={{
-                fontSize: "var(--text-sm)",
-                lineHeight: "1.8",
-                color: "var(--color-text-primary)",
-                marginBottom: "var(--space-3)",
-                padding: "4px 8px",
-                borderRadius: "var(--radius-sm)",
-                transition: "background 0.3s ease, border-color 0.3s ease",
-              }}
-            >
-              सर्वसाधारणको जानकारीका लागि यो सूचना प्रकाशित गरिएको छ। वि.सं. २०८० कार्तिक १
-              गतेदेखि लागु हुने गरी विद्युतीय राहदानी (e-Passport) नवीकरण तथा नयाँ जारी गर्दा
-              राष्ट्रिय परिचयपत्र (NID) अनिवार्य गरिएको छ।
-            </p>
-            <p
-              style={{
-                fontSize: "var(--text-sm)",
-                lineHeight: "1.8",
-                color: "var(--color-text-primary)",
-                padding: "4px 8px",
-              }}
-            >
-              जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र
-              विभागबाट द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।
-            </p>
           </div>
         )}
       </div>
 
-      <style jsx>{`
-        .hero-sandbox {
-          animation: heroFadeUp 0.85s cubic-bezier(0.22, 1, 0.36, 1) 0.32s both;
-        }
-        .anim-fade-in {
-          animation: fadeInTab 0.35s ease-out both;
-        }
-        @keyframes fadeInTab {
-          from { opacity: 0; transform: translateY(6px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-
-        /* ── Signature OCR Scanning Beam ── */
-        .ocr-scan-beam {
-          position: absolute;
-          left: 0;
-          right: 0;
-          height: 2px;
-          background: linear-gradient(90deg, transparent 0%, var(--color-accent) 50%, transparent 100%);
-          box-shadow: 0 0 12px 1px rgba(200, 82, 11, 0.6);
-          animation: ocrScanSweep 3.2s ease-in-out infinite alternate;
-          pointer-events: none;
-          z-index: 10;
-        }
-
-        .citation-preview-box:hover {
-          border-color: var(--color-accent);
-          box-shadow: 0 2px 8px rgba(200, 82, 11, 0.12);
-        }
-        .citation-preview-box.is-pulsing {
-          border-color: var(--color-accent);
-          box-shadow: 0 0 0 3px rgba(200, 82, 11, 0.2);
-        }
-        .ocr-target-highlight {
-          background: rgba(200, 82, 11, 0.08);
-          border-left: 3px solid var(--color-accent);
-        }
-
-        @keyframes heroFadeUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .hero-sandbox,
-          .anim-fade-in,
-          .ocr-scan-beam {
-            animation: none !important;
-            opacity: 1 !important;
-            transform: none !important;
-          }
-          .ocr-scan-beam {
-            display: none !important;
-          }
-        }
-      `}</style>
+      {/* ── Status bar ───────────────────────────────────────── */}
+      <div
+        style={{
+          padding: "6px 14px",
+          background: "var(--color-surface-raised)",
+          borderTop: "1px solid var(--color-border)",
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+        }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} aria-hidden="true" />
+        <span style={{ fontSize: "10px", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+          3 citations found · illustrative sample document
+        </span>
+      </div>
     </div>
   );
 }

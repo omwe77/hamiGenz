@@ -613,3 +613,231 @@ a:hover { color: var(--color-accent-hover); }
     opacity: 1 !important;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   HOMEPAGE MOTION SYSTEM — Premium Scroll-Driven Experience
+   All motion, reveal, and layout classes for the landing page.
+   Governed by prefers-reduced-motion.
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Hero Typography Choreography ─────────────────────────────── */
+.hero-typography-wrap {
+  max-width: 840px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+.hero-headline-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, #b45309 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
+}
+.badge-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #15803d;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.hero-anim-item {
+  animation: heroFadeUp 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.hero-entry--badge  { animation-delay: 0.05s; margin-bottom: var(--space-4); }
+.hero-entry--title  { animation-delay: 0.16s; }
+.hero-entry--sub    { animation-delay: 0.28s; }
+.hero-entry--ctas   { animation-delay: 0.40s; }
+
+@keyframes heroFadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Hero Document Sandbox ─────────────────────────────────────── */
+.hero-sandbox {
+  animation: heroFadeUp 0.85s cubic-bezier(0.22, 1, 0.36, 1) 0.32s both;
+}
+.anim-fade-in {
+  animation: fadeInTab 0.35s ease-out both;
+}
+@keyframes fadeInTab {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── OCR Laser Scan Sweep Beam ─────────────────────────────────── */
+.ocr-scan-beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--color-accent) 50%, transparent 100%);
+  box-shadow: 0 0 12px 1px rgba(200, 82, 11, 0.6);
+  animation: ocrScanSweep 3.2s ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: 10;
+}
+.citation-preview-box {
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.citation-preview-box:hover {
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 2px 8px rgba(200, 82, 11, 0.12);
+}
+.citation-preview-box.is-pulsing {
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 0 0 3px rgba(200, 82, 11, 0.2);
+}
+.ocr-target-highlight {
+  background: rgba(200, 82, 11, 0.08);
+  border-left: 3px solid var(--color-accent);
+  padding-left: 8px;
+}
+
+/* ── Evidence Trail SVG Stroke ─────────────────────────────────── */
+.evidence-trail-container {
+  position: absolute;
+  top: -30px;
+  left: 0;
+  right: 0;
+  height: 64px;
+  pointer-events: none;
+  z-index: 2;
+}
+.evidence-trail-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.evidence-milestone-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.milestone-core {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  transition: background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+  z-index: 1;
+  position: relative;
+}
+.milestone-halo {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: rgba(200, 82, 11, 0.15);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.evidence-milestone-node.is-active .milestone-core {
+  background: var(--color-accent);
+  border-color: #ffffff;
+  box-shadow: 0 0 8px rgba(200, 82, 11, 0.5);
+  transform: scale(1.25);
+}
+.evidence-milestone-node.is-active .milestone-halo {
+  opacity: 1;
+  transform: scale(1);
+  animation: pulseHalo 2s infinite ease-out;
+}
+@keyframes pulseHalo {
+  0%   { transform: scale(1);   opacity: 0.6; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+/* ── Capability Cards (Read / Understand / Verify) ─────────────── */
+.capability-card-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.65s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.25s ease;
+}
+.capability-card-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.capability-card-reveal:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: 0 8px 24px rgba(28, 25, 23, 0.08);
+}
+.caps-grid-wrap {
+  position: relative;
+  padding-top: 40px;
+}
+
+/* ── Section Reveal Orchestration ──────────────────────────────── */
+.section-reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.section-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Btn Editorial Hover ───────────────────────────────────────── */
+.btn-editorial:hover {
+  background: var(--color-accent-hover) !important;
+  transform: translateY(-1px);
+}
+
+/* ── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 840px) {
+  .caps-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .evidence-trail-container {
+    display: none !important;
+  }
+}
+@media (max-width: 600px) {
+  .hero-headline-accent {
+    -webkit-text-fill-color: var(--color-accent);
+  }
+}
+
+/* ── Reduced Motion Overrides ──────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .hero-anim-item,
+  .hero-sandbox,
+  .anim-fade-in,
+  .section-reveal {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .capability-card-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .capability-card-reveal:hover {
+    transform: none !important;
+  }
+  .ocr-scan-beam {
+    animation: none !important;
+    display: none !important;
+  }
+  .evidence-milestone-node.is-active .milestone-halo {
+    animation: none !important;
+  }
+  .milestone-core {
+    transition: none !important;
+  }
+}
