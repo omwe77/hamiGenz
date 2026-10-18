@@ -8,6 +8,18 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Ensure stdout/stderr use utf-8 on Windows consoles to prevent charmap UnicodeEncodeErrors
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Ensure the backend package is importable regardless of how the app is launched
 # (uvicorn backend.main:app, python -m uvicorn, run.sh, IDE, etc.)
 _BACKEND_DIR = Path(__file__).resolve().parent
@@ -15,12 +27,8 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 # Load local environment configuration (.env) if python-dotenv is available
-try:
-    from dotenv import load_dotenv
-    load_dotenv(_BACKEND_DIR / '.env')
-    load_dotenv(_BACKEND_DIR.parent / '.env')
-except ImportError:
-    pass
+from config import load_environment
+load_environment()
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse, Response
@@ -112,11 +120,11 @@ async def lifespan(app: FastAPI):
                     print(f"[hamigenz] Reindex failed for {doc_id}: {exc}")
                     stale.append(doc_id)
             print(f"[hamigenz] Embedding model changed "
-                  f"({stamp['stored']} → {EMBED_MODEL}); "
+                  f"({stamp['stored']} -> {EMBED_MODEL}); "
                   f"reindexed {len(migrated)} doc(s)")
         else:
             print(f"[hamigenz] WARNING: embedding model changed "
-                  f"({stamp['stored']} → {EMBED_MODEL}) but "
+                  f"({stamp['stored']} -> {EMBED_MODEL}) but "
                   f"REINDEX_ON_STARTUP=0 — {len(stamp['reindex_chunks'])} "
                   f"doc(s) still use old vectors")
         for doc_id in stale:
