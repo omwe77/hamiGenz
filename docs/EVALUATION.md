@@ -147,10 +147,11 @@ Ran with `--live` (real Ollama qwen3:8b, 17 gold cases):
 | Script-appropriate output (Devanagari for Nepali cases) | **1.00** |
 | Overall pass (all of the above + level plausibility) | **0.88** |
 
-The 2 remaining failures are fact-omissions, not hallucinations — the
-model summarized without repeating an explicit fact (e.g. a "3 days"
-lead time, a license-cancellation consequence). No fabricated facts, no
-negation flips, no wrong-script answers.
+> [!NOTE]
+> **Scope of 1.00 Score:**
+> The 1.00 score means that across this specific 17-case benchmark run, no forbidden facts or negation flips were detected by the specific benchmark checks. This metric reflects performance strictly within the tested gold cases; it does not prove zero hallucinations or guarantee real-world accuracy on arbitrary documents.
+
+In this measured evaluation run, the 2 remaining failures were fact-omissions rather than detected hallucinations: the model summarized without repeating an explicit fact (e.g. a "3 days" lead time, a license-cancellation consequence). Within this measured evaluation run, no fabricated facts, negation flips, or wrong-script answers were detected by the test harness.
 
 Checker design notes (learned from live runs):
 - Nepali negation has many grammatical forms, so negation guards use a
