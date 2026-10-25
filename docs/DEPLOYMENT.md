@@ -14,9 +14,9 @@ The public web client for hamiGenZ is deployed on **Vercel**:
 ### Demo-Only Operating Model
 
 Because hamiGenZ is designed as a local-first civic AI platform that requires an 8-billion-parameter local model (`qwen3:8b`), local Devanagari OCR (`tesseract-ocr` with `nep.traineddata`), and local vector indices (`faiss-cpu`), the public Vercel deployment operates intentionally in **Offline Demo Mode**:
-- **Predefined Sample Data**: Demonstrations run on human-verified civic notices (such as `registration_form_sample.pdf`).
-- **Zero Localhost Leaks**: The client checks `hasLiveBackend()` and does not attempt network calls to `localhost` or `127.0.0.1` on public hostnames.
-- **In-Browser Upload Safety**: Files uploaded in Demo Mode are processed strictly inside local browser memory; no documents or identity data are transmitted to any remote server.
+- **Illustrative Sample Data & Warning**: Demonstrations run on pre-configured sample documents (such as `registration_form_sample.pdf`) and illustrative sample responses. Unless independently verified against current official government gazettes, sample fees, deadlines, and penalty schedules are for demonstration purposes only. **Users must not rely on sample demo data for actual administrative, legal, or travel applications.**
+- **Network Isolation**: The client checks `hasLiveBackend()` and does not attempt network calls to `localhost` or `127.0.0.1` on public hostnames.
+- **Client-Side Upload Handling**: Any file uploaded while in Demo Mode is retained only in transient client browser memory and is not uploaded to a backend server.
 - **Disclosures**: Clear notices on both the landing page and the workspace inform visitors that live AI inference requires a connected private or local backend.
 
 ---

@@ -1,6 +1,6 @@
 # hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
 
-> A privacy-centric, evidence-grounded AI platform engineered to make complex Nepali administrative notices, civil documents, and government procedures universally accessible. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual vector embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance, evidence-grounded citations, and hallucination guardrails.
+> A privacy-conscious, evidence-grounded AI platform engineered to make complex Nepali administrative notices, civil documents, and government procedures accessible. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual vector embeddings, Devanagari OCR, and a multi-stage verification layer designed to provide verifiable provenance, evidence-grounded citations, and hallucination reduction guardrails.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-hami--genz.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://hami-genz.vercel.app/)
 [![GitHub Repo](https://img.shields.io/badge/GitHub-omwe77%2FhamiGenz-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/omwe77/hamiGenz)
@@ -17,6 +17,7 @@
 > ### 🌐 Portfolio Demo Disclosure
 > The public deployment at [hami-genz.vercel.app](https://hami-genz.vercel.app/) is a **client-side portfolio demonstration** hosted on Vercel.
 > - **Predefined Sample Mode:** The live web demo showcases full UI interactions, the split-screen document workspace, dynamic citation highlighting, action checklist extraction, and the continuous scroll-driven provenance thread using pre-computed sample responses.
+> - **Illustrative Sample Data Warning:** All sample notices, extracted form fields, fees, and deadlines in the public demo are **illustrative fixtures** provided for interface demonstration. Unless independently verified against current official government sources, sample data must not be relied upon for real civic, administrative, or legal applications.
 > - **Live AI Backend:** Real-time processing of arbitrary user uploads, Tesseract OCR, dynamic vector indexing, and local LLM inference require a locally hosted or cloud-hosted instance of the FastAPI backend connected to an [Ollama](https://ollama.ai) instance (`qwen3:8b`). Follow the [Quick Start](#7-quick-start--local-development) instructions below to run the complete end-to-end stack locally.
 
 ---
@@ -141,8 +142,8 @@ flowchart TD
 
 1. **Document Ingestion & OCR:** Digital PDFs are processed directly via `pdfplumber` and `PyMuPDF`. Scanned images and raster PDFs are analyzed with Tesseract 5.x. An automatic script detector analyzes Devanagari character density to dynamically switch between Nepali-primary (`nep`) and bilingual (`nep+eng`) recognition modes.
 2. **Security & Prompt Defense (`backend/prompt_guard.py`):** Before constructing prompt context, untrusted text is sanitized: zero-width unicode smuggling characters and role-hijacking tokens are stripped. All retrieved passages are isolated inside strict `<evidence>` delimiters with non-override instructions.
-3. **Local Inference:** Queries and isolated evidence are dispatched to a local Ollama server running `qwen3:8b` (4-bit quantized, ~4.5 GB footprint), ensuring no citizen data leaves the host.
-4. **Verification & Grounding (`backend/verification.py`):** A secondary deterministic check inspects the model's generated claims against the retrieved evidence text. If key facts lack explicit provenance or if negation states are inverted, the response is rejected or flagged: *"I could not verify this from an authoritative source."*
+3. **Local Inference:** When running in the local self-hosted configuration, queries and isolated evidence are dispatched to a local Ollama server running `qwen3:8b` (4-bit quantized, ~4.5 GB footprint) on `127.0.0.1:11434`. In this self-hosted environment, inference requests and document payloads are processed locally on local resources without transmitting data to external third-party cloud AI vendors.
+4. **Verification & Grounding (`backend/verification.py`):** A secondary deterministic check inspects the model's generated claims against the retrieved evidence text. If key facts lack explicit provenance or if negation states are inverted, the response is rejected or flagged: *"I could not verify this from an authoritative source."* Automated verification mitigates ungrounded assertions but does not guarantee complete correctness.
 5. **Interactive UI Rendering:** The Next.js frontend highlights corresponding text citations directly on the document canvas when a user clicks on an explanation citation tag.
 
 ---
@@ -156,8 +157,8 @@ flowchart TD
   - **Very Simple:** Bulleted breakdown with step-by-step guidance tailored for accessibility.
 - ✅ **Action Extraction & Form Checklists (`/actions`):** Automatically extracts required documents, deadlines, fees (with Devanagari and Arabic numeral normalization), eligibility rules, and official `.gov.np` portals.
 - 🏛️ **Official Source Registry (`/knowledge/sources`):** Curated directory of 10 verified Nepali government institutions (Passport Department, National ID & Civil Registration, Immigration, Supreme Court, Inland Revenue, etc.) with verified domain boundaries.
-- 🔒 **Local-First Privacy:** Zero cloud telemetry or external third-party model inference. Citizen documents and vector indices remain exclusively on local disk.
-- 🎨 **Full-Page Provenance Animation:** Scroll-driven continuous SVG provenance thread built with Framer Motion, illustrating the chain of custody from document intake to grounded verification.
+- 🔒 **Local-First Architecture:** Built for self-hosted deployment where document ingestion, OCR, FAISS vector indexing, and Ollama inference run on local system resources. In a local setup, documents and vector indices remain stored on the local disk (`backend/data/`).
+- 🎨 **Full-Page Provenance Animation:** Scroll-driven continuous SVG provenance thread built with React 19, native SVG cubic Bézier splines, dynamic anchor measurement via `ResizeObserver`, and scroll synchronization via `requestAnimationFrame`. Illustrates the sequence of custody from document intake to grounded verification.
 
 ---
 
@@ -166,9 +167,9 @@ flowchart TD
 ### Frontend
 - **Framework:** Next.js 16.3 (App Router, Turbopack)
 - **UI Library:** React 19, TypeScript
-- **Styling:** Vanilla CSS with design token variables (glassmorphism, modern dark aesthetic)
-- **Animation & Motion:** Framer Motion, Canvas Confetti
-- **Icons:** Lucide React
+- **Styling:** Vanilla CSS with design token variables (glassmorphism, dark civic aesthetic)
+- **Animation & Motion:** Native SVG cubic Bézier curves, requestAnimationFrame scroll-tracking, CSS keyframe transitions (Anime.js installed for scripted sequences)
+- **Icons:** Custom inline SVG iconography (zero external icon library dependencies)
 
 ### Backend
 - **Framework:** FastAPI 0.115+, Uvicorn, Pydantic v2
@@ -360,17 +361,23 @@ Evaluated across 18 realistic queries in 4 linguistic styles against a synthetic
 
 ### Explanation Quality Benchmark (Live qwen3:8b on Gold Dataset)
 
-| Metric | Score | Detail |
+| Metric | Measured Score | Benchmark Scope & Definition |
 |---|:---:|---|
-| **Key Fact Preservation** | **88.2%** | Deterministic preservation of dates, fees, and statutory requirements. |
-| **Zero Hallucination Rate** | **100%** | Zero forbidden facts or inverted negation clauses detected across all runs. |
-| **Script Appropriateness** | **100%** | Accurate Devanagari output for Nepali inquiries without English leakage. |
-| **Overall Pass Rate** | **88.2%** | Verified against deterministic gold assertions without stochastic LLM-judge bias. |
+| **Key Fact Preservation** | **88.2% (15/17)** | Deterministic preservation of benchmark dates, fees, and requirements. |
+| **Negation & Forbidden Fact Accuracy** | **100% (17/17)** | Measured strictly within the 17-case gold dataset via deterministic negation and forbidden-fact checks; does not guarantee zero hallucinations on arbitrary real-world queries. |
+| **Script Appropriateness** | **100% (17/17)** | Accurate Devanagari output for Nepali inquiries without English leakage. |
+| **Overall Benchmark Pass Rate** | **88.2% (15/17)** | Verified against deterministic gold assertions without stochastic LLM-judge bias. |
+
+> [!WARNING]
+> **Evaluation Scope & Real-World Behavior**
+> The 100% negation and forbidden fact accuracy reflects the measured result solely on the specific 17-case gold benchmark (`tests/evaluation/gold_dataset.py`). **This benchmark result does NOT guarantee zero hallucinations, factual correctness, or absence of errors in real-world or production usage.** Like all large language model systems, the underlying model can omit nuance, misinterpret ambiguous colloquial text, or produce ungrounded assertions when exposed to complex, unseen, or degraded real-world documents.
 
 ---
 
 ## 10. Known Limitations & Operational Boundaries
 
+- **Illustrative Public Sample Data:** Pre-loaded sample documents (such as `registration_form_sample.pdf`) and demo responses are illustrative fixtures designed for interface exploration. Citizens and applicants must not rely on sample fees, processing times, or documentation requirements for real administrative applications; always consult the appropriate issuing authority.
+- **No Guarantee of Absolute Accuracy:** While the verification layer flags ungrounded assertions and contradictory claims against retrieved passages, automated verification is a mitigation rather than an absolute guarantee. Model outputs must be independently verified by the applicant with the relevant government department.
 - **Compute Hardware Requirements:** Running `qwen3:8b` via Ollama requires at least 8 GB of unified RAM / VRAM. On lower-spec hardware, token generation latency will increase.
 - **Severely Degraded Physical Scans:** While Tesseract with custom Devanagari models performs well on standard scans, heavily crumpled, torn, or low-contrast mobile snapshots may reduce extraction confidence. The system explicitly alerts the user when OCR confidence falls below 60%.
 - **Romanized Query Challenges:** Cross-lingual retrieval on unstandardized Romanized Nepali (e.g. *"nagarikta banauna k k chaincha"*) scores 0.50 Hit@1. Standardizing colloquial phonetic variants remains an ongoing area of research.

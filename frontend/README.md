@@ -9,7 +9,7 @@ The web client for **hamiGenZ** — Nepal's evidence-grounded AI civic document 
 The hamiGenZ frontend provides a civic document workspace designed for accessibility, transparency, and auditability:
 - **Landing Page**: Features a scroll-driven, continuous SVG provenance thread animation, interactive document sandbox preview, and responsive capability breakdowns.
 - **Interactive Workspace**: A split-screen environment with document reading, dual-script previews (Devanagari / English), inline citation attribution, in-document keyword search, civic checklist extraction, and reference-filled form previewing.
-- **Offline Demo Mode**: Embedded offline client architecture that allows full interactive exploration on public cloud deployments (such as Vercel) without transmitting user data or requiring a local GPU backend.
+- **Offline Demo Mode**: Embedded offline client architecture that allows full interactive exploration on public cloud deployments (such as Vercel) without requiring an active backend or local GPU instance.
 
 ---
 
@@ -101,9 +101,10 @@ npm run start
 ## Demo Mode vs. Live Backend Mode
 
 1. **Public Demo Mode (Default on Vercel):**
-   - Operates entirely client-side using validated fixtures (e.g., `registration_form_sample.pdf`).
-   - Does not make calls to `127.0.0.1` or third-party cloud APIs.
-   - Any uploaded user documents are held strictly in local browser memory and never transmitted across the network.
+   - Operates entirely client-side using illustrative fixtures (e.g., `registration_form_sample.pdf`).
+   - Does not attempt network calls to `127.0.0.1` or third-party cloud APIs on public hostnames.
+   - Any uploaded user documents in Demo Mode are retained strictly within transient browser state and are not uploaded to a backend server.
+   - **Notice:** Sample notices, fees, and deadlines are for interface demonstration only and must not be relied upon for real civic or administrative applications.
 2. **Live Backend Mode:**
    - Activated automatically when `NEXT_PUBLIC_API_BASE_URL` points to an active FastAPI backend with Ollama (`qwen3:8b`).
    - Supports live Devanagari OCR, dynamic FAISS vector embedding generation, and real-time LLM inference.

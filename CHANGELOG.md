@@ -37,7 +37,7 @@ enderPreviewCanvas() now returns Promise<string> and awaits
 - **frontend/README.md**: Replaced generic template with Next.js 16/React 19 architecture guide, environment variables, demo mode operations, and testing commands.
 - **docs/DEPLOYMENT.md**: Rewritten to document the active Vercel static demo, offline mock architecture, and production self-hosting requirements with Nginx, FastAPI, and Ollama.
 - **docs/DEPLOYMENT_PLAN.md**: Added advisory note classifying it as a historical reference architecture for Azure Linux VM staging.
-- **docs/EVALUATION.md**: Standardized execution commands and clarified the 17 verified gold test cases.
+- **Factual Accuracy & Privacy Claims**: Scoped 100% hallucination-free metrics strictly to the 17-case gold benchmark with explicit notes that it does not guarantee real-world behavior; replaced absolute privacy claims with precise descriptions of the local self-hosted configuration; audited frontend libraries to reflect pure React 19 + native SVG cubic Bézier scroll animation (removing Framer Motion / Lucide React / Canvas Confetti references); and added explicit warnings against relying on illustrative demo sample data for real applications.
 - **LICENSE**: Added standard MIT License (c) 2026 Om Dangol.
 
 ### Documentation — Implementation Status alignment
