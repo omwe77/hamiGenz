@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 /**
  * HeroTypography
  * Cinematic staggered-entry hero text. All animation via globals.css
@@ -8,7 +10,7 @@
 export default function HeroTypography() {
   return (
     <div className="hero-typography-wrap">
-      <div className="editorial-badge hero-anim-item hero-entry--badge">
+      <div id="prov-anchor-hero" className="editorial-badge hero-anim-item hero-entry--badge">
         <span className="badge-dot" aria-hidden="true" />
         <span>Evidence-based civic document assistance</span>
       </div>
@@ -52,7 +54,7 @@ export default function HeroTypography() {
           flexWrap: "wrap",
         }}
       >
-        <a
+        <Link
           href="/workspace"
           className="btn-editorial"
           style={{
@@ -72,7 +74,7 @@ export default function HeroTypography() {
         >
           Open Workspace
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </a>
+        </Link>
         <a
           href="#capabilities"
           style={{

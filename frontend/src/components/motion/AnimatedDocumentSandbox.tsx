@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 
 const DOC_TABS = [
   { id: "simplified", label: "Simplified" },
@@ -13,59 +13,31 @@ const SIMPLIFIED_PASSAGES = [
   {
     id: "p1",
     cited: true,
-    text: "Applicants must submit a citizenship certificate (nagarikta) copy certified by a ward office.",
-    citation: "Section 3.1, Paragraph 2",
+    text: "Applicants must submit an original citizenship certificate (nagarikta) copy along with verified identity credentials.",
+    citation: "Sample Notice · Page 1, Section 2",
   },
   {
     id: "p2",
-    cited: false,
-    text: "Processing fees are non-refundable once the application is reviewed.",
-    citation: null,
+    cited: true,
+    text: "All applicants must confirm biometric scheduling prior to visiting the office for identity verification.",
+    citation: "Sample Notice · Page 1, Section 3",
   },
   {
     id: "p3",
     cited: true,
-    text: "District administration offices charge Rs 5,000 for a 34-page passport; express service costs Rs 10,000.",
-    citation: "Section 7.4, Fee Schedule",
+    text: "District Administration Offices charge NPR 5,000 for standard 34-page passport issuance; department fast-track service costs NPR 12,000.",
+    citation: "Sample Notice · Page 1, Fee Schedule",
   },
 ];
 
 const ORIGINAL_TEXT =
-  "जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र विभागबाट द्रुत सेवा लिन चाहेमा रु १०,०००/- राजश्व दाखिला गर्नुपर्नेछ।";
+  "जिल्ला प्रशासन कार्यालयहरूबाट ३४ पृष्ठको राहदानीका लागि रु ५,०००/- र विभागबाट द्रुत सेवा लिन चाहेमा रु १२,०००/- राजश्व दाखिला गर्नुपर्नेछ।";
 
-const QUESTION_DEMOS = [
-  "What fee do I pay for a passport?",
-  "Which documents must I submit?",
-  "How long does processing take?",
-];
-
-// Cycle through demo questions every 4 s
-function useCyclingQuestion(): string {
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setIdx((i) => (i + 1) % QUESTION_DEMOS.length), 4000);
-    return () => clearInterval(id);
-  }, []);
-  return QUESTION_DEMOS[idx];
-}
+const DEMO_QUESTION = "What fee do I pay for a passport?";
 
 export default function AnimatedDocumentSandbox() {
   const [activeTab, setActiveTab] = useState<TabId>("simplified");
   const [pulsingId, setPulsingId] = useState<string | null>(null);
-  const scanRef = useRef<HTMLDivElement>(null);
-  const cycledQuestion = useCyclingQuestion();
-
-  // Pulse a random cited passage every 3.5 s
-  useEffect(() => {
-    const cited = SIMPLIFIED_PASSAGES.filter((p) => p.cited);
-    let i = 0;
-    const id = setInterval(() => {
-      setPulsingId(cited[i % cited.length].id);
-      setTimeout(() => setPulsingId(null), 1400);
-      i++;
-    }, 3500);
-    return () => clearInterval(id);
-  }, []);
 
   return (
     <div
@@ -128,9 +100,8 @@ export default function AnimatedDocumentSandbox() {
             color: "var(--color-text-secondary)",
             fontStyle: "italic",
           }}
-          aria-live="polite"
         >
-          {cycledQuestion}
+          {DEMO_QUESTION}
         </span>
       </div>
 
@@ -170,7 +141,6 @@ export default function AnimatedDocumentSandbox() {
 
       {/* ── Document Body ─────────────────────────────────────── */}
       <div
-        ref={scanRef}
         style={{
           position: "relative",
           padding: "var(--space-4)",
@@ -188,7 +158,7 @@ export default function AnimatedDocumentSandbox() {
               <div
                 key={p.id}
                 className={`citation-preview-box${pulsingId === p.id ? " is-pulsing" : ""}`}
-                onClick={() => setPulsingId(p.id)}
+                onClick={() => setPulsingId((prev) => (prev === p.id ? null : p.id))}
                 style={{
                   marginBottom: "var(--space-3)",
                   padding: "var(--space-3)",
@@ -246,6 +216,7 @@ export default function AnimatedDocumentSandbox() {
 
       {/* ── Status bar ───────────────────────────────────────── */}
       <div
+        id="prov-anchor-sandbox"
         style={{
           padding: "6px 14px",
           background: "var(--color-surface-raised)",
@@ -257,7 +228,7 @@ export default function AnimatedDocumentSandbox() {
       >
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} aria-hidden="true" />
         <span style={{ fontSize: "10px", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
-          3 citations found · illustrative sample document
+          3 citations verified · illustrative sample notice (offline demo)
         </span>
       </div>
     </div>

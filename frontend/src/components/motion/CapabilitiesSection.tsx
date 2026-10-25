@@ -1,8 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import EvidenceTrail from "./EvidenceTrail";
-import { useSectionScrollProgress } from "@/lib/motion";
+import { isReducedMotion } from "@/lib/motion";
 
 const CAPABILITIES = [
   {
@@ -29,7 +28,7 @@ const CAPABILITIES = [
     title: "Understand",
     headline: "Evidence-Grounded Answers",
     description:
-      "Grounds every response in retrieved passages from the source document. No hallucination—every claim is traceable to a specific page and paragraph.",
+      "Grounds every response in retrieved passages from the source document. Every claim is traceable to a specific page and paragraph for independent verification.",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="11" cy="11" r="8"/>
@@ -58,31 +57,31 @@ const CAPABILITIES = [
 
 export default function CapabilitiesSection() {
   const containerRef = useRef<HTMLDivElement>(null);
-  // Section-scoped scroll progress from when top of section enters to when it reaches upper viewport
-  const scrollProgress = useSectionScrollProgress(containerRef, { offsetStart: 0.85, offsetEnd: 0.25 });
 
   // Intersection observer for both section header reveal and individual card reveals
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const revealTargets = el.querySelectorAll<HTMLElement>(".section-reveal, .capability-card-reveal");
-    const observers: IntersectionObserver[] = [];
-
-    revealTargets.forEach((target) => {
-      const obs = new IntersectionObserver(
-        ([entry]) => {
+    if (isReducedMotion() || !("IntersectionObserver" in window)) {
+      revealTargets.forEach((target) => target.classList.add("visible"));
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            target.classList.add("visible");
-            obs.disconnect();
+            entry.target.classList.add("visible");
+            observer.unobserve(entry.target);
           }
-        },
-        { threshold: 0.1 }
-      );
-      obs.observe(target);
-      observers.push(obs);
-    });
+        });
+      },
+      { threshold: 0.1 }
+    );
 
-    return () => observers.forEach((o) => o.disconnect());
+    revealTargets.forEach((target) => observer.observe(target));
+
+    return () => observer.disconnect();
   }, []);
 
   return (
@@ -115,10 +114,8 @@ export default function CapabilitiesSection() {
         </p>
       </div>
 
-      {/* Cards with SVG trail above them */}
+      {/* Capability Cards */}
       <div className="caps-grid-wrap">
-        <EvidenceTrail progress={scrollProgress} />
-
         <div
           className="caps-grid"
           style={{
@@ -132,7 +129,7 @@ export default function CapabilitiesSection() {
           {CAPABILITIES.map((cap) => (
             <div
               key={cap.id}
-              className="capability-card-reveal editorial-card"
+              id={`prov-anchor-${cap.id}`} className="capability-card-reveal editorial-card"
               style={{ transitionDelay: `${cap.delay}s` }}
             >
               {/* Step badge */}

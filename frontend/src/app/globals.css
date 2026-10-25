@@ -697,65 +697,6 @@ a:hover { color: var(--color-accent-hover); }
   padding-left: 8px;
 }
 
-/* ── Evidence Trail SVG Stroke ─────────────────────────────────── */
-.evidence-trail-container {
-  position: absolute;
-  top: -30px;
-  left: 0;
-  right: 0;
-  height: 64px;
-  pointer-events: none;
-  z-index: 2;
-}
-.evidence-trail-svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-.evidence-milestone-node {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.milestone-core {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-surface);
-  border: 2px solid var(--color-border);
-  transition: background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
-  z-index: 1;
-  position: relative;
-}
-.milestone-halo {
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  background: rgba(200, 82, 11, 0.15);
-  opacity: 0;
-  transform: scale(0.6);
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-.evidence-milestone-node.is-active .milestone-core {
-  background: var(--color-accent);
-  border-color: #ffffff;
-  box-shadow: 0 0 8px rgba(200, 82, 11, 0.5);
-  transform: scale(1.25);
-}
-.evidence-milestone-node.is-active .milestone-halo {
-  opacity: 1;
-  transform: scale(1);
-  animation: pulseHalo 2s infinite ease-out;
-}
-@keyframes pulseHalo {
-  0%   { transform: scale(1);   opacity: 0.6; }
-  100% { transform: scale(1.8); opacity: 0; }
-}
 
 /* ── Capability Cards (Read / Understand / Verify) ─────────────── */
 .capability-card-reveal {
@@ -801,9 +742,6 @@ a:hover { color: var(--color-accent-hover); }
   .caps-grid {
     grid-template-columns: 1fr !important;
   }
-  .evidence-trail-container {
-    display: none !important;
-  }
 }
 @media (max-width: 600px) {
   .hero-headline-accent {
@@ -834,10 +772,81 @@ a:hover { color: var(--color-accent-hover); }
     animation: none !important;
     display: none !important;
   }
-  .evidence-milestone-node.is-active .milestone-halo {
-    animation: none !important;
-  }
-  .milestone-core {
+}
+
+/* ── Continuous Provenance Thread Animations ───────────────────── */
+@keyframes pulseRing {
+  0% { transform: scale(0.8); opacity: 0.8; }
+  50% { transform: scale(1.4); opacity: 0.35; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+.milestone-pulse-ring {
+  fill: rgba(200, 82, 11, 0.2);
+  opacity: 0;
+  transform-origin: center;
+  transition: opacity 0.3s ease;
+}
+
+.prov-milestone-group.is-active .milestone-pulse-ring {
+  opacity: 1;
+  animation: pulseRing 2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.milestone-core-dot {
+  fill: var(--color-surface);
+  stroke: var(--color-border);
+  stroke-width: 1.8;
+  transition: fill 0.3s ease, stroke 0.3s ease;
+}
+
+.prov-milestone-group.is-active .milestone-core-dot {
+  fill: #c8520b !important;
+  stroke: #ffffff !important;
+  filter: drop-shadow(0 0 6px rgba(200, 82, 11, 0.6));
+}
+
+.provenance-thread-wrapper {
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Ensure sections and footer sit above the thread with relative positioning */
+#main-content > section,
+#main-content > .ledger-strip,
+footer {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provenance-thread-wrapper path {
+    stroke-dashoffset: 0 !important;
+    stroke-dasharray: none !important;
     transition: none !important;
   }
+  .milestone-pulse-ring {
+    animation: none !important;
+    opacity: 0.2 !important;
+  }
+}
+
+/* Guarantee all card content, headings, and buttons render above the thread */
+.editorial-card,
+.caps-card,
+.ocr-window,
+.hero-typography-wrap,
+#how-it-works .section-reveal,
+#how-it-works > div {
+  position: relative;
+  z-index: 2;
+}
+
+#how-it-works > div > div {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }

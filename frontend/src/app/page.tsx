@@ -1,20 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useRef } from "react";
 import Link from "next/link";
 import { ScrollDepthIndicator } from "@/components/motion/ScrollDepthIndicator";
 import { AmbientDepthCanvas } from "@/components/motion/AmbientDepthCanvas";
 import HeroTypography from "@/components/motion/HeroTypography";
 import AnimatedDocumentSandbox from "@/components/motion/AnimatedDocumentSandbox";
 import CapabilitiesSection from "@/components/motion/CapabilitiesSection";
+import ProvenanceThread from "@/components/motion/ProvenanceThread";
 import { useEntranceReveals } from "@/lib/motion";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"simplified" | "original">("simplified");
-  useEntranceReveals(".section-reveal");
+  useEntranceReveals(".section-reveal, .capability-card-reveal");
+  const pageRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
+      ref={pageRef}
       style={{
         minHeight: "100vh",
         background: "var(--color-bg)",
@@ -24,15 +26,12 @@ export default function Home() {
         overflowX: "hidden",
       }}
     >
+      <ProvenanceThread containerRef={pageRef} />
       {/* ── Ambient Background ──────────────────────────────────── */}
       <AmbientDepthCanvas />
 
       {/* ── Scroll Depth Indicator ──────────────────────────────── */}
       <ScrollDepthIndicator />
-
-      <a href="#main-content" className="skip-link">
-        Skip to main content
-      </a>
 
       {/* ── Top Navigation ─────────────────────────────────── */}
       <header
@@ -165,7 +164,7 @@ export default function Home() {
       </header>
 
       {/* ── Main Content ──────────────────────────────────── */}
-      <main id="main-content">
+      <main id="main-content" style={{ position: "relative" }}>
         {/* ── Hero Section ─────────────────────────────────── */}
         <section
           style={{
@@ -179,8 +178,61 @@ export default function Home() {
         >
           <HeroTypography />
 
-          {/* Animated Document Sandbox */}
-          <div style={{ marginTop: "var(--space-12)" }}>
+          {/* ── Portfolio Demo Mode Disclosure ─────────────────── */}
+          <div
+            role="note"
+            aria-label="Portfolio demo disclosure"
+            style={{
+              display: "inline-flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "4px",
+              padding: "10px 20px",
+              margin: "var(--space-6) auto 0",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md)",
+              maxWidth: "580px",
+              boxShadow: "0 1px 3px rgba(0, 0, 0, 0.03)",
+            }}
+          >
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "var(--text-xs)",
+                fontWeight: "var(--font-semibold)",
+                color: "var(--color-accent)",
+                letterSpacing: "0.02em",
+              }}
+            >
+              <span
+                style={{
+                  width: "7px",
+                  height: "7px",
+                  borderRadius: "50%",
+                  background: "var(--color-accent)",
+                  display: "inline-block",
+                }}
+                aria-hidden="true"
+              />
+              Portfolio Demo &middot; Live AI Backend Not Connected
+            </div>
+            <p
+              style={{
+                fontSize: "11px",
+                lineHeight: "1.5",
+                color: "var(--color-text-secondary)",
+                margin: 0,
+              }}
+            >
+              This public deployment uses predefined sample responses to showcase document analysis and citation tracking. Live AI processing requires a configured local backend.
+            </p>
+          </div>
+
+          {/* ── Animated Document Sandbox ───────────────────────── */}
+          <div id="example" style={{ marginTop: "var(--space-8)" }}>
             <AnimatedDocumentSandbox />
           </div>
         </section>
@@ -190,7 +242,7 @@ export default function Home() {
         <section className="ledger-strip" aria-label="Core operational principles">
           <div className="container">
             <div className="ledger-grid">
-              <div>
+              <div id="prov-anchor-ledger">
                 <span className="section-label">Evidence Grounding</span>
                 <h4 style={{ fontSize: "var(--text-base)", fontWeight: "var(--font-semibold)", marginTop: "4px" }}>
                   Every claim is cited
@@ -268,6 +320,7 @@ export default function Home() {
             }}
           >
             <div
+              id="prov-anchor-work-1"
               style={{
                 borderLeft: "2px solid var(--color-accent)",
                 paddingLeft: "var(--space-4)",
@@ -292,6 +345,7 @@ export default function Home() {
             </div>
 
             <div
+              id="prov-anchor-work-2"
               style={{
                 borderLeft: "2px solid var(--color-border)",
                 paddingLeft: "var(--space-4)",
@@ -316,6 +370,7 @@ export default function Home() {
             </div>
 
             <div
+              id="prov-anchor-work-3"
               style={{
                 borderLeft: "2px solid var(--color-border)",
                 paddingLeft: "var(--space-4)",
@@ -374,7 +429,7 @@ export default function Home() {
               No registration required.
             </p>
 
-            <Link
+            <Link id="prov-anchor-cta"
               href="/workspace"
               style={{
                 display: "inline-flex",
@@ -410,6 +465,7 @@ export default function Home() {
 
       {/* ── Footer ────────────────────────────────────────── */}
       <footer
+        id="prov-anchor-footer"
         style={{
           padding: "var(--space-12) var(--space-6)",
           maxWidth: "var(--max-width)",

@@ -72,12 +72,14 @@ export default function WorkspacePage() {
     setDemoMode(applied);
 
     if (applied) {
+      setError(null);
       setDocuments(DEMO_SAMPLES);
       setActiveDocId("demo-registration-form");
     } else {
       setActiveDocId(null);
       listDocuments()
         .then((docs) => {
+          setError(null);
           setDocuments(docs);
           if (docs.length > 0) {
             setActiveDocId(docs[0].doc_id);
@@ -86,6 +88,7 @@ export default function WorkspacePage() {
         .catch((err) => {
           console.error("Failed to load live documents:", err);
           setDocuments([]);
+          setError("Cannot connect to local backend (http://127.0.0.1:8000). Ensure the backend server is running, or switch back to Demo Mode.");
         });
     }
   };
