@@ -1,5 +1,10 @@
 # hamiGenZ — Azure Staging Deployment Plan
 
+> [!NOTE]
+> **Historical / Staging Reference Plan**
+> This document describes the planned multi-tier staging architecture for running hamiGenZ on an Azure Linux VM with Ollama and FastAPI.
+> The active public demo is deployed on **Vercel** (`https://hami-genz.vercel.app/`) as a client-side portfolio demonstration operating in offline sample mode. For full self-hosting and deployment instructions, refer to [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Architecture
 
 ```

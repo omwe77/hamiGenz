@@ -1,7 +1,10 @@
 # hamiGenZ — Nepal-Focused AI Document Understanding & Grounded Knowledge Platform
 
-> A local-first, privacy-centric AI platform engineered to make complex Nepali administrative notices, government forms, and civil documents universally understandable. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance with evidence-grounded citations and contradiction detection.
+> A privacy-centric, evidence-grounded AI platform engineered to make complex Nepali administrative notices, civil documents, and government procedures universally accessible. Built on the **Open Knowledge Format (OKF v0.2)**, offline multilingual vector embeddings, Devanagari OCR, and a strict verification layer—guaranteeing verifiable provenance, evidence-grounded citations, and hallucination guardrails.
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-hami--genz.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://hami-genz.vercel.app/)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-omwe77%2FhamiGenz-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/omwe77/hamiGenz)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org)
@@ -10,25 +13,55 @@
 
 ---
 
-## 1. Problem & Context: Why hamiGenZ Matters in Nepal
-
-Navigating public services in Nepal presents severe cognitive and linguistic hurdles:
-- **Administrative Complexity:** Official guidelines for vital documents (Citizenship Certificates, e-Passports, National Identity Cards (NID), and Voter IDs) are published across disparate government gazettes, complex legal PDFs, and scanned circulars.
-- **Linguistic Hurdles:** Notices frequently mix formal bureaucratic Devanagari, English, and colloquial Romanized Nepali.
-- **The Pitfall of General-Purpose LLMs:** Standard cloud LLMs hallucinate obsolete fee structures, fabricate nonexistent embassy procedures, and cannot reliably parse degraded Devanagari scans.
-- **Privacy Constraints:** Citizens should never be forced to upload sensitive identity records to third-party cloud AI vendors.
-
-**hamiGenZ** addresses this gap as a **fully local, grounded document-understanding platform**. It ingests citizen documents, extracts bilingual text via specialized OCR, routes queries against an authoritative structured knowledge layer, and produces plain-language explanations backed by verifiable citations.
+> [!NOTE]
+> ### 🌐 Portfolio Demo Disclosure
+> The public deployment at [hami-genz.vercel.app](https://hami-genz.vercel.app/) is a **client-side portfolio demonstration** hosted on Vercel.
+> - **Predefined Sample Mode:** The live web demo showcases full UI interactions, the split-screen document workspace, dynamic citation highlighting, action checklist extraction, and the continuous scroll-driven provenance thread using pre-computed sample responses.
+> - **Live AI Backend:** Real-time processing of arbitrary user uploads, Tesseract OCR, dynamic vector indexing, and local LLM inference require a locally hosted or cloud-hosted instance of the FastAPI backend connected to an [Ollama](https://ollama.ai) instance (`qwen3:8b`). Follow the [Quick Start](#7-quick-start--local-development) instructions below to run the complete end-to-end stack locally.
 
 ---
 
-## 2. Key Concepts & The Knowledge Layer: OKF Beyond Conventional RAG
+## Table of Contents
 
-A core architectural pillar of hamiGenZ is moving beyond standard naive Retrieval-Augmented Generation (RAG):
+1. [Problem & Context: Why hamiGenZ Matters in Nepal](#1-problem--context-why-hamigenz-matters-in-nepal)
+2. [Dual Retrieval Architecture: OKF v0.2 vs Conventional RAG](#2-dual-retrieval-architecture-okf-v02-vs-conventional-rag)
+3. [End-to-End System Architecture](#3-end-to-end-system-architecture)
+4. [Key Features & Capabilities](#4-key-features--capabilities)
+5. [Technology Stack](#5-technology-stack)
+6. [Repository Layout](#6-repository-layout)
+7. [Quick Start & Local Development](#7-quick-start--local-development)
+8. [Configuration & Environment Variables](#8-configuration--environment-variables)
+9. [Evaluation & Benchmark Results](#9-evaluation--benchmark-results)
+10. [Known Limitations & Operational Boundaries](#10-known-limitations--operational-boundaries)
+11. [License & Attribution](#11-license--attribution)
+
+---
+
+## 1. Problem & Context: Why hamiGenZ Matters in Nepal
+
+Navigating civil and public administration in Nepal presents severe cognitive, linguistic, and operational hurdles for citizens:
+
+- **Bureaucratic & Administrative Fragmentation:** Guidelines for essential civil documents (Citizenship Certificates, Machine Readable Passports/e-Passports, National Identity Cards (NID), and Voter Registrations) are dispersed across disparate legal gazettes, complex municipal circulars, and low-contrast scanned PDFs.
+- **Multilingual & Multi-Script Confusion:** Official public notices frequently mix archaic legal Devanagari, English technical jargon, and colloquial Romanized Nepali. Citizens often struggle to translate official terms into actionable steps.
+- **The Pitfall of General-Purpose Cloud LLMs:** Standard cloud LLMs routinely hallucinate obsolete fees, invent nonexistent consular rules, lack awareness of Bikram Sambat (B.S.) date formats, and fail on low-resolution Devanagari scans.
+- **Privacy & Sovereignty Concerns:** Citizens should never be required to upload sensitive personal identification documents (such as citizenship certificates or birth records) to commercial, third-party cloud AI vendors.
+
+**hamiGenZ** solves this challenge with a **local-first, grounded document-understanding platform**. It ingests citizen documents, extracts bilingual text using OCR with Devanagari character-density detection, routes inquiries against an authoritative curated knowledge base (OKF v0.2), and generates multi-tier simplified explanations backed by verifiable, interactive citations.
+
+---
+
+## 2. Dual Retrieval Architecture: OKF v0.2 vs Conventional RAG
+
+Standard Retrieval-Augmented Generation (RAG) relies on blindly slicing documents into arbitrary character chunks, embedding them, and retrieving the top-$k$ nearest neighbors via cosine similarity. In civic and legal domains, this introduces fatal flaws:
+- Context is fractured across chunk boundaries (e.g., fee exceptions separated from base fee schedules).
+- Outdated or conflicting public circulars are statistically retrieved if vocabulary matches.
+- There is no concept graph or typed hierarchy among prerequisite documents.
+
+hamiGenZ implements a **Dual-Path Retrieval Architecture**:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Why OKF is Not Just RAG                         │
+│             Why OKF v0.2 Outperforms Conventional Naive RAG           │
 ├───────────────────────────────────┬────────────────────────────────────┤
 │ Standard Chunk-Based RAG          │ Open Knowledge Format (OKF v0.2)   │
 ├───────────────────────────────────┼────────────────────────────────────┤
@@ -36,247 +69,317 @@ A core architectural pillar of hamiGenZ is moving beyond standard naive Retrieva
 │ Context lost across split chunks  │ Durable frontmatter & provenance   │
 │ Blind retrieval of outdated info  │ Versioned trust tiers & validation │
 │ No relationship awareness         │ Bounded graph link traversal       │
+│ Vulnerable to chunk boundaries    │ Self-contained atomic entities     │
 └───────────────────────────────────┴────────────────────────────────────┘
 ```
 
-### The Role of Open Knowledge Format (OKF v0.2)
-hamiGenZ implements the **Open Knowledge Format (OKF v0.2)** specification as its structured knowledge foundation:
-1. **Durable Knowledge Units:** Located under `data/okf/`, knowledge is stored as versioned Markdown files with rich YAML frontmatter, capturing concept IDs, authoritative sources (`verified: {by, at}`), and explicit concept relationships (`links`).
-2. **Canonical Domain Truth:** Rather than hoping an embedding model retrieves the correct page count for an e-Passport (e.g. 34 vs 66 pages) from an arbitrary chunk, OKF concept files define canonical, machine-validated facts.
-3. **Bounded Graph Traversal:** When a query touches related administrative workflows (e.g., citizenship prerequisites for passport applications), the OKF engine traverses typed links up to bounded depth to build a cohesive evidence package.
+1. **Curated Canonical Knowledge (OKF v0.2):**
+   - Located under `data/okf/`, official civic procedures are stored as versioned Markdown concept files with structured YAML frontmatter.
+   - Files define explicit concept types (`DocumentType`, `FormGuide`, `OCRRule`, `FieldDefinition`), authoritative sources (`verified: {by, at}`), and explicit graph links (`links`).
+   - The query router traverses typed links up to a bounded depth to construct deterministic, cohesive context packages.
+   - Validated at build time via `backend/okf_validator.py`.
+
+2. **Uploaded Document Retrieval (Multilingual FAISS Vector Store):**
+   - User-uploaded PDFs and scans are chunked with structural awareness and indexed into per-document FAISS CPU indices.
+   - Vectorized using `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dimensional dense vectors), specifically evaluated for high cross-lingual transfer between English and Devanagari Nepali.
+   - Index headers include an embedding model stamp to prevent silent vector space corruption.
 
 ---
 
 ## 3. End-to-End System Architecture
 
+```mermaid
+flowchart TD
+    subgraph Client["Frontend Client (Next.js 16 + React 19)"]
+        UI["Interactive Split Workspace"]
+        Viewer["Document Previewer & Citation Highlighter"]
+        Panel["Explanation Panel (Original / Simple / Very Simple)"]
+        UI --> Viewer
+        UI --> Panel
+    end
+
+    subgraph Backend["FastAPI Backend (Python 3.12)"]
+        Router{"Query Router (/ask, /explain, /actions)"}
+
+        subgraph DualRetrieval["Dual Retrieval Pipeline"]
+            direction TB
+            subgraph PathA["Curated Canonical Path"]
+                OKF["OKF v0.2 Bundle (data/okf/)"]
+                Graph["Concept Graph & YAML Provenance"]
+                OKF --> Graph
+            end
+
+            subgraph PathB["User Document Path"]
+                Upload["Document Ingestion (/upload)"]
+                OCR["Tesseract 5 (nep + eng) / PyMuPDF"]
+                Chunker["Sentence Chunker"]
+                FAISS["FAISS CPU Vector Store (MiniLM-L12)"]
+                Upload --> OCR --> Chunker --> FAISS
+            end
+        end
+
+        Guard["Prompt Injection Defense & Delimiter Isolation"]
+        Ollama["Ollama Runtime (qwen3:8b)"]
+        Verify["Verification Layer (Grounding & Contradiction Guard)"]
+        Sources["Official Source Registry (10 Curated .gov.np Portals)"]
+
+        Router -->|Curated Civic Query| PathA
+        Router -->|Document-Specific Query| PathB
+        Router -->|General Infolink Query| Sources
+
+        PathA --> Guard
+        PathB --> Guard
+        Sources --> Guard
+
+        Guard --> Ollama
+        Ollama --> Verify
+        Verify -->|Grounded Response + Citations| UI
+    end
 ```
-                                  ┌────────────────────────┐
-                                  │      User Browser      │
-                                  │ Next.js 16 + React 19  │
-                                  └───────────┬────────────┘
-                                              │ (REST API)
-                                  ┌───────────▼────────────┐
-                                  │    FastAPI Backend     │
-                                  │      (Python 3.12)     │
-                                  └───────────┬────────────┘
-                                              │
-                      ┌───────────────────────┴───────────────────────┐
-                      │                                               │
-           ┌──────────▼──────────┐                         ┌──────────▼──────────┐
-           │   Document Pipeline │                         │    Query Router     │
-           │ • PyMuPDF / Plumber │                         │ • OKF Structural KB │
-           │ • Tesseract (nep)   │                         │ • Document Evidence │
-           │ • Sentence Chunker  │                         │ • Official Registry │
-           │ • FAISS Vector Store│                         │ • Trilingual Parser │
-           └──────────┬──────────┘                         └──────────┬──────────┘
-                      │                                               │
-                      └───────────────────────┬───────────────────────┘
-                                              │
-                                  ┌───────────▼────────────┐
-                                  │  Evidence Preparation  │
-                                  │  Prompt Injection Guard│
-                                  │  Untrusted Delimiters  │
-                                  └───────────┬────────────┘
-                                              │
-                                  ┌───────────▼────────────┐
-                                  │     Ollama Runtime     │
-                                  │       (qwen3:8b)       │
-                                  └───────────┬────────────┘
-                                              │
-                                  ┌───────────▼────────────┐
-                                  │   Verification Layer   │
-                                  │ • Grounding Validation │
-                                  │ • Contradiction Check  │
-                                  │ • Citation Attribution │
-                                  └───────────┬────────────┘
-                                              │
-                                  ┌───────────▼────────────┐
-                                  │ Final Grounded Answer  │
-                                  │ + Interactive Citations│
-                                  └────────────────────────┘
-```
 
-### Component Breakdown
+### In-Depth Pipeline Walkthrough
 
-1. **Frontend Workspace (`frontend/`):**
-   - Built with Next.js 16 (Turbopack, TypeScript) and React 19.
-   - Interactive split-screen: document preview with dynamic citation highlighting on the left, multi-level explanation panel (Original, Simple, Very Simple) on the right.
-   - Zero telemetry leaks: compiled as a static client with configurable API backend routing.
-
-2. **Ingestion & OCR Pipeline (`backend/pipeline.py`, `backend/ocr.py`):**
-   - Dual-engine parsing: `pdfplumber` and `PyMuPDF` for digital documents; Tesseract 5.x with custom Nepali language data (`nep.traineddata`) for scanned images.
-   - Automated script selector: tests Devanagari character densities to select between pure Nepali and bilingual OCR modes.
-
-3. **Multilingual Vector Engine (`backend/vector_store.py`):**
-   - Powered by `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dimensional dense vectors).
-   - FAISS CPU indexes stored per document, with vector model checksums to eliminate model-switch index corruption.
-
-4. **Prompt Injection Defense (`backend/prompt_guard.py`):**
-   - Sanitizes untrusted user documents before constructing LLM context.
-   - Strips zero-width unicode smuggling characters and system-role hijacking patterns.
-   - Wraps retrieved chunks inside isolated `<evidence>` blocks with explicit system boundaries.
-
-5. **Verification & Grounding (`backend/verification.py`):**
-   - Secondary validation pass comparing LLM output against retrieved source chunks.
-   - Rejects unsupported assertions: if evidence does not substantiate a claim, the system responds: *"I could not verify this from an authoritative source."*
+1. **Document Ingestion & OCR:** Digital PDFs are processed directly via `pdfplumber` and `PyMuPDF`. Scanned images and raster PDFs are analyzed with Tesseract 5.x. An automatic script detector analyzes Devanagari character density to dynamically switch between Nepali-primary (`nep`) and bilingual (`nep+eng`) recognition modes.
+2. **Security & Prompt Defense (`backend/prompt_guard.py`):** Before constructing prompt context, untrusted text is sanitized: zero-width unicode smuggling characters and role-hijacking tokens are stripped. All retrieved passages are isolated inside strict `<evidence>` delimiters with non-override instructions.
+3. **Local Inference:** Queries and isolated evidence are dispatched to a local Ollama server running `qwen3:8b` (4-bit quantized, ~4.5 GB footprint), ensuring no citizen data leaves the host.
+4. **Verification & Grounding (`backend/verification.py`):** A secondary deterministic check inspects the model's generated claims against the retrieved evidence text. If key facts lack explicit provenance or if negation states are inverted, the response is rejected or flagged: *"I could not verify this from an authoritative source."*
+5. **Interactive UI Rendering:** The Next.js frontend highlights corresponding text citations directly on the document canvas when a user clicks on an explanation citation tag.
 
 ---
 
-## 4. Implementation Status
+## 4. Key Features & Capabilities
 
-### Implemented (Verified in Active Codebase)
-- **Open Knowledge Format (OKF v0.2) Layer:** Conformance validator (`backend/okf_validator.py`), YAML frontmatter parser, graph link traversal, and concept router covering Nepal Passport, Citizenship, National ID, Voter ID, and form-fill guidelines.
-- **Bilingual OCR Pipeline:** Dual-engine OCR with Tesseract 5.x (using `nep.traineddata` and `eng.traineddata`) and PyMuPDF/pdfplumber, with automated Devanagari script detection.
-- **Multilingual Vector Retrieval:** FAISS CPU dense vector index populated by `paraphrase-multilingual-MiniLM-L12-v2` (384-dim) with model-switch checksum protection.
-- **Prompt Injection Defense:** Evidence isolation wrapping untrusted document text in `<evidence>` delimiters, role hijack neutralization, and zero-width unicode character stripping.
-- **Grounding & Contradiction Verification:** Secondary inference layer that compares LLM responses against retrieved source passages and enforces refusal on ungrounded claims.
-- **Multi-Tier Explanation Engine:** Three selectable simplification tiers (Original Text, Simple Summary, Bullet Breakdown) with trilingual language handling (Devanagari, Romanized Nepali, English).
-- **Split-Pane Next.js 16 Workspace:** Responsive desktop, tablet, and mobile interface with interactive document viewing, dynamic citation clicking, and empty-state guidance.
-- **Comprehensive Test Suite:** **295 passing unit, pipeline, security, form-preview, and golden query tests** via `pytest`.
-- **Action Layer (Form Assistance & Action Extraction):** `POST /actions` endpoint (action_extractor.py) extracts requirements (checklists), deadlines, fees, eligibility, next steps, and official links from pasted text or a document's retrieved evidence; LLM structured extraction cross-checked against deterministic regex hints; Nepali-aware normalization (Devanagari digits, day-first dates, currency); official-link safety (only gov.np / org.np / edu.np URLs ever displayed).
-- **Official Source Answering:** `/ask-general` endpoint answers official-information questions (fees, procedures, laws, deadlines) from VERIFIED REGISTRY SOURCES via a local knowledge cache — evidence from curated sources only, SSRF-safe, never model memory dressed as official (PR-012).
-- **Official Source Registry:** Curated registry of 10 authoritative Nepali sources (passport, national ID/civil registration, immigration, traffic, laws, judiciary, tax, citizenship, supreme court, govt portal) with full metadata (organization, domain, title, category, source type, authority level, verified status, current/outdated status) (PR-011).
-- **Evaluation System:** Gold dataset (12+ human-verified cases across 11 categories with alternative-form key facts, forbidden facts, and sentence-level negation guards), retrieval benchmark (Hit@k / MRR / negative probes across English, Nepali, romanized, mixed), explanation evaluator (deterministic fact checks, no LLM judge in CI) — results recorded in docs/EVALUATION.md.
-### Planned (Future Roadmap)
-- **Offline Standalone Desktop Executable:** Packaging the frontend and local inference runtime into a self-contained Tauri/Electron desktop application for remote civic workers without internet connectivity.
-- **Government Gazette Web Scraping:** Automated indexing pipeline for new circulars from official `.gov.np` portals.
+- 📄 **Interactive Split-Screen Workspace:** Left panel renders the active PDF or image with bounding citations; right panel renders multi-tier explanations with interactive verification cards.
+- 🎚️ **Multi-Tier Simplification:** Read documents at three distinct cognitive levels:
+  - **Original:** Exact, unabridged legal/administrative text.
+  - **Simple:** Plain-language summary removing bureaucratic legalese.
+  - **Very Simple:** Bulleted breakdown with step-by-step guidance tailored for accessibility.
+- ✅ **Action Extraction & Form Checklists (`/actions`):** Automatically extracts required documents, deadlines, fees (with Devanagari and Arabic numeral normalization), eligibility rules, and official `.gov.np` portals.
+- 🏛️ **Official Source Registry (`/knowledge/sources`):** Curated directory of 10 verified Nepali government institutions (Passport Department, National ID & Civil Registration, Immigration, Supreme Court, Inland Revenue, etc.) with verified domain boundaries.
+- 🔒 **Local-First Privacy:** Zero cloud telemetry or external third-party model inference. Citizen documents and vector indices remain exclusively on local disk.
+- 🎨 **Full-Page Provenance Animation:** Scroll-driven continuous SVG provenance thread built with Framer Motion, illustrating the chain of custody from document intake to grounded verification.
 
 ---
 
-## 5. User Experience & Responsive Design
+## 5. Technology Stack
 
-The hamiGenZ workspace provides an accessible interface engineered to handle complex documents gracefully across screen sizes:
+### Frontend
+- **Framework:** Next.js 16.3 (App Router, Turbopack)
+- **UI Library:** React 19, TypeScript
+- **Styling:** Vanilla CSS with design token variables (glassmorphism, modern dark aesthetic)
+- **Animation & Motion:** Framer Motion, Canvas Confetti
+- **Icons:** Lucide React
 
-```
-┌──────────────────────────────────────┬──────────────────────────────────────┐
-│ Document Viewer                      │ Grounded Explanation Panel           │
-├──────────────────────────────────────┼──────────────────────────────────────┤
-│ [Page 1 / 3]                         │ [Original] [Simple] [Very Simple]    │
-│                                      │                                      │
-│ "...citizenship certificate is       │ Verified Answer:                     │
-│ required to verify applicant's date  │ You must present your original       │
-│ of birth and permanent residency..." │ citizenship certificate to prove     │
-│ [Citation 1 highlighted]             │ permanent residency. [Citation 1]    │
-└──────────────────────────────────────┴──────────────────────────────────────┘
-```
-
-*Desktop and mobile layouts tested and verified across 375px (mobile), 768px (tablet), 1024px, 1280px, and 1440px viewport widths.*
+### Backend
+- **Framework:** FastAPI 0.115+, Uvicorn, Pydantic v2
+- **Language:** Python 3.12+
+- **OCR Engine:** Tesseract OCR 5.x (`nep` and `eng` traineddata), PyMuPDF (`fitz`), pdfplumber
+- **Embeddings & Vector Store:** `sentence-transformers` (`paraphrase-multilingual-MiniLM-L12-v2`), FAISS (CPU)
+- **Inference Runtime:** [Ollama](https://ollama.ai) (`qwen3:8b`)
+- **Knowledge Format:** Open Knowledge Format (OKF v0.2) specification
 
 ---
 
-## 6. Quick Start & Local Development
+## 6. Repository Layout
+
+```
+hamiGenz/
+├── backend/                  # FastAPI Application & Core Engines
+│   ├── main.py               # REST API endpoints (20 routes)
+│   ├── okf_bundle.py         # OKF v0.2 parser, loader & graph router
+│   ├── okf_validator.py      # Conformance & schema checker for OKF
+│   ├── pipeline.py           # Ingestion, chunking, and document workflow
+│   ├── ocr.py                # Dual-engine Tesseract & PyMuPDF extractor
+│   ├── vector_store.py       # FAISS dense index with model checksum guard
+│   ├── prompt_guard.py       # Injection sanitizer & evidence delimiter guard
+│   ├── verification.py       # Post-generation grounding & contradiction filter
+│   ├── action_extractor.py   # Fee, deadline, and checklist extractor
+│   ├── source_registry.py    # Curated official Nepali government sources
+│   └── form_preview.py       # Form field detection & coordinate overlay
+├── data/
+│   ├── okf/                  # Curated OKF v0.2 concept files & graphs
+│   └── uploads/              # Local uploaded document storage (gitignored)
+├── docs/                     # Architectural, deployment, and benchmark documentation
+│   ├── DEPLOYMENT.md         # Production deployment & self-hosting guide
+│   ├── DEPLOYMENT_PLAN.md    # Staging reference plan (historical Azure design)
+│   └── EVALUATION.md         # Retrieval benchmarks & gold evaluation results
+├── frontend/                 # Next.js 16 + React 19 Frontend Application
+│   ├── src/
+│   │   ├── app/              # App router (homepage, workspace, layout)
+│   │   ├── components/       # UI components (workspace, motion, forms)
+│   │   └── lib/              # API clients, sample offline fixtures, mock state
+│   └── public/               # Static icons, sample documents, blank forms
+├── tests/                    # Backend automated test suite
+│   ├── evaluation/           # Gold dataset (17 cases) & retrieval benchmarks
+│   ├── test_actions.py       # Checklist & action extraction tests
+│   ├── test_forms.py         # Form field detection tests
+│   ├── test_okf.py           # OKF bundle loading & graph tests
+│   ├── test_pipeline.py      # End-to-end ingestion tests
+│   ├── test_prompt_guard.py  # Security & sanitization tests
+│   └── test_security.py      # Path traversal & delimiter tests
+├── CHANGELOG.md              # Project version history
+├── LICENSE                   # MIT License
+└── README.md                 # Project documentation
+```
+
+---
+
+## 7. Quick Start & Local Development
 
 ### Prerequisites
-- **Python:** 3.12+
-- **Node.js:** 20.9+ (Next.js 16 minimum; tested with v20+)
-- **Ollama:** Installed and running locally (`ollama pull qwen3:8b`)
-- **Tesseract OCR:** Installed with `nep` (Nepali) and `eng` (English) trained data.
-  - Windows: Install via UB-Mannheim and install Nepali language data.
-  - Linux: `sudo apt install tesseract-ocr tesseract-ocr-nep tesseract-ocr-eng`
 
-### Cloud Deployment Requirements (NOT yet met)
-- **Persistent document storage:** SQLite database (`backend/data/hamigenz.db`) and uploaded documents
-  (`backend/data/uploads/`) must run on persistent storage (persistent volume or managed storage).
-  Ephemeral storage WILL LOSE ALL DATA on restart or scaling.
-- **Qwen3 8B Ollama dependency:** The backend requires a local Ollama server with `qwen3:8b` model
-  available for LLM inference. Free cloud tiers do not provide this; a dedicated GPU/VPU instance is
-  required for production. Until this is resolved, the application is NOT freely deployable.
+1. **Python:** 3.12 or higher
+2. **Node.js:** 20.9+ (Next.js 16 requirement)
+3. **Ollama:** Installed and running locally. Pull the target model:
+   ```bash
+   ollama pull qwen3:8b
+   ```
+4. **Tesseract OCR:** Installed with both English and Nepali language packs:
+   - **Ubuntu/Debian:** `sudo apt install tesseract-ocr tesseract-ocr-nep tesseract-ocr-eng`
+   - **macOS (Homebrew):** `brew install tesseract tesseract-lang`
+   - **Windows:** Install via [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki), ensuring `Nepali` language data is selected during setup.
 
-### 1. Backend Setup
+---
+
+### Step 1: Set Up and Run the Backend
 
 ```bash
 # Clone the repository
 git clone https://github.com/omwe77/hamiGenz.git
 cd hamiGenz
 
-# Create and activate Python virtual environment
+# Create and activate a Python virtual environment
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
 
-# Install dependencies
+# On Linux/macOS:
+source .venv/bin/activate
+# On Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+
+# Install backend dependencies
 pip install -r requirements.txt
 
-# Start the FastAPI server
+# Start the FastAPI server (reloads on file changes)
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-The API documentation will be available at `http://localhost:8000/docs`.
+The FastAPI OpenAPI documentation will be accessible at `http://127.0.0.1:8000/docs`.
 
-### 2. Frontend Setup
+---
+
+### Step 2: Set Up and Run the Frontend
+
+In a separate terminal window:
 
 ```bash
-# In a separate terminal, navigate to the frontend directory
 cd frontend
 
-# Install dependencies
+# Install npm dependencies
 npm install
 
 # Start Next.js development server
 npm run dev
 ```
 
-Open `http://localhost:3000` to access the interactive workspace.
+Open `http://localhost:3000` in your browser. The application will connect directly to your local FastAPI backend. If the backend is not running, the frontend gracefully falls back to interactive Demo Mode.
 
 ---
 
-## 7. Environment Variables
+### Step 3: Run Automated Verification Tests
 
-Create a `.env` file in the project root:
-
-```env
-# Ollama Configuration
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3:8b
-
-# Embedding & Retrieval Model
-EMBED_MODEL=paraphrase-multilingual-MiniLM-L12-v2
-REINDEX_ON_STARTUP=1
-
-# Security & CORS
-FRONTEND_ORIGIN=http://localhost:3000
-CORS_EXTRA_ORIGINS=
-
-# Note: Storage directories are managed under backend/data/ (uploads, vectors, hamigenz.db).
-```
-
----
-
-## 8. Verification & Test Suite
-
-hamiGenZ maintains a strict test-driven development workflow:
+Verify the entire system using the built-in test suites:
 
 ```bash
-# Run the full backend test suite
-pytest tests/ -v
+# 1. Run the backend unit and integration test suite
+python -m pytest tests/test_actions.py tests/test_forms.py tests/test_security.py tests/test_source_registry.py tests/test_prompt_guard.py tests/test_pipeline.py tests/test_okf.py -q
 
-# Run OKF specification conformance validator directly
+# 2. Validate the OKF v0.2 knowledge bundle conformance
 python -m backend.okf_validator
 
-# Build and type-check the Next.js frontend
+# 3. Run the offline evaluation self-consistency mock
+python -m tests.evaluation.eval_explanations
+
+# 4. In frontend/: run automated offline client checks and Next.js build
 cd frontend
+npm run test
 npm run build
 ```
 
 ---
 
-## 9. Limitations & Boundary Conditions
+## 8. Configuration & Environment Variables
 
-- **Local Compute Demands:** Running `qwen3:8b` via Ollama requires at least 8 GB of unified RAM / VRAM for acceptable inference latency.
-- **Scanned Document Quality:** Extreme degradation, physical tears, or blurred mobile photos may reduce OCR accuracy; the pipeline warns the user when OCR confidence falls below 60%.
-- **No Direct Filing:** hamiGenZ provides explanatory guidance and verified criteria; it does not directly submit citizen applications to government portals.
+Create a `.env` file in the repository root for backend configuration:
+
+```env
+# Ollama LLM Runtime
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+
+# Multilingual Embeddings & Vector Store
+EMBED_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+REINDEX_ON_STARTUP=1
+
+# CORS & Frontend Origins
+FRONTEND_ORIGIN=http://localhost:3000
+CORS_EXTRA_ORIGINS=https://hami-genz.vercel.app
+
+# Local Storage (Managed under backend/data/)
+# backend/data/hamigenz.db (Metadata SQLite)
+# backend/data/uploads/    (Uploaded PDFs and scans)
+# backend/data/vectors/    (FAISS indices and model stamps)
+```
+
+For the frontend, configure `frontend/.env.local` if your backend runs on a custom host:
+
+```env
+# Frontend environment
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
 
 ---
 
-## 9. Known Limitations & Operational Bounds
+## 9. Evaluation & Benchmark Results
 
-- **OCR on Degraded Documents:** Devanagari OCR accuracy can drop on heavily blurred, torn, or low-contrast physical paper scans. In such cases, the system flags lower extraction confidence and prompts for manual review.
-- **Hardware Requirements for Local LLMs:** Running fully local 8B models (e.g. `qwen2.5:7b` or `qwen3:8b`) requires at least 8 GB of unified memory / RAM.
-- **Civic Clarification Scope:** hamiGenZ provides educational and informational explanations to help citizens navigate administrative processes. It is not an official government determination, legal certification, or statutory counsel. Always verify critical procedures directly with the issuing government authority.
+hamiGenZ is rigorously evaluated against a **human-verified gold dataset** (`tests/evaluation/gold_dataset.py`) consisting of 17 real-world test cases covering formal Nepali, statutory clauses, conditional fee waivers, Bikram Sambat date conversions, and mixed-script text.
 
-## 10. License & Attribution
+Detailed evaluation methodology and full logs are available in [docs/EVALUATION.md](docs/EVALUATION.md).
 
-- **License:** MIT License © [Om Dangol](https://github.com/omwe77)
-- **Knowledge Specification:** Built in conformance with the Open Knowledge Format (OKF v0.2).
+### Retrieval Benchmark (Cross-Lingual & Multi-Script)
+
+Evaluated across 18 realistic queries in 4 linguistic styles against a synthetic government corpus:
+
+| Query Linguistic Style | all-MiniLM-L6-v2 (Hit@1) | paraphrase-multilingual-MiniLM-L12-v2 (Hit@1) | MRR (New Default) |
+|---|:---:|:---:|:---:|
+| **English (over Nepali docs)** | 0.00 | **1.00** | 1.00 |
+| **Nepali Script (Devanagari)** | 0.40 | **1.00** | 1.00 |
+| **Romanized Nepali** | 0.25 | **0.50** | 0.61 |
+| **Mixed Script** | 0.25 | **0.25** | 0.53 |
+| **Overall Mean** | 0.22 | **0.72** | **0.81** |
+| **Negative Probe False-Match Rate** | 0.33 | **0.00** | — |
+
+### Explanation Quality Benchmark (Live qwen3:8b on Gold Dataset)
+
+| Metric | Score | Detail |
+|---|:---:|---|
+| **Key Fact Preservation** | **88.2%** | Deterministic preservation of dates, fees, and statutory requirements. |
+| **Zero Hallucination Rate** | **100%** | Zero forbidden facts or inverted negation clauses detected across all runs. |
+| **Script Appropriateness** | **100%** | Accurate Devanagari output for Nepali inquiries without English leakage. |
+| **Overall Pass Rate** | **88.2%** | Verified against deterministic gold assertions without stochastic LLM-judge bias. |
+
+---
+
+## 10. Known Limitations & Operational Boundaries
+
+- **Compute Hardware Requirements:** Running `qwen3:8b` via Ollama requires at least 8 GB of unified RAM / VRAM. On lower-spec hardware, token generation latency will increase.
+- **Severely Degraded Physical Scans:** While Tesseract with custom Devanagari models performs well on standard scans, heavily crumpled, torn, or low-contrast mobile snapshots may reduce extraction confidence. The system explicitly alerts the user when OCR confidence falls below 60%.
+- **Romanized Query Challenges:** Cross-lingual retrieval on unstandardized Romanized Nepali (e.g. *"nagarikta banauna k k chaincha"*) scores 0.50 Hit@1. Standardizing colloquial phonetic variants remains an ongoing area of research.
+- **Informational Purpose Only:** hamiGenZ is an educational and civic clarification assistant. It is **not** an official legal authority, judicial counselor, or statutory authority. Critical administrative proceedings should always be confirmed with the official issuing government department.
+
+---
+
+## 11. License & Attribution
+
+- **License:** Distributed under the [MIT License](LICENSE). Copyright © 2026 Om Dangol.
+- **Knowledge Architecture:** Built in conformance with the Open Knowledge Format (OKF v0.2) specification.
+- **Community & Contributions:** Issues and feature discussions are welcomed via [GitHub Issues](https://github.com/omwe77/hamiGenz/issues).

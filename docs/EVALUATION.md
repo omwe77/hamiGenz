@@ -20,7 +20,7 @@ dataset**; the LLM judge would only ever be a secondary signal.
 
 ## 1. Gold dataset (`tests/evaluation/gold_dataset.py`)
 
-12+ cases across these categories:
+17 verified cases across these categories:
 
 | Category | What it exercises |
 |---|---|
@@ -123,17 +123,17 @@ into garbage. `VectorStore` now keeps an `embed_model.txt` stamp:
 
 ```bash
 # Retrieval benchmark (optionally for any model)
-.venv/Scripts/python.exe -m tests.evaluation.bench_retrieval
-.venv/Scripts/python.exe -m tests.evaluation.bench_retrieval --model paraphrase-multilingual-MiniLM-L12-v2
+python -m tests.evaluation.bench_retrieval
+python -m tests.evaluation.bench_retrieval --model paraphrase-multilingual-MiniLM-L12-v2
 
 # Explanation evaluator — offline self-consistency (mock)
-.venv/Scripts/python.exe -m tests.evaluation.eval_explanations
+python -m tests.evaluation.eval_explanations
 
 # Explanation evaluator — live LLM run (requires Ollama qwen3:8b)
-.venv/Scripts/python.exe -m tests.evaluation.eval_explanations --live --out eval_results.json
+python -m tests.evaluation.eval_explanations --live --out eval_results.json
 
 # Dataset integrity / evaluation machinery tests
-.venv/Scripts/python.exe -m pytest tests/test_evaluation.py -v
+python -m pytest tests/test_evaluation.py -v
 ```
 
 ## 5. Live explanation evaluation (qwen3:8b)

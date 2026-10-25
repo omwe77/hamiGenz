@@ -32,10 +32,17 @@ enderPreviewCanvas() now returns Promise<string> and awaits
 
 
 ## Unreleased (main)
+### Documentation & Release Polish (2026-10-25)
+- **Root README.md**: Complete rewrite with recruiter-ready architecture, live Vercel demo link, clear client-side demo mode disclosure, OKF v0.2 vs conventional RAG comparison table, Mermaid architecture diagram, technology stack breakdown, verified multi-platform setup commands, and benchmark results.
+- **frontend/README.md**: Replaced generic template with Next.js 16/React 19 architecture guide, environment variables, demo mode operations, and testing commands.
+- **docs/DEPLOYMENT.md**: Rewritten to document the active Vercel static demo, offline mock architecture, and production self-hosting requirements with Nginx, FastAPI, and Ollama.
+- **docs/DEPLOYMENT_PLAN.md**: Added advisory note classifying it as a historical reference architecture for Azure Linux VM staging.
+- **docs/EVALUATION.md**: Standardized execution commands and clarified the 17 verified gold test cases.
+- **LICENSE**: Added standard MIT License (c) 2026 Om Dangol.
+
 ### Documentation — Implementation Status alignment
 - README `Implementation Status` updated: added **Action Layer**, **Official Source Answering**, **Official Source Registry**, and **Evaluation System** to "Implemented"; removed "Form Assistance & Action Extraction" and "Cloud Staging Infrastructure" from "In Progress" (both are now implemented).
 - CHANGELOG "Upcoming Phases" updated: Phase 2 (OKF knowledge base), Phase 3 (action features), and Phase 4 (verification) are all implemented; only Phase 5 (expansion) remains upcoming, plus the offline desktop executable and government gazette scraping.
-- Test suite unaffected: 295 tests pass (verified via `pytest tests/ -q`).
 
 ### Added — OKF Knowledge Layer (Open Knowledge Format)
 Replaces the hybrid RAG retriever (BM25 + dense + RRF fusion) with a curated knowledge layer based on the Open Knowledge Format spec (Google Cloud, June 2026).
