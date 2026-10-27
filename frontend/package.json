@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types test/demo-mode.test.ts"
+    "test": "node --experimental-strip-types test/demo-mode.test.ts && node --experimental-strip-types test/csp.test.ts"
   },
   "dependencies": {
     "@types/animejs": "^3.1.13",

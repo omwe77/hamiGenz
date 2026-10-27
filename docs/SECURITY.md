@@ -54,12 +54,19 @@ untrusted text through a local LLM. The primary assets are:
   - **Single-worker limitation**: The rate limiter is in-memory (`threading.Lock` + `defaultdict`) and is per-process. In a multi-process deployment, limits are per-worker, not global. For shared enforcement across workers, replace with a Redis/Memcached backend.
 
 ### Frontend security headers (Phase 1.1)
-- Production security headers configured in [`frontend/next.config.ts`](../frontend/next.config.ts):
+- Production security headers configured in [`frontend/next.config.ts`](../frontend/next.config.ts) using typed, least-privilege helper `buildCsp()`:
   - **`Content-Security-Policy`**:
-    - `'unsafe-eval'` **removed** (Phase 1.1 correction). Production Next.js builds do not use `eval()`.
+    - `'unsafe-eval'` **strictly absent**. Production Next.js builds do not use `eval()`.
     - `'unsafe-inline'` in `script-src` retained: Next.js injects inline chunk-bootstrapping scripts. Removing it requires a per-request nonce strategy (future hardening).
-    - `connect-src` is **explicit**: constructed from `NEXT_PUBLIC_API_BASE_URL` (or explicit localhost development origins `http://localhost:8000 http://127.0.0.1:8000`). Wildcard `https:` is strictly excluded.
-    - `base-uri 'self'` and `form-action 'self'` directives added.
+    - `connect-src` **strictly least-privilege**:
+      - Production without `NEXT_PUBLIC_API_BASE_URL`: strictly `connect-src 'self'` without localhost, loopback, or wildcard `ws:`/`wss:` sources.
+      - Production with configured `NEXT_PUBLIC_API_BASE_URL`: validated via `new URL()` parser to extract explicit `parsed.origin` (scheme + host + port) only, rejecting paths or trailing parameters. Results in `connect-src 'self' <origin>`.
+      - Malformed or unsupported URL schemes (e.g. `javascript:`, `ftp:`, invalid formats) throw a clear error at build/boot time and fail closed.
+      - Development mode: permits explicit local development origins (`http://localhost:8000 http://127.0.0.1:8000`) and HMR WebSocket connections (`ws:`, `wss:`, `ws://localhost:3000`, `ws://127.0.0.1:3000`).
+    - `img-src` **least-privilege**:
+      - Production: `'self' data: blob:` (plus validated API origin when configured). No broad `https:` wildcard or localhost fallbacks in production.
+      - Development: includes local backend dev servers for preview rendering.
+    - `base-uri 'self'`, `form-action 'self'`, and `frame-ancestors 'none'` directives enforced.
   - `X-Content-Type-Options: nosniff`
   - `X-Frame-Options: DENY`
   - `Referrer-Policy: strict-origin-when-cross-origin`
@@ -92,9 +99,11 @@ untrusted text through a local LLM. The primary assets are:
 
 ### Tests & Verification
 - Phase 1 security regression suite (`tests/test_phase1_security.py`): 14/14 passing tests covering session lifecycle, token tampering, token expiry, cross-user isolation, vector query isolation, 3/session/min upload rate limiting with Retry-After, proxy boundary validation, CSRF defense, and legacy data quarantine.
-- Phase 1.1 correction suite (`tests/test_phase1_1_corrections.py`): 63/63 passing tests covering CSP policy verification, corrected CSRF policy, session token lifecycle, subprocess-isolated production secret configuration, rate-limit constant verification (IP ceiling=15), and the complete 3-way route authorization matrix (Owner 200, Non-owner 404, Anonymous 404 across all document routes).
+- Phase 1.1 correction suite (`tests/test_phase1_1_corrections.py`): 68/68 passing tests covering least-privilege CSP policy verification, corrected CSRF policy, session token lifecycle, subprocess-isolated production secret configuration, rate-limit constant verification (IP ceiling=15), and the complete 3-way route authorization matrix (Owner 200, Non-owner 404, Anonymous 404 across all document routes).
 - Existing unit tests (`tests/test_security.py`, `backend/tests/test_rate_limiter.py`): 7/7 and 5/5 passing.
-- Frontend demo mode verification (`frontend/test/demo-mode.test.ts`): 12/12 passing with 0 network calls.
+- Frontend test suite (`npm test`):
+  - `frontend/test/demo-mode.test.ts`: 12/12 passing with 0 network calls.
+  - `frontend/test/csp.test.ts`: 4/4 passing test suites verifying production no-API URL, production with API URL, malformed URL rejection, and development HMR configurations.
 - Next.js production build (`next build`): Completed cleanly with CSP and security headers active.
 
 ## Planned (Phase 2 & beyond)

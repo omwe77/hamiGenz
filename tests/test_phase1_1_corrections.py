@@ -147,6 +147,90 @@ class TestCSPHeaders:
             "next.config.ts must document why HSTS is not emitted here."
         )
 
+    def _run_node_csp(self, env_overrides=None):
+        """Helper to invoke buildCsp via Node and return the CSP string."""
+        import json
+        env_dict = {"NODE_ENV": "production"}
+        if env_overrides:
+            env_dict.update(env_overrides)
+        script = (
+            f"import {{ buildCsp }} from './next.config.ts';\n"
+            f"try {{\n"
+            f"  const res = buildCsp({json.dumps(env_dict)});\n"
+            f"  console.log('RESULT:' + res);\n"
+            f"}} catch (err) {{\n"
+            f"  console.log('ERROR:' + err.message);\n"
+            f"}}\n"
+        )
+        proc = subprocess.run(
+            ["node", "--experimental-strip-types", "-e", script],
+            cwd=str(FRONTEND_DIR),
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, f"Node script failed: {proc.stderr}"
+        for line in proc.stdout.splitlines():
+            if line.startswith("RESULT:"):
+                return line[len("RESULT:"):].strip()
+            if line.startswith("ERROR:"):
+                raise ValueError(line[len("ERROR:"):].strip())
+        raise RuntimeError(f"Unexpected output from node: {proc.stdout}\n{proc.stderr}")
+
+    def test_csp_production_no_api_url_least_privilege(self):
+        """Production with no API URL must strictly use connect-src 'self' without localhost or ws:."""
+        csp = self._run_node_csp({"NODE_ENV": "production", "NEXT_PUBLIC_API_BASE_URL": ""})
+        directives = {p.split()[0]: p for p in csp.split("; ")}
+        assert directives["connect-src"] == "connect-src 'self'"
+        assert "localhost" not in directives["connect-src"]
+        assert "127.0.0.1" not in directives["connect-src"]
+        assert "ws:" not in directives["connect-src"]
+        assert "wss:" not in directives["connect-src"]
+        assert directives["img-src"] == "img-src 'self' data: blob:"
+        assert "'unsafe-eval'" not in directives["script-src"]
+
+    def test_csp_production_valid_api_url_allows_parsed_origin_only(self):
+        """Production with API URL must allow only the parsed origin in connect-src and img-src."""
+        csp = self._run_node_csp({
+            "NODE_ENV": "production",
+            "NEXT_PUBLIC_API_BASE_URL": "https://api.hamigenz.gov.np/api/v1?param=test",
+        })
+        directives = {p.split()[0]: p for p in csp.split("; ")}
+        assert directives["connect-src"] == "connect-src 'self' https://api.hamigenz.gov.np"
+        assert directives["img-src"] == "img-src 'self' data: blob: https://api.hamigenz.gov.np"
+        assert "localhost" not in directives["connect-src"]
+        assert "ws:" not in directives["connect-src"]
+        assert "wss:" not in directives["connect-src"]
+
+    def test_csp_production_malformed_api_url_fails_closed(self):
+        """Production with malformed API URL must fail closed with a clear error."""
+        for bad_url in ["not-a-valid-url", "ftp://example.com", "javascript:alert(1)"]:
+            with pytest.raises(ValueError, match="Invalid"):
+                self._run_node_csp({
+                    "NODE_ENV": "production",
+                    "NEXT_PUBLIC_API_BASE_URL": bad_url,
+                })
+
+    def test_csp_development_mode_allows_dev_servers_and_hmr(self):
+        """Development mode must permit local backend origins and HMR WebSockets."""
+        csp = self._run_node_csp({"NODE_ENV": "development", "NEXT_PUBLIC_API_BASE_URL": ""})
+        directives = {p.split()[0]: p for p in csp.split("; ")}
+        assert "http://localhost:8000" in directives["connect-src"]
+        assert "http://127.0.0.1:8000" in directives["connect-src"]
+        assert "ws:" in directives["connect-src"]
+        assert "wss:" in directives["connect-src"]
+        assert "http://localhost:8000" in directives["img-src"]
+
+    def test_csp_node_test_suite_passes(self):
+        """The dedicated frontend/test/csp.test.ts suite must pass cleanly."""
+        proc = subprocess.run(
+            ["node", "--experimental-strip-types", "test/csp.test.ts"],
+            cwd=str(FRONTEND_DIR),
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, f"CSP test failed: {proc.stdout}\n{proc.stderr}"
+        assert "ALL CSP AUTOMATED TEST CHECKS PASSED SUCCESSFULLY!" in proc.stdout
+
 
 # ─── 2. CORS & CSRF Corrections ───────────────────────────────────────────────
 
