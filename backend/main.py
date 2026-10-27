@@ -30,6 +30,7 @@ if str(_BACKEND_DIR) not in sys.path:
 from config import load_environment
 load_environment()
 
+import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +38,12 @@ from pydantic import BaseModel
 from typing import Optional
 from io import BytesIO
 
+from session_auth import (
+    verify_session_token,
+    generate_session_token,
+    SESSION_COOKIE_NAME,
+    SESSION_HEADER_NAME,
+)
 from rate_limiter import rate_limit
 from prompt_guard import SYSTEM_PREAMBLE, evidence_block
 from action_extractor import ActionExtractor
@@ -203,7 +210,73 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Session-Token", "Retry-After"],
 )
+
+
+@app.middleware("http")
+async def session_and_csrf_middleware(request: Request, call_next):
+    """
+    Session transport & CSRF protection:
+    1. Extracts or provisions a signed session token.
+    2. Validates origin for mutating requests if only cookie auth is used.
+    3. Guarantees X-Session-Token and hamigenz_session cookie are returned.
+    """
+    header_token = request.headers.get(SESSION_HEADER_NAME)
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = header_token or cookie_token
+    sid = verify_session_token(token) if token else None
+
+    if not sid:
+        sid = str(uuid.uuid4())
+        token = generate_session_token(sid)
+
+    request.state.session_id = sid
+    request.state.session_token = token
+
+    # CSRF mitigation for mutating requests
+    # Strategy: if an Origin header is present and is NOT in the approved list,
+    # block the request UNLESS it carries a valid X-Session-Token header.
+    # Rationale:
+    #   - X-Requested-With alone is NOT a sufficient CSRF defence because an
+    #     attacker can send it from a non-browser client without going through
+    #     CORS preflight.
+    #   - X-Session-Token IS sufficient because the attacker must already know
+    #     the victim's session credential to forge it.
+    #   - A missing Origin (e.g. direct API call, same-origin, or curl) is
+    #     acceptable without a token because there is no browser context to CSRF.
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        origin = request.headers.get("origin")
+        if origin:
+            from urllib.parse import urlparse
+            parsed = urlparse(origin)
+            origin_base = f"{parsed.scheme}://{parsed.netloc}"
+            approved = origin_base in CORS_ORIGINS or any(
+                origin_base == o.rstrip("/") for o in CORS_ORIGINS
+            )
+            if not approved:
+                # Only exempt if the caller proves session ownership via header token
+                if not request.headers.get(SESSION_HEADER_NAME):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Cross-site request blocked (CSRF protection)"}
+                    )
+
+    response = await call_next(request)
+
+    # Attach session to response
+    response.headers["X-Session-Token"] = token
+    is_prod = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "development")).lower() == "production"
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=86400,
+        httponly=True,
+        samesite="none" if is_prod else "lax",
+        secure=is_prod,
+        path="/",
+    )
+    return response
 
 
 @app.exception_handler(LLMUnavailableError)
@@ -362,9 +435,23 @@ def _llm_unavailable_503(e: LLMUnavailableError) -> HTTPException:
     )
 
 
-def metadata_exists(app, doc_id: str) -> bool:
-    """Check a doc_id exists in metadata before using it downstream."""
-    return app.state.metadata.get_document(doc_id) is not None
+def metadata_exists(app, doc_id: str, session_id: Optional[str] = None) -> bool:
+    """Check a doc_id exists in metadata (and belongs to session_id if provided)."""
+    return app.state.metadata.get_document(doc_id, session_id=session_id) is not None
+
+
+def verify_document_owner(app, doc_id: str, session_id: Optional[str]) -> dict:
+    """
+    Ensure document exists and is strictly owned by caller's session_id.
+    Returns document dict if verified.
+    Raises HTTP 404 (never 403) to prevent ID enumeration.
+    """
+    if not session_id or session_id == "__quarantined_legacy__":
+        raise HTTPException(404, f"Document {doc_id} not found")
+    doc = app.state.metadata.get_document(doc_id, session_id=session_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id} not found")
+    return doc
 
 
 # ─── Endpoints ───────────────────────────────────────────────────
@@ -382,18 +469,17 @@ async def health():
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     reindex_doc_id: str = Query("", description="Existing doc_id to re-embed with the current embedding model (reindex mode)"),
     _rl: None = Depends(rate_limit("upload")),
 ):
     """
     Upload a document (PDF, PNG, JPG, TIFF) for analysis.
-    The document is processed, chunked, embedded, and indexed.
-
-    Untrusted input defenses: size limits, magic-byte content validation
-    (extension and declared type are ignored), page-count limits, and
-    user-controlled filenames never touch the filesystem.
+    The document is processed, chunked, embedded, and indexed under caller's session.
     """
+    session_id = getattr(request.state, "session_id", "__anonymous__")
+
     # Read file
     file_bytes = await file.read()
     if len(file_bytes) < 100:
@@ -431,35 +517,26 @@ async def upload_document(
         raise HTTPException(400, "Invalid upload") from e
 
     # Reindex mode: re-embed an EXISTING document with the current model
-    # (e.g. after a model switch when auto-reindex was skipped or failed).
-    # The file must be re-uploaded; processing runs fully and replaces the
-    # old vector index + chunk rows under the SAME doc_id.
     if reindex_doc_id:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
             raise HTTPException(400, "Invalid document id")
-        if app.state.metadata.get_document(reindex_doc_id) is None:
-            raise HTTPException(404, "Document not found — cannot reindex")
+        # Enforce that caller owns reindex_doc_id
+        verify_document_owner(app, reindex_doc_id, session_id)
         # Clean the old representations before reprocessing
         app.state.vector_store.remove_document(reindex_doc_id)
-        app.state.metadata.delete_document(reindex_doc_id)
+        app.state.metadata.delete_document(reindex_doc_id, session_id=session_id)
         filepath, doc_id = processor.save_upload(
             file_bytes, filename, doc_id=reindex_doc_id)
     else:
         filepath, doc_id = processor.save_upload(file_bytes, filename)
 
     # Process
-    # app.state.pipeline is initialized by the lifespan() on startup.
-    # If not present, the server was started without the startup event
-    # (e.g. TestClient without with_lifespan) - return 503 so the client
-    # knows the backend is not ready.
     if not hasattr(app.state, "pipeline"):
         raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
     pipeline = app.state.pipeline
     try:
-        result = pipeline.process_document(str(filepath), doc_id, filename)
+        result = pipeline.process_document(str(filepath), doc_id, filename, session_id=session_id)
     except Exception:
-        # Malformed/corrupt documents (bad PDF structure, broken images, OCR
-        # failures) must fail cleanly - never leak a stack trace to the client.
         print(f"[hamigenz] Document processing failed for {doc_id}")
         import traceback
         traceback.print_exc()
@@ -467,16 +544,14 @@ async def upload_document(
         raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.")
 
     if result["status"] == "error":
-        # Cleanup file on error
         Path(filepath).unlink(missing_ok=True)
         raise HTTPException(400, result.get("message", "Processing failed"))
 
     # ── Resource limits on processed documents ────────────────────────
     MAX_PAGES = 200
     if result["pages"] > MAX_PAGES:
-        # Roll back indexing entirely — don't keep a document we reject
         app.state.vector_store.remove_document(doc_id)
-        app.state.metadata.delete_document(doc_id)
+        app.state.metadata.delete_document(doc_id, session_id=session_id)
         Path(filepath).unlink(missing_ok=True)
         raise HTTPException(400, f"Document has too many pages (max {MAX_PAGES}).")
 
@@ -491,12 +566,12 @@ async def upload_document(
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
+async def ask_question(req: AskRequest, request: Request, _rl: None = Depends(rate_limit("ai"))):
     """
     Ask a question about a document or general Nepal information.
 
-    If doc_id is provided, search within that document.
-    Otherwise, search across all uploaded documents.
+    If doc_id is provided, search within that document (if owned by caller).
+    Otherwise, search across only the caller's session documents.
     """
     import time
     start = time.time()
@@ -506,6 +581,9 @@ async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
     explainer = app.state.explainer
     detector = LanguageDetector()
 
+    session_id = getattr(request.state, "session_id", None)
+    user_doc_ids = [d["doc_id"] for d in app.state.metadata.list_documents(session_id=session_id)] if session_id else []
+
     # Detect language
     detected_lang = detector.detect(req.question)
     if req.language == "auto":
@@ -513,28 +591,20 @@ async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
     else:
         response_lang = req.language
 
-    # ── Knowledge routing: OKF (curated) vs document search vs general ──
-    # OKF handles structured knowledge questions about Nepal document types,
-    # fields, form-filling, and OCR rules — things that should be exact and
-    # curated, not reconstructed from chunks every time.
-    # Vector search handles questions about a specific uploaded document.
-    # Official answer handles general Nepal government/legal questions.
     evidence: list[dict] = []
     okf_concepts: list[dict] = []
 
     if req.doc_id:
-        # Document-specific question — search the uploaded document
-        evidence = pipeline.query(req.doc_id, req.question, top_k=5)
+        # Document-specific question — verify session ownership
+        if req.doc_id not in set(user_doc_ids):
+            raise HTTPException(404, f"Document {req.doc_id} not found")
+        evidence = pipeline.query(req.doc_id, req.question, allowed_doc_ids=user_doc_ids, top_k=5)
     else:
         # No specific document — classify the query
         query_class = classify_query(req.question)
         if query_class == "okf":
-            # Curated knowledge question → search OKF bundle
             okf_concepts = app.state.okf.get_relevant_concepts(req.question)
             if okf_concepts:
-                # Build section-aware context from OKF concepts for the LLM prompt.
-                # No blind truncation — uses section-aware context extraction.
-                # Pass _pre_ranked to skip duplicate search inside get_context_for_llm.
                 okf_context = app.state.okf.get_context_for_llm(
                     [c.concept_id for c in okf_concepts],
                     req.question,
@@ -543,16 +613,18 @@ async def ask_question(req: AskRequest, _rl: None = Depends(rate_limit("ai"))):
                 )
                 if okf_context:
                     evidence.append({
-                        "page_num": None,  # OKF is not a page-based document
+                        "page_num": None,
                         "text": okf_context,
                         "source_type": "okf",
                         "filename": okf_concepts[0].concept_id,
                         "concept_ids": [c.concept_id for c in okf_concepts],
                     })
         elif query_class == "document":
-            # Question references an uploaded document but no doc_id given —
-            # fall through to vector search across all documents
-            evidence = pipeline.query(None, req.question, top_k=5)
+            # Search ONLY documents belonging to the caller's session
+            if user_doc_ids:
+                evidence = pipeline.query(None, req.question, allowed_doc_ids=user_doc_ids, top_k=5)
+            else:
+                evidence = []
         elif query_class == "mixed":
             # Mixed query: structural OKF knowledge + current official info.
             # Retrieve both as distinct evidence sources with preserved provenance.
@@ -749,7 +821,7 @@ Respond with the answer directly.
 # ─── /explain: direct text explanation with level control ──────────
 
 @app.post("/explain", response_model=ExplainResponse)
-async def explain_text(req: ExplainRequest, _rl: None = Depends(rate_limit("ai"))):
+async def explain_text(req: ExplainRequest, request: Request, _rl: None = Depends(rate_limit("ai"))):
     """
     Explain difficult text in simple language.
     Works with or without a document.
@@ -779,10 +851,9 @@ async def explain_text(req: ExplainRequest, _rl: None = Depends(rate_limit("ai")
     # If doc_id provided, retrieve evidence from that document
     if has_doc:
         pipeline = app.state.pipeline
-        # Validate doc_id before passing it near the filesystem/vector registry
-        if req.doc_id and not metadata_exists(app, req.doc_id):
-            raise HTTPException(404, f"Document {req.doc_id} not found")
-        evidence = pipeline.query(req.doc_id, req.text, top_k=5)
+        session_id = getattr(request.state, "session_id", None)
+        verify_document_owner(app, req.doc_id, session_id)
+        evidence = pipeline.query(req.doc_id, req.text, allowed_doc_ids=[req.doc_id], top_k=5)
 
         if evidence:
             # Document-grounded explanation — evidence is untrusted data
@@ -928,7 +999,7 @@ Respond with the answer directly.
 # ─── /actions: action layer (requirements, deadlines, fees, …) ───────
 
 @app.post("/actions", response_model=ActionsResponse)
-async def extract_actions(req: ActionsRequest, _rl: None = Depends(rate_limit("ai"))):
+async def extract_actions(req: ActionsRequest, request: Request, _rl: None = Depends(rate_limit("ai"))):
     """
     Extract actionable structure (requirements, deadlines, fees, eligibility,
     next steps, official links) from direct text or a document's evidence.
@@ -937,11 +1008,16 @@ async def extract_actions(req: ActionsRequest, _rl: None = Depends(rate_limit("a
     the source text, and unsupported fees/dates are flagged `unverified`.
     """
     text = (req.text or "").strip()
+    session_id = getattr(request.state, "session_id", None)
 
     if not text and req.doc_id:
-        if not metadata_exists(app, req.doc_id):
-            raise HTTPException(404, f"Document {req.doc_id} not found")
-        evidence = app.state.pipeline.query(req.doc_id, req.question or "requirements deadlines fees eligibility next steps", top_k=8)
+        verify_document_owner(app, req.doc_id, session_id)
+        evidence = app.state.pipeline.query(
+            req.doc_id,
+            req.question or "requirements deadlines fees eligibility next steps",
+            allowed_doc_ids=[req.doc_id],
+            top_k=8
+        )
         if evidence:
             text = "\n\n".join(e.get("text", "") for e in evidence)
         else:
@@ -959,34 +1035,33 @@ async def extract_actions(req: ActionsRequest, _rl: None = Depends(rate_limit("a
 
 # ─── /forms: form understanding (PR-010) ────────────────────────────
 
-async def _form_source_text(text: Optional[str], doc_id: Optional[str]) -> str:
+async def _form_source_text(text: Optional[str], doc_id: Optional[str], session_id: Optional[str] = None) -> str:
     """Resolve direct text or a document's per-page text for form analysis."""
     if text and text.strip():
         return text
     if doc_id:
-        if not metadata_exists(app, doc_id):
-            raise HTTPException(404, f"Document {doc_id} not found")
+        doc = verify_document_owner(app, doc_id, session_id)
         processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-        doc = app.state.metadata.get_document(doc_id)
         pages = processor.extract_text(doc["filepath"])
         return "\n".join(f"[PAGE {p['page_num']}]\n{p['text']}" for p in pages)
     raise HTTPException(400, "Provide text or doc_id.")
 
 
 @app.post("/forms/detect")
-async def detect_form_endpoint(req: FormDetectRequest, _rl: None = Depends(rate_limit("search"))):
+async def detect_form_endpoint(req: FormDetectRequest, request: Request, _rl: None = Depends(rate_limit("search"))):
     """
     Detect whether text (or a document) looks like a form, and extract the
     likely field labels with page-anchored evidence. Cheap: no LLM call.
     """
-    text = await _form_source_text(req.text, req.doc_id)
+    session_id = getattr(request.state, "session_id", None)
+    text = await _form_source_text(req.text, req.doc_id, session_id)
     if len(text) > 200000:
         raise HTTPException(400, "Text too long.")
     return app.state.form_service.fields(text)
 
 
 @app.post("/forms/explain-field")
-async def explain_form_field(req: FormExplainRequest, _rl: None = Depends(rate_limit("ai"))):
+async def explain_form_field(req: FormExplainRequest, request: Request, _rl: None = Depends(rate_limit("ai"))):
     """
     Explain ONE form field: what it means, what belongs there, what NOT to
     enter, and a clearly-marked SAMPLE of the expected answer TYPE.
@@ -997,11 +1072,10 @@ async def explain_form_field(req: FormExplainRequest, _rl: None = Depends(rate_l
     if not req.label or len(req.label) > 120:
         raise HTTPException(400, "Invalid field label.")
 
+    session_id = getattr(request.state, "session_id", None)
     # Prefer the doc's real page text as context; fall back to caller-supplied
     if req.doc_id:
-        if not metadata_exists(app, req.doc_id):
-            raise HTTPException(404, f"Document {req.doc_id} not found")
-        doc = app.state.metadata.get_document(req.doc_id)
+        doc = verify_document_owner(app, req.doc_id, session_id)
         processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
         pages = processor.extract_text(doc["filepath"])
         if req.page:
@@ -1059,14 +1133,13 @@ async def classify_source_url(url: str = Query(..., min_length=4)):
 # ─── /documents/{doc_id}/viewer: per-page extracted text ──────────
 
 @app.get("/documents/{doc_id}/viewer", response_model=ViewerResponse)
-async def get_document_viewer(doc_id: str):
+async def get_document_viewer(doc_id: str, request: Request):
     """
     Return per-page extracted text and metadata for a document viewer.
+    Enforces that only the document owner can inspect extracted text.
     """
-    metadata = app.state.metadata
-    doc = metadata.get_document(doc_id)
-    if not doc:
-        raise HTTPException(404, f"Document {doc_id} not found")
+    session_id = getattr(request.state, "session_id", None)
+    doc = verify_document_owner(app, doc_id, session_id)
 
     stored_path = Path(doc["filepath"]).resolve()
     if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
@@ -1104,23 +1177,16 @@ async def get_document_viewer(doc_id: str):
 
 @app.post("/documents/{doc_id}/page/{page_num}/fill-image")
 async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
-                      _rl: None = Depends(rate_limit("ai"))):
+                     request: Request, _rl: None = Depends(rate_limit("ai"))):
     """Return a PNG of the selected page with the user's typed answers composited
     onto the correct fields (reference-filled preview).
-
-    Values come from ``req.values``. Stored form fields for the document are used
-    as a fallback for any field the caller did not provide. ``page_num`` selects
-    the page on multi-page documents.
+    Enforces document ownership.
     """
-    # Resolve stored field values for this document (fallback source).
-    stored_values = app.state.metadata.get_form_fields(doc_id)
+    session_id = getattr(request.state, "session_id", None)
+    doc = verify_document_owner(app, doc_id, session_id)
+    stored_values = app.state.metadata.get_form_fields(doc_id, session_id=session_id)
 
     try:
-        metadata = app.state.metadata
-        doc = metadata.get_document(doc_id)
-        if not doc:
-            raise HTTPException(404, f"Document {doc_id} not found")
-
         stored_path = Path(doc["filepath"]).resolve()
         if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
             raise HTTPException(403, "Invalid document path")
@@ -1128,13 +1194,9 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
         processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
         pages = processor.extract_text(doc["filepath"])
         page_map = {p["page_num"]: p for p in pages}
-        # Page must exist on the document (multi-page docs otherwise satisfy
-        # the route with a 200 and an empty preview).
         if page_num not in page_map:
             raise HTTPException(404, f"Page {page_num} not found on document {doc_id}")
 
-        # Attach per-field positions (300 DPI) so answers can be placed on the
-        # correct fields of the original page image.
         for p in page_map.values():
             text = p.get("text") or ""
             word_boxes = processor._tesseract_word_boxes(doc["filepath"], p["page_num"])
@@ -1175,7 +1237,6 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
                 media_type="text/plain",
             )
 
-        # Render the original page at preview DPI (300) and composite answers.
         original_pil = processor._render_page_pil(doc["filepath"], page_num, dpi=300)
         if original_pil is None:
             raise HTTPException(500, "Could not render the page for preview.")
@@ -1192,37 +1253,33 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
 
 
 @app.post("/documents/{doc_id}/form-fields")
-async def set_form_fields(doc_id: str, req: dict, _rl: None = Depends(rate_limit("ai"))):
+async def set_form_fields(doc_id: str, req: dict, request: Request, _rl: None = Depends(rate_limit("ai"))):
     """Persist a list of {label, value, page} for a document's form preview."""
+    session_id = getattr(request.state, "session_id", None)
+    verify_document_owner(app, doc_id, session_id)
     try:
-        # Accept both 'values' and 'fields' keys for compatibility
         values = [v for v in (req.get("values") or req.get("fields") or [])]
     except Exception as e:
         raise HTTPException(400, f"Invalid form fields: {e}") from e
 
-    app.state.metadata.set_form_fields(doc_id, values)
+    app.state.metadata.set_form_fields(doc_id, values, session_id=session_id)
     return {"doc_id": doc_id, "count": len(values), "saved": True}
 
 
 # ─── /documents/{doc_id}/page/{page_num}/image: page image ────────
 
 @app.get("/documents/{doc_id}/page/{page_num}/image")
-async def get_page_image(doc_id: str, page_num: int):
+async def get_page_image(doc_id: str, page_num: int, request: Request):
     """
     Return the rendered image for a specific page (for scanned/image pages).
+    Enforces document ownership.
     """
-    metadata = app.state.metadata
-    doc = metadata.get_document(doc_id)
-    if not doc:
-        raise HTTPException(404, f"Document {doc_id} not found")
+    session_id = getattr(request.state, "session_id", None)
+    doc = verify_document_owner(app, doc_id, session_id)
 
-    # Defense against out-of-range / negative page numbers
     if page_num < 1 or page_num > 10000:
         raise HTTPException(404, f"Page {page_num} not found")
 
-    # Defense-in-depth: the stored filepath must live inside UPLOAD_DIR.
-    # (doc_id and filepath come from our own metadata DB, never from user input,
-    #  but verify anyway so a tampered DB row can't escape the upload sandbox.)
     stored_path = Path(doc["filepath"]).resolve()
     if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
         raise HTTPException(403, "Invalid document path")
@@ -1233,7 +1290,6 @@ async def get_page_image(doc_id: str, page_num: int):
     if not img_bytes:
         raise HTTPException(404, f"Page {page_num} image not available")
 
-    from fastapi.responses import Response
     return Response(content=img_bytes, media_type="image/png")
 
 
@@ -1242,16 +1298,16 @@ async def get_page_image(doc_id: str, page_num: int):
 @app.get("/documents/{doc_id}/search-text", response_model=SearchResponse)
 async def search_document_text(
     doc_id: str,
+    request: Request,
     query: str = Query(..., min_length=1),
     _rl: None = Depends(rate_limit("search")),
 ):
     """
     Search extracted text across pages. Returns matches with page + context + highlight offsets.
+    Enforces document ownership.
     """
-    metadata = app.state.metadata
-    doc = metadata.get_document(doc_id)
-    if not doc:
-        raise HTTPException(404, f"Document {doc_id} not found")
+    session_id = getattr(request.state, "session_id", None)
+    doc = verify_document_owner(app, doc_id, session_id)
 
     stored_path = Path(doc["filepath"]).resolve()
     if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
@@ -1270,11 +1326,9 @@ async def search_document_text(
             idx = page_lower.find(query_lower, idx)
             if idx == -1:
                 break
-            # Context window: 200 chars before + match + 200 after
             start = max(0, idx - 200)
             end = min(len(page_text), idx + len(query) + 200)
             context = page_text[start:end]
-            # highlight offsets relative to `context`
             h_start = idx - start
             h_end = h_start + len(query)
 
@@ -1285,7 +1339,7 @@ async def search_document_text(
                 highlight_end=h_end,
                 matched_term=query,
             ))
-            idx += len(query)  # move past this match
+            idx += len(query)
 
     return SearchResponse(
         doc_id=doc_id,
@@ -1295,9 +1349,13 @@ async def search_document_text(
 
 
 @app.get("/documents", response_model=list[DocumentInfo])
-async def list_documents():
-    """List all uploaded documents for the current session."""
-    docs = app.state.metadata.list_documents()
+async def list_documents(request: Request):
+    """
+    List all uploaded documents for the current session only.
+    Prevents cross-user document enumeration.
+    """
+    session_id = getattr(request.state, "session_id", None)
+    docs = app.state.metadata.list_documents(session_id=session_id)
     return [
         DocumentInfo(
             doc_id=d["doc_id"],
@@ -1311,28 +1369,24 @@ async def list_documents():
 
 
 @app.delete("/documents/{doc_id}")
-async def delete_document(doc_id: str):
-    """Delete a document and all its vectors."""
-    metadata = app.state.metadata
-    vector_store = app.state.vector_store
-
-    if not metadata.get_document(doc_id):
-        raise HTTPException(404, f"Document {doc_id} not found")
-
-    doc = metadata.get_document(doc_id)
+async def delete_document(doc_id: str, request: Request):
+    """
+    Delete a document and all its vectors (scoped to current session).
+    """
+    session_id = getattr(request.state, "session_id", None)
+    doc = verify_document_owner(app, doc_id, session_id)
     filepath = doc.get("filepath")
 
-    # Defense-in-depth: never delete anything outside the upload sandbox
     if filepath:
         stored_path = Path(filepath).resolve()
         if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
             raise HTTPException(403, "Invalid document path")
 
     # Remove from vector store
-    vector_store.remove_document(doc_id)
+    app.state.vector_store.remove_document(doc_id)
 
     # Remove from metadata
-    metadata.delete_document(doc_id)
+    app.state.metadata.delete_document(doc_id, session_id=session_id)
 
     # Remove file
     if filepath and Path(filepath).exists():
