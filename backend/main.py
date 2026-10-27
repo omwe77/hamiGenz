@@ -255,8 +255,13 @@ async def session_and_csrf_middleware(request: Request, call_next):
                 origin_base == o.rstrip("/") for o in CORS_ORIGINS
             )
             if not approved:
-                # Only exempt if the caller proves session ownership via header token
-                if not request.headers.get(SESSION_HEADER_NAME):
+                # Only exempt if the caller presents a VALID, cryptographically verified
+                # session token. Merely having the header is not sufficient -- the token
+                # must pass HMAC-SHA256 signature and expiry verification.
+                # An invalid or forged X-Session-Token from an unapproved origin is blocked.
+                token_from_header = request.headers.get(SESSION_HEADER_NAME)
+                header_sid = verify_session_token(token_from_header) if token_from_header else None
+                if not header_sid:
                     return JSONResponse(
                         status_code=403,
                         content={"detail": "Cross-site request blocked (CSRF protection)"}

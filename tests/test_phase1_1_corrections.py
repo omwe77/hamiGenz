@@ -188,6 +188,31 @@ class TestCORSAndCSRF:
             f"Got {resp.status_code}: {resp.text}"
         )
 
+    def test_unapproved_origin_with_invalid_token_is_blocked(self, client):
+        """
+        A forged/invalid X-Session-Token from an unapproved origin must be rejected.
+
+        This is the key regression test for the CSRF fix: the middleware must call
+        verify_session_token() and check the result is not None, not merely test that
+        the header is present. A forged or expired token must be blocked with 403.
+        """
+        forged_token = "s_fakeuuid.1234567890.deadbeef00000000deadbeef00000000"
+        resp = client.post(
+            "/feedback",
+            json={"question": "Test", "rating": 1},
+            headers={
+                "origin": "https://attacker.example.com",
+                SESSION_HEADER_NAME: forged_token,
+            },
+        )
+        assert resp.status_code == 403, (
+            f"SECURITY BUG: Invalid/forged token from unapproved origin bypassed CSRF. "
+            f"Got {resp.status_code}: {resp.text}"
+        )
+        assert "CSRF" in resp.json()["detail"], (
+            f"Expected CSRF detail in response, got: {resp.text}"
+        )
+
     def test_unapproved_origin_with_valid_session_token_is_allowed(self, client):
         """
         An unapproved origin carrying a valid X-Session-Token header is allowed.

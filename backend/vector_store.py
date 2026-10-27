@@ -256,6 +256,50 @@ class VectorStore:
         all_results.sort(key=lambda x: x["score"], reverse=True)
         return all_results[:top_k]
 
+    def search_documents(self, doc_ids: list[str], query_embedding: np.ndarray,
+                         top_k: int = 5, min_score: float = 0.10) -> list[dict]:
+        """
+        Search only across the specified authorized document IDs.
+        Prevents cross-user / cross-session vector search leakage.
+        """
+        if not doc_ids:
+            return []
+
+        all_results = []
+        query_vec = query_embedding.astype(np.float32).reshape(1, -1)
+        allowed_set = set(doc_ids)
+
+        for doc_id in allowed_set:
+            index_path = self._doc_indices.get(doc_id)
+            if not index_path or not Path(index_path).exists():
+                continue
+            index = faiss.read_index(index_path)
+            scores, ids = index.search(query_vec, top_k)
+
+            meta_path = self.vectors_dir / f"{doc_id}_meta.json"
+            if not meta_path.exists():
+                continue
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+
+            for score, idx in zip(scores[0], ids[0]):
+                if idx >= len(meta):
+                    continue
+                if float(score) < min_score:
+                    continue
+                all_results.append({
+                    "doc_id": doc_id,
+                    "chunk_id": meta[idx]["chunk_id"],
+                    "page_num": meta[idx]["page_num"],
+                    "text": meta[idx]["text"],
+                    "score": float(score),
+                    "filename": meta[idx]["filename"],
+                    "source_type": meta[idx]["source_type"],
+                })
+
+        all_results.sort(key=lambda x: x["score"], reverse=True)
+        return all_results[:top_k]
+
     def get_chunk_texts(self, doc_id: str) -> list[str]:
         """Return the stored text for every chunk of a document.
 
@@ -298,7 +342,7 @@ class Pipeline:
         self.metadata = metadata_store
 
     def process_document(self, filepath: str, doc_id: str,
-                         filename: str) -> dict:
+                         filename: str, session_id: str = "__anonymous__") -> dict:
         """
         Full pipeline: extract → chunk → embed → store.
         Returns processing summary.
@@ -326,7 +370,7 @@ class Pipeline:
         # Store
         self.vector_store.add_document(doc_id, chunks, embeddings)
         self.metadata.add_document(doc_id, filename, filepath,
-                                   page_count, language_hint)
+                                   page_count, language_hint, session_id=session_id)
         self.metadata.add_chunks(chunks)
 
         return {
@@ -339,14 +383,24 @@ class Pipeline:
         }
 
     def query(self, doc_id: str | None, question: str,
+              allowed_doc_ids: list[str] | None = None,
               top_k: int = 5, min_score: float = 0.10) -> list[dict]:
-        """Retrieve relevant chunks for a question."""
+        """
+        Retrieve relevant chunks for a question.
+        Enforces that queries only access authorized document IDs for the active session.
+        """
         query_emb = self.embedder.embed_text(question)
 
         if doc_id:
+            # If allowed_doc_ids is provided, ensure doc_id is among them
+            if allowed_doc_ids is not None and doc_id not in set(allowed_doc_ids):
+                return []
             results = self.vector_store.search(doc_id, query_emb, top_k)
         else:
-            results = self.vector_store.search_all(query_emb, top_k)
+            # If doc_id is None, search ONLY across allowed_doc_ids
+            if not allowed_doc_ids:
+                return []
+            results = self.vector_store.search_documents(allowed_doc_ids, query_emb, top_k, min_score)
 
         return results
 

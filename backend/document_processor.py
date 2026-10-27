@@ -419,15 +419,21 @@ class Chunker:
 
 
 class MetadataStore:
-    """SQLite store for document metadata and chunk registry."""
+    """SQLite store for document metadata and chunk registry with session isolation."""
 
     def __init__(self, db_path: str):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        return conn
+
     def _init_db(self):
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._get_connection()
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS documents (
                 doc_id TEXT PRIMARY KEY,
@@ -437,7 +443,9 @@ class MetadataStore:
                 page_count INTEGER DEFAULT 0,
                 language_hint TEXT,
                 source_type TEXT DEFAULT 'unknown',
-                form_fields TEXT  -- JSON array of {label, value} used for form preview
+                form_fields TEXT,  -- JSON array of {label, value} used for form preview
+                session_id TEXT,
+                last_accessed_at TEXT
             );
             CREATE TABLE IF NOT EXISTS chunks (
                 chunk_id TEXT PRIMARY KEY,
@@ -455,22 +463,42 @@ class MetadataStore:
                 created_at TEXT
             );
         """)
+
+        # Migration: Ensure session_id and last_accessed_at columns exist
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        if "session_id" not in existing_cols:
+            conn.execute("ALTER TABLE documents ADD COLUMN session_id TEXT;")
+        if "last_accessed_at" not in existing_cols:
+            conn.execute("ALTER TABLE documents ADD COLUMN last_accessed_at TEXT;")
+
+        # Safe migration: Quarantine legacy unowned records to prevent accidental access
+        conn.execute("""
+            UPDATE documents
+            SET session_id = '__quarantined_legacy__'
+            WHERE session_id IS NULL OR session_id = ''
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_session ON documents(session_id);")
+
         conn.commit()
         conn.close()
 
     def add_document(self, doc_id: str, filename: str, filepath: str,
-                     page_count: int, language_hint: str = "") -> None:
-        conn = sqlite3.connect(str(self.db_path))
+                     page_count: int, language_hint: str = "",
+                     session_id: str = "__anonymous__") -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._get_connection()
         conn.execute(
-            "INSERT INTO documents (doc_id, filename, filepath, upload_date, page_count, language_hint) VALUES (?,?,?,?,?,?)",
-            (doc_id, filename, filepath, __import__('datetime').datetime.now().isoformat(),
-             page_count, language_hint)
+            """INSERT INTO documents
+               (doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (doc_id, filename, filepath, now_iso, page_count, language_hint, session_id, now_iso)
         )
         conn.commit()
         conn.close()
 
     def add_chunks(self, chunks: list[dict]) -> None:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._get_connection()
         conn.executemany(
             "INSERT INTO chunks (chunk_id, doc_id, page_num, text, source_type) VALUES (?,?,?,?,?)",
             [(c["chunk_id"], c["doc_id"], c["page_num"], c["text"], c["source_type"]) for c in chunks]
@@ -480,7 +508,7 @@ class MetadataStore:
 
     def replace_chunks(self, doc_id: str, chunks: list[dict]) -> None:
         """Replace all stored chunks for a document (used by reindexing)."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._get_connection()
         conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
         conn.executemany(
             "INSERT INTO chunks (chunk_id, doc_id, page_num, text, source_type) VALUES (?,?,?,?,?)",
@@ -489,41 +517,97 @@ class MetadataStore:
         conn.commit()
         conn.close()
 
-    def get_document(self, doc_id: str) -> Optional[dict]:
-        conn = sqlite3.connect(str(self.db_path))
-        row = conn.execute(
-            "SELECT * FROM documents WHERE doc_id=?", (doc_id,)
-        ).fetchone()
-        conn.close()
+    def get_document(self, doc_id: str, session_id: Optional[str] = None) -> Optional[dict]:
+        """
+        Retrieve document metadata.
+        If session_id is provided, enforces that the document belongs to that session.
+        Updates last_accessed_at on successful retrieval.
+        """
+        conn = self._get_connection()
+        if session_id is not None:
+            row = conn.execute(
+                "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at "
+                "FROM documents WHERE doc_id=? AND session_id=?",
+                (doc_id, session_id)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at "
+                "FROM documents WHERE doc_id=?",
+                (doc_id,)
+            ).fetchone()
+
         if row:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "UPDATE documents SET last_accessed_at=? WHERE doc_id=?",
+                (now_iso, doc_id)
+            )
+            conn.commit()
+            conn.close()
             return {
                 "doc_id": row[0], "filename": row[1], "filepath": row[2],
-                "upload_date": row[3], "page_count": row[4], "language_hint": row[5]
+                "upload_date": row[3], "page_count": row[4], "language_hint": row[5],
+                "session_id": row[6], "last_accessed_at": row[7]
             }
+        conn.close()
         return None
 
-    def delete_document(self, doc_id: str) -> None:
-        conn = sqlite3.connect(str(self.db_path))
+    def delete_document(self, doc_id: str, session_id: Optional[str] = None) -> bool:
+        """
+        Delete document if it belongs to session_id (or unconditionally if session_id is None).
+        Returns True if deleted, False if not found or unauthorized.
+        """
+        conn = self._get_connection()
+        if session_id is not None:
+            existing = conn.execute(
+                "SELECT doc_id FROM documents WHERE doc_id=? AND session_id=?",
+                (doc_id, session_id)
+            ).fetchone()
+            if not existing:
+                conn.close()
+                return False
+
         conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
-        conn.execute("DELETE FROM documents WHERE doc_id=?", (doc_id,))
+        cursor = conn.execute("DELETE FROM documents WHERE doc_id=?", (doc_id,))
+        deleted = cursor.rowcount > 0
         conn.commit()
         conn.close()
+        return deleted
 
-    def list_documents(self) -> list[dict]:
-        conn = sqlite3.connect(str(self.db_path))
-        rows = conn.execute("SELECT * FROM documents ORDER BY upload_date DESC").fetchall()
+    def list_documents(self, session_id: Optional[str] = None) -> list[dict]:
+        """
+        List documents for the specified session_id.
+        If session_id is None, returns an empty list to prevent cross-user enumeration.
+        """
+        if not session_id or session_id == "__quarantined_legacy__":
+            return []
+
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at "
+            "FROM documents WHERE session_id=? ORDER BY upload_date DESC",
+            (session_id,)
+        ).fetchall()
         conn.close()
         return [{
             "doc_id": r[0], "filename": r[1], "filepath": r[2],
-            "upload_date": r[3], "page_count": r[4], "language_hint": r[5]
+            "upload_date": r[3], "page_count": r[4], "language_hint": r[5],
+            "session_id": r[6], "last_accessed_at": r[7]
         } for r in rows]
 
-    def get_form_fields(self, doc_id: str) -> list[dict]:
+    def get_form_fields(self, doc_id: str, session_id: Optional[str] = None) -> list[dict]:
         """Return the stored {label, value} list for a document's form preview."""
-        conn = sqlite3.connect(str(self.db_path))
-        row = conn.execute(
-            "SELECT form_fields FROM documents WHERE doc_id=?", (doc_id,)
-        ).fetchone()
+        conn = self._get_connection()
+        if session_id is not None:
+            row = conn.execute(
+                "SELECT form_fields FROM documents WHERE doc_id=? AND session_id=?",
+                (doc_id, session_id)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT form_fields FROM documents WHERE doc_id=?", (doc_id,)
+            ).fetchone()
         conn.close()
         if not row or not row[0]:
             return []
@@ -537,39 +621,43 @@ class MetadataStore:
             pass
         return []
 
-    def set_form_fields(self, doc_id: str, values: list[dict]) -> None:
-        conn = sqlite3.connect(str(self.db_path))
-        # Preserve existing document fields (filename, filepath, upload_date,
-        # page_count, language_hint, source_type) when the document was already
-        # uploaded, so INSERT OR REPLACE does not violate any NOT NULL columns.
-        existing = conn.execute(
-            "SELECT filename, filepath, upload_date, page_count, language_hint, source_type "
-            "FROM documents WHERE doc_id=?", (doc_id,)
-        ).fetchone()
+    def set_form_fields(self, doc_id: str, values: list[dict], session_id: Optional[str] = None) -> bool:
+        """Store form fields for a document, enforcing ownership if session_id is provided."""
+        conn = self._get_connection()
+        if session_id is not None:
+            existing = conn.execute(
+                "SELECT filename, filepath, upload_date, page_count, language_hint, source_type "
+                "FROM documents WHERE doc_id=? AND session_id=?", (doc_id, session_id)
+            ).fetchone()
+            if not existing:
+                conn.close()
+                return False
+        else:
+            existing = conn.execute(
+                "SELECT filename, filepath, upload_date, page_count, language_hint, source_type "
+                "FROM documents WHERE doc_id=?", (doc_id,)
+            ).fetchone()
+
+        now_iso = datetime.now(timezone.utc).isoformat()
         if existing:
             filename, filepath, upload_date, page_count, language_hint, source_type = existing
-            # UPDATE only form_fields; use UPDATE instead of INSERT OR REPLACE so
-            # that ON DELETE CASCADE on the chunks table does not delete indexed
-            # content.
             conn.execute(
                 """UPDATE documents
-                   SET filename=?, filepath=?, upload_date=?, page_count=?, language_hint=?, source_type=?, form_fields=?
+                   SET form_fields=?, last_accessed_at=?
                    WHERE doc_id=?""",
-                (
-                    filename, filepath, upload_date, page_count, language_hint, source_type,
-                    json.dumps(values), doc_id,
-                ),
+                (json.dumps(values), now_iso, doc_id),
             )
         else:
             conn.execute(
                 """INSERT INTO documents
-                   (doc_id, filename, filepath, upload_date, page_count, language_hint, source_type, form_fields)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (doc_id, filename, filepath, upload_date, page_count, language_hint, source_type, form_fields, session_id, last_accessed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     doc_id, doc_id, str(self.db_path),
-                    datetime.now(timezone.utc).isoformat(), 0, None, "unknown",
-                    json.dumps(values),
+                    now_iso, 0, None, "unknown",
+                    json.dumps(values), session_id or "__anonymous__", now_iso
                 ),
             )
         conn.commit()
         conn.close()
+        return True

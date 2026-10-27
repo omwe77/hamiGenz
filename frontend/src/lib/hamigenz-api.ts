@@ -63,6 +63,62 @@ function getBaseUrl(): string {
   return "";
 }
 
+// ── Session & Credential Transport ────────────────────────────────────
+
+let activeSessionToken: string | null = null;
+
+export function getSessionToken(): string | null {
+  if (activeSessionToken) return activeSessionToken;
+  if (typeof window !== "undefined") {
+    try {
+      activeSessionToken = sessionStorage.getItem("hamigenz_session_token");
+    } catch {
+      // sessionStorage unavailable
+    }
+  }
+  return activeSessionToken;
+}
+
+export function setSessionToken(token: string | null): void {
+  activeSessionToken = token;
+  if (typeof window !== "undefined" && token) {
+    try {
+      sessionStorage.setItem("hamigenz_session_token", token);
+    } catch {
+      // sessionStorage unavailable
+    }
+  }
+}
+
+/**
+ * Standardized API fetch wrapper ensuring:
+ * 1. credentials: "include" for HttpOnly cookies.
+ * 2. X-Session-Token header sent for partitioned/cross-site browser scenarios.
+ * 3. X-Requested-With: XMLHttpRequest sent for CSRF defense-in-depth.
+ * 4. Automatic capture of new/refreshed X-Session-Token from response headers.
+ */
+export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = getSessionToken();
+  if (token) {
+    headers.set("X-Session-Token", token);
+  }
+  headers.set("X-Requested-With", "XMLHttpRequest");
+
+  const response = await fetch(input, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+
+  const returnedToken = response.headers.get("X-Session-Token");
+  if (returnedToken) {
+    setSessionToken(returnedToken);
+  }
+
+  return response;
+}
+
 /**
  * Demo mode state.
  * When the backend is unreachable or not configured, these functions return clearly-labelled
@@ -478,7 +534,7 @@ export async function explainText(
   if (question) body.question = question;
   if (docId) body.doc_id = docId;
 
-  const res = await fetch(`${base}/explain`, {
+  const res = await apiFetch(`${base}/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -509,7 +565,7 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
   if (!base) throw new Error("Live backend not configured");
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${base}/upload`, {
+  const res = await apiFetch(`${base}/upload`, {
     method: "POST",
     body: form,
   });
@@ -534,7 +590,7 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(`${base}/documents`);
+  const res = await apiFetch(`${base}/documents`);
   if (!res.ok) throw new Error(`/documents failed (${res.status})`);
   return res.json();
 }
@@ -546,7 +602,7 @@ export async function deleteDocument(docId: string): Promise<void> {
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(`${base}/documents/${docId}`, { method: "DELETE" });
+  const res = await apiFetch(`${base}/documents/${docId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
 }
 
@@ -588,7 +644,7 @@ export async function getDocumentViewer(docId: string): Promise<ViewerResponse> 
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(`${base}/documents/${docId}/viewer`);
+  const res = await apiFetch(`${base}/documents/${docId}/viewer`);
   if (!res.ok) throw new Error(`viewer failed (${res.status})`);
   return res.json();
 }
@@ -630,7 +686,7 @@ export async function searchDocumentText(
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(
+  const res = await apiFetch(
     `${base}/documents/${docId}/search-text?query=${encodeURIComponent(query)}`
   );
   if (!res.ok) throw new Error(`search failed (${res.status})`);
@@ -652,7 +708,7 @@ export async function extractActions(
   if (text) body.text = text;
   if (docId) body.doc_id = docId;
   if (question) body.question = question;
-  const res = await fetch(`${base}/actions`, {
+  const res = await apiFetch(`${base}/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -678,7 +734,7 @@ export async function askGeneral(
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(
+  const res = await apiFetch(
     `${base}/ask-general?question=${encodeURIComponent(question)}&language=${encodeURIComponent(language)}`,
     { method: "POST" }
   );
@@ -702,7 +758,7 @@ export async function detectFormFields(
   const body: Record<string, unknown> = {};
   if (text) body.text = text;
   if (docId) body.doc_id = docId;
-  const res = await fetch(`${base}/forms/detect`, {
+  const res = await apiFetch(`${base}/forms/detect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -727,7 +783,7 @@ export async function explainFormField(
   if (opts.page) body.page = opts.page;
   if (opts.language) body.language = opts.language;
   if (opts.question) body.question = opts.question;
-  const res = await fetch(`${base}/forms/explain-field`, {
+  const res = await apiFetch(`${base}/forms/explain-field`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -749,7 +805,7 @@ export async function setFormFields(
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(`${base}/documents/${docId}/form-fields`, {
+  const res = await apiFetch(`${base}/documents/${docId}/form-fields`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values }),
@@ -772,7 +828,7 @@ export async function getFilledImage(
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(
+  const res = await apiFetch(
     `${base}/documents/${docId}/page/${pageNum}/fill-image`,
     {
       method: "POST",
@@ -809,7 +865,7 @@ export async function submitFeedback(
 
   const base = getBaseUrl();
   if (!base) throw new Error("Live backend not configured");
-  const res = await fetch(`${base}/feedback`, {
+  const res = await apiFetch(`${base}/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, rating, doc_id: docId, comment }),
