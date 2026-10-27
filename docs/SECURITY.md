@@ -3,6 +3,13 @@
 Status: development-phase hardening in progress. This file tracks what is
 implemented vs. planned. It is not a compliance document.
 
+> [!WARNING]
+> **Not Ready for Public Traffic**: The backend is hardened for local development,
+> evaluation, and isolated testing. It is NOT approved or configured for public Internet
+> traffic or production exposure. Public deployment requires production secret provisioning,
+> reverse-proxy TLS termination with HSTS, an external shared rate limiter (e.g. Redis),
+> and Phase 2 data lifecycle controls.
+
 ## Threat model (development phase)
 
 hamiGenZ processes untrusted documents (PDFs, images, OCR output) and
@@ -16,30 +23,30 @@ untrusted text through a local LLM. The primary assets are:
 - **Signed anonymous sessions**: HMAC-SHA256 authenticated session tokens (`s_<uuid>.<timestamp>.<signature>`) with 24-hour validity window.
 - **Dual session transport**: Token is returned via both a `hamigenz_session` cookie (`SameSite=Lax`, `Secure` in prod) and an `X-Session-Token` response header. The frontend stores the token in `sessionStorage` (tab-scoped, cleared on close). This dual transport handles same-origin cookie flows and cross-site split-hosting where third-party cookies may be blocked.
 - **Token storage model**: `X-Session-Token` is JS-readable via `sessionStorage`. This is intentional — the session contains no personal data and is scoped to the browser tab. Tokens are never written to URLs, response bodies, or logs.
-- **Session secret management**: Controlled via `HAMIGENZ_SESSION_SECRET`. In production environments (`HAMIGENZ_ENV=production`), missing or default secrets fail closed with a fatal startup error to prevent fallback to hard-coded values.
-- **CSRF protection — corrected policy (Phase 1.1)**: Mutating requests (`POST`, `PUT`, `DELETE`, `PATCH`) with an `Origin` header not in the approved CORS list are blocked unconditionally, UNLESS the request carries a valid `X-Session-Token` header.
-  - `X-Requested-With` alone is **not** a sufficient CSRF defense. An attacker can set it from a non-browser client without going through CORS preflight.
-  - `X-Session-Token` is sufficient: forging it requires the attacker to already know the victim's session credential.
+- **Session secret management**: Canonical configuration via `HAMIGENZ_SESSION_SECRET` and `HAMIGENZ_ENV`. In production mode (`HAMIGENZ_ENV=production`), missing secrets, short secrets (<32 characters), or weak placeholder secrets ("changeme", "secret", "default", etc.) fail closed with a fatal startup error (`RuntimeError` / `ValueError`) to prevent insecure fallback. In non-production, an unconfigured secret generates a secure per-instance 32-byte random key.
+- **CSRF protection — corrected policy (Phase 1.1)**: Mutating requests (`POST`, `PUT`, `DELETE`, `PATCH`) with an `Origin` header not in the approved CORS list are blocked unconditionally (HTTP 403), UNLESS the request carries a cryptographically verified `X-Session-Token` header.
+  - `X-Requested-With` alone is **not** a sufficient CSRF defense and is blocked from unapproved origins.
+  - Merely providing an arbitrary or invalid `X-Session-Token` header is blocked; the token must pass HMAC signature verification and timestamp expiration checks.
   - Requests with no `Origin` header (direct API calls, same-origin) are not subject to this check.
-- **Backend-enforced document ownership**: All document-scoped endpoints strictly verify caller ownership. Unauthorized or cross-user requests return uniform `HTTP 404 Not Found` (never 403 or 401) to prevent ID enumeration. Full route matrix:
-  - `GET /documents` — session-scoped listing
-  - `GET /documents/{id}/viewer` — ownership 404
-  - `GET /documents/{id}/page/{n}/image` — ownership 404
-  - `GET /documents/{id}/search-text` — ownership 404
-  - `POST /documents/{id}/form-fields` — ownership 404
-  - `POST /documents/{id}/page/{n}/fill-image` — ownership 404
-  - `DELETE /documents/{id}` — ownership 404 (document preserved on unauthorized attempt)
-  - `POST /explain` with `doc_id` — ownership 404
-  - `POST /actions` with `doc_id` — ownership 404
-  - `POST /forms/detect` with `doc_id` — ownership 404
-  - `POST /forms/explain-field` with `doc_id` — ownership 404
-  - `POST /ask` with `doc_id` — ownership 404
+- **Backend-enforced document ownership**: All document-scoped endpoints strictly verify caller ownership. Unauthorized or cross-user requests return uniform `HTTP 404 Not Found` (never 403 or 401) to prevent ID enumeration. Every document-scoped endpoint is tested across the complete triad: Owner (200), Non-owner (404), and Anonymous (404):
+  - `GET /documents` — session-scoped listing (owner sees only own docs, non-owner/anonymous sees none)
+  - `GET /documents/{id}/viewer` — owner 200, non-owner 404, anonymous 404
+  - `GET /documents/{id}/page/{n}/image` — owner 200, non-owner 404, anonymous 404
+  - `GET /documents/{id}/search-text` — owner 200, non-owner 404, anonymous 404
+  - `POST /documents/{id}/form-fields` — owner 200, non-owner 404, anonymous 404
+  - `POST /documents/{id}/page/{n}/fill-image` — owner 200, non-owner 404, anonymous 404
+  - `DELETE /documents/{id}` — owner 200, non-owner 404 (document preserved), anonymous 404 (document preserved)
+  - `POST /explain` with `doc_id` — owner 200, non-owner 404, anonymous 404
+  - `POST /actions` with `doc_id` — owner 200, non-owner 404, anonymous 404
+  - `POST /forms/detect` with `doc_id` — owner 200, non-owner 404, anonymous 404
+  - `POST /forms/explain-field` with `doc_id` — owner 200, non-owner 404, anonymous 404
+  - `POST /ask` with `doc_id` — owner 200, non-owner 404, anonymous 404
 - **Public document listing elimination**: `GET /documents` is strictly scoped to the active caller's verified `session_id`. Cross-user document catalogs are completely inaccessible.
 - **Query & vector isolation**: When `POST /ask` is called without `doc_id`, vector similarity search is restricted to documents belonging to the authenticated session (`allowed_doc_ids`). Zero foreign evidence chunks can ever be returned.
 - **Safe SQLite migration & legacy quarantine**: `MetadataStore` automatically migrates schema with WAL mode, adding `session_id` and indexing `(session_id, doc_id)`. Unowned legacy records are permanently assigned to `__quarantined_legacy__`.
 
 ### Proxy trust & rate limiting (Phase 1 / Phase 1.1)
-- **Safe client-IP resolution**: Client IP is evaluated using Python's `ipaddress` module. Forwarded headers are strictly ignored unless the direct socket peer matches a trusted proxy address, and `X-Forwarded-For` is traversed right-to-left.
+- **Safe client-IP resolution**: Client IP is evaluated using Python's `ipaddress` module against `TRUSTED_PROXIES` (default: loopback `127.0.0.1,::1`). Forwarded headers are strictly ignored unless the direct socket peer matches a trusted proxy address, and `X-Forwarded-For` is traversed right-to-left.
 - **Dual-tier sliding-window rate limiting**:
   - *Session tier*: 3 uploads per session per 60 seconds (env: `RATE_LIMIT_UPLOAD_SESSION`, default `3/60`).
   - *IP abuse tier*: **15** uploads per IP per 60 seconds (env: `RATE_LIMIT_UPLOAD_IP`, default `15/60`). General AI and search limits are also enforced.
@@ -51,7 +58,7 @@ untrusted text through a local LLM. The primary assets are:
   - **`Content-Security-Policy`**:
     - `'unsafe-eval'` **removed** (Phase 1.1 correction). Production Next.js builds do not use `eval()`.
     - `'unsafe-inline'` in `script-src` retained: Next.js injects inline chunk-bootstrapping scripts. Removing it requires a per-request nonce strategy (future hardening).
-    - `connect-src` is **explicit**: constructed from `NEXT_PUBLIC_API_BASE_URL` at build time. The broad `https:` wildcard from Phase 1 is removed.
+    - `connect-src` is **explicit**: constructed from `NEXT_PUBLIC_API_BASE_URL` (or explicit localhost development origins `http://localhost:8000 http://127.0.0.1:8000`). Wildcard `https:` is strictly excluded.
     - `base-uri 'self'` and `form-action 'self'` directives added.
   - `X-Content-Type-Options: nosniff`
   - `X-Frame-Options: DENY`
@@ -84,12 +91,11 @@ untrusted text through a local LLM. The primary assets are:
 - LLM backend failures map to a clean 503 with a user-friendly message
 
 ### Tests & Verification
-- Phase 1 security regression suite (`tests/test_phase1_security.py`): 14/14 passing tests covering session lifecycle, token tampering, token expiry, cross-user isolation, vector query isolation, 3/session/min upload rate limiting with Retry-After, proxy boundary validation, CSRF defense (including X-Requested-With bypass fix), and legacy data quarantine.
-- Phase 1.1 correction suite (`tests/test_phase1_1_corrections.py`): 63/63 passing tests covering CSP policy verification, corrected CSRF policy, session token lifecycle, rate-limit constant verification (IP ceiling=15), and full route authorization matrix (27 endpoint/session-pair combinations).
-- Headless browser verification via Playwright (`scratch/browser_session_verification.py`): Two distinct browser sessions verify cookie issuance, document upload, cross-session 404 rejection, empty document enumeration, and clean document deletion.
-- Existing unit tests (`tests/test_security.py`, `backend/tests/test_rate_limiter.py`): all passing.
-- Frontend demo mode verification (`frontend/test/demo-mode.test.ts`): passing with 0 network calls.
-- Next.js production build (`next build`): Completed cleanly with corrected CSP headers active.
+- Phase 1 security regression suite (`tests/test_phase1_security.py`): 14/14 passing tests covering session lifecycle, token tampering, token expiry, cross-user isolation, vector query isolation, 3/session/min upload rate limiting with Retry-After, proxy boundary validation, CSRF defense, and legacy data quarantine.
+- Phase 1.1 correction suite (`tests/test_phase1_1_corrections.py`): 63/63 passing tests covering CSP policy verification, corrected CSRF policy, session token lifecycle, subprocess-isolated production secret configuration, rate-limit constant verification (IP ceiling=15), and the complete 3-way route authorization matrix (Owner 200, Non-owner 404, Anonymous 404 across all document routes).
+- Existing unit tests (`tests/test_security.py`, `backend/tests/test_rate_limiter.py`): 7/7 and 5/5 passing.
+- Frontend demo mode verification (`frontend/test/demo-mode.test.ts`): 12/12 passing with 0 network calls.
+- Next.js production build (`next build`): Completed cleanly with CSP and security headers active.
 
 ## Planned (Phase 2 & beyond)
 

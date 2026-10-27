@@ -28,11 +28,9 @@ import type { NextConfig } from "next";
 
 const API_ORIGIN =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  (process.env.NODE_ENV === "development"
-    ? "http://localhost:8000 http://127.0.0.1:8000"
-    : "");
+  "http://localhost:8000 http://127.0.0.1:8000";
 
-const connectSrc = API_ORIGIN ? `'self' ${API_ORIGIN} ws: wss:` : "'self' ws: wss:";
+const connectSrc = `'self' ${API_ORIGIN} ws: wss:`;
 
 const cspHeader = [
   "default-src 'self'",

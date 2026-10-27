@@ -22,6 +22,8 @@ import io
 import time
 import uuid
 import json
+import subprocess
+from unittest.mock import MagicMock
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -343,6 +345,73 @@ class TestSessionTokenLifecycle:
         # The design is intentional and documented in docs/SECURITY.md.
 
 
+# ─── 3b. Production Session-Secret Configuration (Subprocess Tests) ──────────
+
+class TestProductionSessionSecretConfig:
+    """
+    Subprocess-isolated tests for session-secret configuration in session_auth.py:
+    1. HAMIGENZ_ENV=production with no secret fails closed (RuntimeError).
+    2. HAMIGENZ_ENV=production with short secret (<32 chars) fails closed (ValueError).
+    3. HAMIGENZ_ENV=production with weak/insecure secret fails closed (ValueError).
+    4. HAMIGENZ_ENV=production with valid 32+ char secret succeeds.
+    5. HAMIGENZ_ENV=development with no secret succeeds (random per-instance secret).
+    """
+
+    def _run_python_with_env(self, env_vars: dict) -> subprocess.CompletedProcess:
+        env = os.environ.copy()
+        # Clean out any pre-existing secret/env vars
+        for k in ["HAMIGENZ_ENV", "ENVIRONMENT", "NODE_ENV", "HAMIGENZ_SESSION_SECRET", "SESSION_SECRET"]:
+            env.pop(k, None)
+        env.update(env_vars)
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, r'{BACKEND_DIR}')\n"
+            "import session_auth\n"
+            "print('SESSION_AUTH_LOADED_OK')\n"
+        )
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def test_production_missing_secret_fails_closed(self):
+        res = self._run_python_with_env({"HAMIGENZ_ENV": "production"})
+        assert res.returncode != 0
+        assert "FATAL: HAMIGENZ_SESSION_SECRET environment variable must be set in production mode." in res.stderr
+
+    def test_production_short_secret_fails_closed(self):
+        res = self._run_python_with_env({
+            "HAMIGENZ_ENV": "production",
+            "HAMIGENZ_SESSION_SECRET": "too_short_key_under_32",
+        })
+        assert res.returncode != 0
+        assert "FATAL: HAMIGENZ_SESSION_SECRET must be at least 32 characters in production mode." in res.stderr
+
+    def test_production_insecure_secret_fails_closed(self):
+        res = self._run_python_with_env({
+            "HAMIGENZ_ENV": "production",
+            "HAMIGENZ_SESSION_SECRET": "changeme",
+        })
+        assert res.returncode != 0
+        assert "FATAL" in res.stderr
+
+    def test_production_valid_secret_succeeds(self):
+        valid_secret = "a" * 32
+        res = self._run_python_with_env({
+            "HAMIGENZ_ENV": "production",
+            "HAMIGENZ_SESSION_SECRET": valid_secret,
+        })
+        assert res.returncode == 0
+        assert "SESSION_AUTH_LOADED_OK" in res.stdout
+
+    def test_development_no_secret_generates_random_per_process(self):
+        res = self._run_python_with_env({"HAMIGENZ_ENV": "development"})
+        assert res.returncode == 0
+        assert "SESSION_AUTH_LOADED_OK" in res.stdout
+
+
 # ─── 4. Rate Limits — Verified ────────────────────────────────────────────────
 
 class TestRateLimitsVerified:
@@ -500,6 +569,13 @@ class TestCompleteRouteAuthorizationMatrix:
 
     # ── /documents/{id}/page/{n}/image ─────────────────────────────────────
 
+    def test_page_image_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        resp = client.get(f"/documents/{doc_id}/page/1/image", headers=ha)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+        assert len(resp.content) > 0
+
     def test_page_image_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc
         resp = client.get(f"/documents/{doc_id}/page/1/image", headers=hb)
@@ -560,6 +636,16 @@ class TestCompleteRouteAuthorizationMatrix:
 
     # ── /documents/{id}/page/{n}/fill-image ─────────────────────────────────
 
+    def test_fill_image_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        resp = client.post(
+            f"/documents/{doc_id}/page/1/fill-image",
+            json={"values": []},
+            headers=ha,
+        )
+        assert resp.status_code == 200
+        assert len(resp.content) > 0
+
     def test_fill_image_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc
         resp = client.post(
@@ -580,6 +666,25 @@ class TestCompleteRouteAuthorizationMatrix:
 
     # ── /documents/{id} DELETE ──────────────────────────────────────────────
 
+    def test_delete_owner_succeeds(self, client):
+        """Owner can successfully delete their document, returning 200 and removing it."""
+        client.cookies.clear()
+        _, _, ha = _new_session()
+        pdf_bytes = _make_pdf_bytes()
+        upload_resp = client.post(
+            "/upload",
+            files={"file": ("to_delete.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+            headers=ha,
+        )
+        assert upload_resp.status_code == 200
+        del_doc_id = upload_resp.json()["doc_id"]
+        del_resp = client.delete(f"/documents/{del_doc_id}", headers=ha)
+        assert del_resp.status_code == 200
+        assert del_resp.json()["status"] == "deleted"
+        client.cookies.clear()
+        verify_resp = client.get(f"/documents/{del_doc_id}/viewer", headers=ha)
+        assert verify_resp.status_code == 404
+
     def test_delete_non_owner_gets_404_and_document_intact(self, client, owned_doc):
         doc_id, ha, hb = owned_doc
         del_b = client.delete(f"/documents/{doc_id}", headers=hb)
@@ -597,6 +702,29 @@ class TestCompleteRouteAuthorizationMatrix:
         assert verify.status_code == 200
 
     # ── /explain with doc_id ────────────────────────────────────────────────
+
+    def test_explain_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        mock_verification = {
+            "grounding_report": {"grounded": True, "claims": []},
+            "contradiction_found": False,
+            "contradiction_claims": [],
+            "confidence_score": 0.95,
+            "confidence_band": "high",
+            "unsupported_facts": [],
+            "recommendation": "accept",
+            "verified": True,
+        }
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(app.state.ollama, "generate", MagicMock(return_value="Simplified explanation."))
+            mp.setattr(app.state.verification, "verify", MagicMock(return_value=mock_verification))
+            resp = client.post(
+                "/explain",
+                json={"text": "citizen document", "doc_id": doc_id, "explanation_level": "simple", "target_language": "auto"},
+                headers=ha,
+            )
+            assert resp.status_code == 200
+            assert "explanation" in resp.json()
 
     def test_explain_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc
@@ -618,6 +746,27 @@ class TestCompleteRouteAuthorizationMatrix:
 
     # ── /actions with doc_id ─────────────────────────────────────────────────
 
+    def test_actions_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        mock_actions = {
+            "requirements": ["Original citizenship certificate"],
+            "deadlines": [],
+            "fees": [],
+            "eligibility": [],
+            "next_steps": ["Visit office"],
+            "official_links": [],
+            "meta": {},
+        }
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(app.state.action_extractor, "extract", MagicMock(return_value=mock_actions))
+            resp = client.post(
+                "/actions",
+                json={"doc_id": doc_id, "question": "what actions are needed?"},
+                headers=ha,
+            )
+            assert resp.status_code == 200
+            assert "requirements" in resp.json()
+
     def test_actions_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc
         resp = client.post(
@@ -637,6 +786,16 @@ class TestCompleteRouteAuthorizationMatrix:
         assert resp.status_code == 404
 
     # ── /forms/detect with doc_id ────────────────────────────────────────────
+
+    def test_forms_detect_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        resp = client.post(
+            "/forms/detect",
+            json={"doc_id": doc_id},
+            headers=ha,
+        )
+        assert resp.status_code == 200
+        assert "detection" in resp.json()
 
     def test_forms_detect_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc
@@ -658,6 +817,24 @@ class TestCompleteRouteAuthorizationMatrix:
 
     # ── /forms/explain-field with doc_id ─────────────────────────────────────
 
+    def test_forms_explain_field_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        mock_field_result = {
+            "field_name": "Citizen Name",
+            "explanation": "Your full legal name",
+            "sample_value": "Ram Sharma",
+            "important_notes": [],
+        }
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(app.state.form_service, "explain_field", MagicMock(return_value=mock_field_result))
+            resp = client.post(
+                "/forms/explain-field",
+                json={"label": "Name", "doc_id": doc_id},
+                headers=ha,
+            )
+            assert resp.status_code == 200
+            assert resp.json()["field_name"] == "Citizen Name"
+
     def test_forms_explain_field_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc
         resp = client.post(
@@ -677,6 +854,30 @@ class TestCompleteRouteAuthorizationMatrix:
         assert resp.status_code == 404
 
     # ── /ask with explicit doc_id ─────────────────────────────────────────────
+
+    def test_ask_with_doc_id_owner_succeeds(self, client, owned_doc):
+        doc_id, ha, _ = owned_doc
+        mock_verification = {
+            "grounding_report": {"grounded": True, "claims": []},
+            "contradiction_found": False,
+            "contradiction_claims": [],
+            "confidence_score": 0.95,
+            "confidence_band": "high",
+            "unsupported_facts": [],
+            "recommendation": "accept",
+            "verified": True,
+        }
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(app.state.ollama, "generate", MagicMock(return_value="This is a verified test answer."))
+            mp.setattr(app.state.verification, "verify", MagicMock(return_value=mock_verification))
+            resp = client.post(
+                "/ask",
+                json={"question": "What is in this document?", "doc_id": doc_id},
+                headers=ha,
+            )
+            assert resp.status_code == 200
+            assert "answer" in resp.json()
+            assert resp.json()["grounding"]["confidence_band"] == "high"
 
     def test_ask_with_doc_id_non_owner_gets_404(self, client, owned_doc):
         doc_id, _, hb = owned_doc

@@ -271,7 +271,11 @@ async def session_and_csrf_middleware(request: Request, call_next):
 
     # Attach session to response
     response.headers["X-Session-Token"] = token
-    is_prod = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "development")).lower() == "production"
+    is_prod = (
+        os.getenv("HAMIGENZ_ENV")
+        or os.getenv("ENVIRONMENT")
+        or os.getenv("NODE_ENV", "development")
+    ).lower().strip() == "production"
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
