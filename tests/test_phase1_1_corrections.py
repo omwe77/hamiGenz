@@ -210,15 +210,35 @@ class TestCSPHeaders:
                     "NEXT_PUBLIC_API_BASE_URL": bad_url,
                 })
 
+    def test_csp_production_rejects_http_and_requires_https(self):
+        """Production must reject plain http:// API URLs and require https://."""
+        with pytest.raises(ValueError, match="Production API URL must use 'https:' protocol"):
+            self._run_node_csp({
+                "NODE_ENV": "production",
+                "NEXT_PUBLIC_API_BASE_URL": "http://api.hamigenz.gov.np",
+            })
+
     def test_csp_development_mode_allows_dev_servers_and_hmr(self):
-        """Development mode must permit local backend origins and HMR WebSockets."""
+        """Development mode must permit local backend origins, HTTP API URLs, and explicit HMR WebSockets without broad wildcards."""
         csp = self._run_node_csp({"NODE_ENV": "development", "NEXT_PUBLIC_API_BASE_URL": ""})
         directives = {p.split()[0]: p for p in csp.split("; ")}
+        connect_tokens = directives["connect-src"].split()
         assert "http://localhost:8000" in directives["connect-src"]
         assert "http://127.0.0.1:8000" in directives["connect-src"]
-        assert "ws:" in directives["connect-src"]
-        assert "wss:" in directives["connect-src"]
+        assert "ws://localhost:3000" in directives["connect-src"]
+        assert "ws://127.0.0.1:3000" in directives["connect-src"]
+        # Broad wildcards ws: and wss: must NOT be present
+        assert "ws:" not in connect_tokens
+        assert "wss:" not in connect_tokens
         assert "http://localhost:8000" in directives["img-src"]
+
+        # Dev mode allows HTTP API URL
+        dev_http_csp = self._run_node_csp({
+            "NODE_ENV": "development",
+            "NEXT_PUBLIC_API_BASE_URL": "http://api.dev.local:8080/v1",
+        })
+        dev_directives = {p.split()[0]: p for p in dev_http_csp.split("; ")}
+        assert "http://api.dev.local:8080" in dev_directives["connect-src"]
 
     def test_csp_node_test_suite_passes(self):
         """The dedicated frontend/test/csp.test.ts suite must pass cleanly."""
@@ -480,6 +500,15 @@ class TestProductionSessionSecretConfig:
         })
         assert res.returncode != 0
         assert "FATAL" in res.stderr
+
+    def test_production_legacy_secret_only_fails_closed(self):
+        """Production with only legacy SESSION_SECRET set and HAMIGENZ_SESSION_SECRET absent must fail closed."""
+        res = self._run_python_with_env({
+            "HAMIGENZ_ENV": "production",
+            "SESSION_SECRET": "a" * 32,
+        })
+        assert res.returncode != 0
+        assert "FATAL: HAMIGENZ_SESSION_SECRET environment variable must be set in production mode." in res.stderr
 
     def test_production_valid_secret_succeeds(self):
         valid_secret = "a" * 32

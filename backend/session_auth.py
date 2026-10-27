@@ -25,11 +25,8 @@ _ENV = (
     or os.getenv("NODE_ENV", "development")
 ).lower().strip()
 
-_CONFIGURED_SECRET = (
-    os.getenv("HAMIGENZ_SESSION_SECRET")
-    or os.getenv("SESSION_SECRET")
-    or ""
-).strip()
+_CANONICAL_SECRET = os.getenv("HAMIGENZ_SESSION_SECRET", "").strip()
+_LEGACY_SECRET = os.getenv("SESSION_SECRET", "").strip()
 
 _INSECURE_SECRETS = {
     "changeme",
@@ -42,22 +39,25 @@ _INSECURE_SECRETS = {
 }
 
 if _ENV == "production":
-    if not _CONFIGURED_SECRET:
+    # In production, HAMIGENZ_SESSION_SECRET is strictly required.
+    # Legacy SESSION_SECRET must not silently override or fulfill this canonical requirement.
+    if not _CANONICAL_SECRET:
         raise RuntimeError(
             "FATAL: HAMIGENZ_SESSION_SECRET environment variable must be set in production mode."
         )
-    if len(_CONFIGURED_SECRET) < 32:
+    if len(_CANONICAL_SECRET) < 32:
         raise ValueError(
             "FATAL: HAMIGENZ_SESSION_SECRET must be at least 32 characters in production mode."
         )
-    if _CONFIGURED_SECRET.lower() in _INSECURE_SECRETS:
+    if _CANONICAL_SECRET.lower() in _INSECURE_SECRETS:
         raise ValueError(
             "FATAL: Insecure HAMIGENZ_SESSION_SECRET provided in production mode."
         )
-    SESSION_SECRET = _CONFIGURED_SECRET.encode("utf-8")
+    SESSION_SECRET = _CANONICAL_SECRET.encode("utf-8")
 else:
-    if _CONFIGURED_SECRET:
-        SESSION_SECRET = _CONFIGURED_SECRET.encode("utf-8")
+    dev_secret = _CANONICAL_SECRET or _LEGACY_SECRET
+    if dev_secret:
+        SESSION_SECRET = dev_secret.encode("utf-8")
     else:
         # In development/testing, generate a strong random secret per process instance.
         # Never fall back to a predictable static string.

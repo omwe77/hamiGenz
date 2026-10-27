@@ -3,9 +3,9 @@ import type { NextConfig } from "next";
 // --- Content-Security-Policy Generation ---
 // Implements least-privilege CSP source construction:
 // 1. In production with no NEXT_PUBLIC_API_BASE_URL: connect-src 'self' without localhost, ws:, or wss:.
-// 2. In production with a valid API URL: connect-src 'self' <origin> using parsed URL origin only.
-// 3. Rejects malformed API URL configuration with a clear error.
-// 4. In development: permits explicit localhost dev origins and HMR WebSocket connections.
+// 2. In production with a valid API URL: connect-src 'self' <origin> using parsed URL origin only; requires https: protocol.
+// 3. In development: accepts http: or https: API URLs; uses explicit HMR WebSocket origins (no broad ws: or wss:).
+// 4. Rejects malformed API URL configuration or non-HTTPS production URLs with a clear error.
 // 5. img-src adheres to least privilege: 'self' data: blob: (and parsed API origin if configured).
 // 6. unsafe-eval is strictly absent. unsafe-inline in script-src is retained for Next.js bootstrapping.
 //
@@ -36,11 +36,20 @@ export function buildCsp(env: CspEnv = process.env): string {
         `Must be an absolute URL like 'https://api.example.com'.`
       );
     }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(
-        `Invalid protocol '${parsed.protocol}' in NEXT_PUBLIC_API_BASE_URL '${rawApiUrl}'. ` +
-        `Must be 'http:' or 'https:'.`
-      );
+    if (isDev) {
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error(
+          `Invalid protocol '${parsed.protocol}' in NEXT_PUBLIC_API_BASE_URL '${rawApiUrl}'. ` +
+          `Development API URL must use 'http:' or 'https:'.`
+        );
+      }
+    } else {
+      if (parsed.protocol !== "https:") {
+        throw new Error(
+          `Invalid protocol '${parsed.protocol}' in NEXT_PUBLIC_API_BASE_URL '${rawApiUrl}'. ` +
+          `Production API URL must use 'https:' protocol.`
+        );
+      }
     }
     // Explicit origin only (scheme + host + port), without trailing slash or path
     validatedApiOrigin = parsed.origin;
@@ -50,15 +59,16 @@ export function buildCsp(env: CspEnv = process.env): string {
   let imgSources: string[];
 
   if (isDev) {
-    // Development mode: permit local dev API server and HMR WebSockets
+    // Development mode: permit local dev API server and explicit HMR WebSockets.
+    // Broad 'ws:' and 'wss:' wildcards are strictly removed.
     connectSources = [
       "'self'",
       "http://localhost:8000",
       "http://127.0.0.1:8000",
       "ws://localhost:3000",
       "ws://127.0.0.1:3000",
-      "ws:",
-      "wss:",
+      "wss://localhost:3000",
+      "wss://127.0.0.1:3000",
     ];
     if (validatedApiOrigin && !connectSources.includes(validatedApiOrigin)) {
       connectSources.push(validatedApiOrigin);
