@@ -522,13 +522,17 @@ class TestProductionSessionSecretConfig:
             assert "FATAL: Insecure HAMIGENZ_SESSION_SECRET" in res.stderr
 
     def test_production_sequential_characters_fails_closed(self):
-        """Production must reject continuous sequential runs."""
-        res = self._run_python_with_env({
-            "HAMIGENZ_ENV": "production",
-            "HAMIGENZ_SESSION_SECRET": "abcdefghijklmnopqrstuvwxyz012345",
-        })
-        assert res.returncode != 0
-        assert "FATAL: Insecure HAMIGENZ_SESSION_SECRET" in res.stderr
+        """Production must reject continuous sequential ASCII runs (ascending or descending)."""
+        for weak in [
+            "abcdefghijklmnopqrstuvwxyz012345",   # ascending
+            "zyxwvutsrqponmlkjihgfedcba987654",   # descending
+        ]:
+            res = self._run_python_with_env({
+                "HAMIGENZ_ENV": "production",
+                "HAMIGENZ_SESSION_SECRET": weak,
+            })
+            assert res.returncode != 0, f"Expected failure for: {weak!r}"
+            assert "FATAL: Insecure HAMIGENZ_SESSION_SECRET" in res.stderr
 
     def test_production_legacy_secret_only_fails_closed(self):
         """Production with only legacy SESSION_SECRET set and HAMIGENZ_SESSION_SECRET absent must fail closed."""

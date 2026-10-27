@@ -59,11 +59,12 @@ def _is_weak_secret(secret: str) -> bool:
         if repeats >= 2 and chunk * repeats == s_lower[: chunk_len * repeats]:
             if (chunk_len * repeats) >= len(s_lower) - 2:
                 return True
-    # Obvious sequential ASCII runs of length >= 10 (e.g. "abcdefghijklmnopqrstuvwxyz012345")
+    # Obvious sequential ASCII runs of length >= 10, ascending or descending
+    # (e.g. "abcdefghijklmnopqrstuvwxyz012345" or "zyxwvutsrqponmlkjihgfedcba987654")
     max_seq = 1
     cur_seq = 1
     for i in range(len(s_lower) - 1):
-        if ord(s_lower[i + 1]) - ord(s_lower[i]) == 1:
+        if abs(ord(s_lower[i + 1]) - ord(s_lower[i])) == 1:
             cur_seq += 1
             if cur_seq > max_seq:
                 max_seq = cur_seq
