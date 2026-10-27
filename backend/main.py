@@ -5,6 +5,8 @@ Main application entry point.
 import os
 import re
 import sys
+import time
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -57,7 +59,7 @@ from okf_bundle import OKFBundle, classify_query
 
 # Import local modules
 from document_processor import DocumentProcessor, Chunker, MetadataStore
-from vector_store import EmbeddingService, VectorStore, Pipeline
+from vector_store import EmbeddingService, VectorStore, Pipeline, ProcessingTimeoutError
 from llm_service import (
     OllamaService,
     LLMUnavailableError,
@@ -181,6 +183,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[hamigenz] Warning: Ollama may not be fully reachable: {e}")
 
+    get_processing_semaphore()
     print(f"[hamigenz] Ready. Embedder: {EMBED_MODEL}, LLM: {OLLAMA_MODEL}")
     yield
     print("[hamigenz] Shutting down...")
@@ -193,6 +196,17 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Concurrency control: limit simultaneous heavy document processing tasks (Task 2.1.1)
+def get_processing_semaphore() -> asyncio.Semaphore:
+    """Return the shared asyncio.Semaphore limiting concurrent heavy document processing tasks."""
+    if not hasattr(app.state, "processing_semaphore") or app.state.processing_semaphore is None:
+        try:
+            max_concurrent = int(os.environ.get("HAMIGENZ_MAX_CONCURRENT_PROCESSING", min(2, os.cpu_count() or 1)))
+        except (ValueError, TypeError):
+            max_concurrent = 2
+        app.state.processing_semaphore = asyncio.Semaphore(max(1, min(16, max_concurrent)))
+    return app.state.processing_semaphore
 
 # CORS for frontend — explicit origins only (wildcard + credentials is an
 # invalid/unsafe combination and browsers reject it).
@@ -520,40 +534,74 @@ async def upload_document(
     # Save under a generated internal name (user filename never touches disk)
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
     try:
-        if not reindex_doc_id:
+        if reindex_doc_id:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
+                raise HTTPException(400, "Invalid document id")
+            # Enforce that caller owns reindex_doc_id
+            verify_document_owner(app, reindex_doc_id, session_id)
+            # Clean the old representations before reprocessing
+            app.state.vector_store.remove_document(reindex_doc_id)
+            app.state.metadata.delete_document(reindex_doc_id, session_id=session_id)
+            filepath, doc_id = processor.save_upload(
+                file_bytes, filename, doc_id=reindex_doc_id)
+        else:
             filepath, doc_id = processor.save_upload(file_bytes, filename)
     except ValueError as e:
         raise HTTPException(400, "Invalid upload") from e
-
-    # Reindex mode: re-embed an EXISTING document with the current model
-    if reindex_doc_id:
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
-            raise HTTPException(400, "Invalid document id")
-        # Enforce that caller owns reindex_doc_id
-        verify_document_owner(app, reindex_doc_id, session_id)
-        # Clean the old representations before reprocessing
-        app.state.vector_store.remove_document(reindex_doc_id)
-        app.state.metadata.delete_document(reindex_doc_id, session_id=session_id)
-        filepath, doc_id = processor.save_upload(
-            file_bytes, filename, doc_id=reindex_doc_id)
-    else:
-        filepath, doc_id = processor.save_upload(file_bytes, filename)
 
     # Process
     if not hasattr(app.state, "pipeline"):
         raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
     pipeline = app.state.pipeline
+    sem = get_processing_semaphore()
+
+    # Queue acquisition: separate queue timeout before worker starts
+    queue_timeout_sec = float(os.environ.get("HAMIGENZ_QUEUE_TIMEOUT_SECONDS", 15.0))
     try:
-        result = pipeline.process_document(str(filepath), doc_id, filename, session_id=session_id)
-    except Exception:
-        print(f"[hamigenz] Document processing failed for {doc_id}")
+        async with asyncio.timeout(queue_timeout_sec):
+            await sem.acquire()
+    except TimeoutError:
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(503, "Server busy processing documents. Please try again shortly.")
+
+    # Worker execution: permit stays held until worker reaches a safe terminal state
+    try:
+        proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
+        deadline = time.monotonic() + proc_timeout_sec
+        result = await asyncio.to_thread(
+            pipeline.process_document,
+            str(filepath),
+            doc_id,
+            filename,
+            session_id=session_id,
+            deadline=deadline,
+        )
+    except ProcessingTimeoutError as e:
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(503, "Document processing timed out. Please try again shortly.") from e
+    except Exception as e:
+        print(f"[hamigenz] Document processing failed for {doc_id}: {e}")
         import traceback
         traceback.print_exc()
-        Path(filepath).unlink(missing_ok=True)
-        raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.")
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.") from e
+    finally:
+        sem.release()
 
     if result["status"] == "error":
-        Path(filepath).unlink(missing_ok=True)
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
         raise HTTPException(400, result.get("message", "Processing failed"))
 
     # ── Resource limits on processed documents ────────────────────────
@@ -561,7 +609,10 @@ async def upload_document(
     if result["pages"] > MAX_PAGES:
         app.state.vector_store.remove_document(doc_id)
         app.state.metadata.delete_document(doc_id, session_id=session_id)
-        Path(filepath).unlink(missing_ok=True)
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
         raise HTTPException(400, f"Document has too many pages (max {MAX_PAGES}).")
 
     return UploadResponse(
@@ -1051,7 +1102,7 @@ async def _form_source_text(text: Optional[str], doc_id: Optional[str], session_
     if doc_id:
         doc = verify_document_owner(app, doc_id, session_id)
         processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-        pages = processor.extract_text(doc["filepath"])
+        pages = await asyncio.to_thread(processor.extract_text, doc["filepath"])
         return "\n".join(f"[PAGE {p['page_num']}]\n{p['text']}" for p in pages)
     raise HTTPException(400, "Provide text or doc_id.")
 
@@ -1086,7 +1137,7 @@ async def explain_form_field(req: FormExplainRequest, request: Request, _rl: Non
     if req.doc_id:
         doc = verify_document_owner(app, req.doc_id, session_id)
         processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-        pages = processor.extract_text(doc["filepath"])
+        pages = await asyncio.to_thread(processor.extract_text, doc["filepath"])
         if req.page:
             page = next((p for p in pages if p["page_num"] == req.page), None)
             context = page["text"] if page else ""
@@ -1155,7 +1206,7 @@ async def get_document_viewer(doc_id: str, request: Request):
         raise HTTPException(403, "Invalid document path")
 
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-    pages = processor.extract_text(doc["filepath"])
+    pages = await asyncio.to_thread(processor.extract_text, doc["filepath"])
 
     viewer_pages = []
     for p in pages:
@@ -1184,6 +1235,60 @@ async def get_document_viewer(doc_id: str, request: Request):
 
 # ─── /documents/{doc_id}/page/{page_num}/filled-image: rendered answer overlay ──
 
+def _render_fill_preview_sync(filepath: str, page_num: int, req_values, stored_values) -> tuple[str, bytes | None]:
+    processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+    pages = processor.extract_text(filepath)
+    page_map = {p["page_num"]: p for p in pages}
+    if page_num not in page_map:
+        return ("NOT_FOUND", None)
+
+    for p in page_map.values():
+        text = p.get("text") or ""
+        word_boxes = processor._tesseract_word_boxes(filepath, p["page_num"])
+        detection = form_understanding.detect_form_positions(text, word_boxes)
+        p["fields_with_positions"] = detection["fields"]
+
+    def _norm(v):
+        if isinstance(v, dict):
+            return v.get("label"), v.get("value") or "", v.get("page")
+        return (getattr(v, "label", None),
+                getattr(v, "value") or "",
+                getattr(v, "page"))
+
+    def _value_for(label, page):
+        for v in list(req_values or []):
+            l, val, p = _norm(v)
+            if l == label and p == page:
+                return val
+        for v in stored_values:
+            l, val, p = _norm(v)
+            if l == label and p == page:
+                return val
+        return ""
+
+    merged_values = []
+    for p in page_map.values():
+        for f in p.get("fields_with_positions", []):
+            value = _value_for(f.get("label"), f.get("page"))
+            if value:
+                merged_values.append({"label": f.get("label"),
+                                      "value": value,
+                                      "box": f,
+                                      "page": p["page_num"]})
+
+    if not merged_values:
+        return ("EMPTY", None)
+
+    original_pil = processor._render_page_pil(filepath, page_num, dpi=300)
+    if original_pil is None:
+        return ("RENDER_ERROR", None)
+
+    filled_pil = form_preview.build_filled_page(original_pil, merged_values)
+    buf = BytesIO()
+    filled_pil.save(buf, format="PNG")
+    return ("OK", buf.getvalue())
+
+
 @app.post("/documents/{doc_id}/page/{page_num}/fill-image")
 async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
                      request: Request, _rl: None = Depends(rate_limit("ai"))):
@@ -1200,60 +1305,19 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
         if not stored_path.is_relative_to(UPLOAD_DIR.resolve()):
             raise HTTPException(403, "Invalid document path")
 
-        processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-        pages = processor.extract_text(doc["filepath"])
-        page_map = {p["page_num"]: p for p in pages}
-        if page_num not in page_map:
+        status, preview_bytes = await asyncio.to_thread(
+            _render_fill_preview_sync, doc["filepath"], page_num, req.values, stored_values
+        )
+        if status == "NOT_FOUND":
             raise HTTPException(404, f"Page {page_num} not found on document {doc_id}")
-
-        for p in page_map.values():
-            text = p.get("text") or ""
-            word_boxes = processor._tesseract_word_boxes(doc["filepath"], p["page_num"])
-            detection = form_understanding.detect_form_positions(text, word_boxes)
-            p["fields_with_positions"] = detection["fields"]
-
-        def _norm(v):
-            if isinstance(v, dict):
-                return v.get("label"), v.get("value") or "", v.get("page")
-            return (getattr(v, "label", None),
-                    getattr(v, "value") or "",
-                    getattr(v, "page"))
-
-        def _value_for(label, page):
-            for v in list(req.values or []):
-                l, val, p = _norm(v)
-                if l == label and p == page:
-                    return val
-            for v in stored_values:
-                l, val, p = _norm(v)
-                if l == label and p == page:
-                    return val
-            return ""
-
-        merged_values = []
-        for p in page_map.values():
-            for f in p.get("fields_with_positions", []):
-                value = _value_for(f.get("label"), f.get("page"))
-                if value:
-                    merged_values.append({"label": f.get("label"),
-                                          "value": value,
-                                          "box": f,
-                                          "page": p["page_num"]})
-
-        if not merged_values:
+        if status == "EMPTY":
             return PlainTextResponse(
                 "No form fields found or no values supplied.",
                 media_type="text/plain",
             )
-
-        original_pil = processor._render_page_pil(doc["filepath"], page_num, dpi=300)
-        if original_pil is None:
+        if status == "RENDER_ERROR" or preview_bytes is None:
             raise HTTPException(500, "Could not render the page for preview.")
-
-        filled_pil = form_preview.build_filled_page(original_pil, merged_values)
-        buf = BytesIO()
-        filled_pil.save(buf, format="PNG")
-        return Response(content=buf.getvalue(), media_type="image/png")
+        return Response(content=preview_bytes, media_type="image/png")
     except HTTPException:
         raise
     except Exception as e:
@@ -1294,7 +1358,7 @@ async def get_page_image(doc_id: str, page_num: int, request: Request):
         raise HTTPException(403, "Invalid document path")
 
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-    img_bytes = processor.render_page_image(doc["filepath"], page_num)
+    img_bytes = await asyncio.to_thread(processor.render_page_image, doc["filepath"], page_num)
 
     if not img_bytes:
         raise HTTPException(404, f"Page {page_num} image not available")
@@ -1323,7 +1387,7 @@ async def search_document_text(
         raise HTTPException(403, "Invalid document path")
 
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
-    pages = processor.extract_text(doc["filepath"])
+    pages = await asyncio.to_thread(processor.extract_text, doc["filepath"])
 
     query_lower = query.lower()
     matches = []

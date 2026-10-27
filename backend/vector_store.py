@@ -5,6 +5,7 @@ import os
 import json
 import re
 import uuid
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -329,6 +330,11 @@ class VectorStore:
             meta_path.unlink()
 
 
+class ProcessingTimeoutError(RuntimeError):
+    """Raised when document processing exceeds its deadline before persistence begins."""
+    pass
+
+
 class Pipeline:
     """End-to-end document processing pipeline."""
 
@@ -342,23 +348,36 @@ class Pipeline:
         self.metadata = metadata_store
 
     def process_document(self, filepath: str, doc_id: str,
-                         filename: str, session_id: str = "__anonymous__") -> dict:
+                         filename: str, session_id: str = "__anonymous__",
+                         deadline: float | None = None) -> dict:
         """
         Full pipeline: extract → chunk → embed → store.
         Returns processing summary.
+        If a deadline is specified, checks deadline after extraction, chunking,
+        and embedding stages and aborts before persistence if exceeded.
         """
         from document_processor import DocumentProcessor
         processor = DocumentProcessor(upload_dir="")  # filepath already saved
 
+        def _check_deadline(stage: str):
+            if deadline is not None and time.monotonic() > deadline:
+                raise ProcessingTimeoutError(
+                    f"Document processing deadline exceeded after stage: {stage}"
+                )
+
+        _check_deadline("start")
+
         # Extract
         pages = processor.extract_text(filepath)
         page_count = len(pages)
+        _check_deadline("extraction")
 
         # Detect language hint
         language_hint = self._detect_language_hint(pages)
 
         # Chunk
         chunks = self.chunker.chunk_pages(pages, doc_id, filename)
+        _check_deadline("chunking")
 
         if not chunks:
             return {"status": "error", "message": "No extractable text found in document."}
@@ -366,12 +385,25 @@ class Pipeline:
         # Embed
         texts = [c["text"] for c in chunks]
         embeddings = self.embedder.embed_texts(texts)
+        _check_deadline("embedding")
 
         # Store
-        self.vector_store.add_document(doc_id, chunks, embeddings)
-        self.metadata.add_document(doc_id, filename, filepath,
-                                   page_count, language_hint, session_id=session_id)
-        self.metadata.add_chunks(chunks)
+        try:
+            self.vector_store.add_document(doc_id, chunks, embeddings)
+            self.metadata.add_document(doc_id, filename, filepath,
+                                       page_count, language_hint, session_id=session_id)
+            self.metadata.add_chunks(chunks)
+        except Exception:
+            # Atomic rollback on partial failure during persistence
+            try:
+                self.vector_store.remove_document(doc_id)
+            except Exception:
+                pass
+            try:
+                self.metadata.delete_document(doc_id, session_id=session_id)
+            except Exception:
+                pass
+            raise
 
         return {
             "status": "success",
