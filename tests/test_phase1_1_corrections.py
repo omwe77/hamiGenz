@@ -501,17 +501,48 @@ class TestProductionSessionSecretConfig:
         assert res.returncode != 0
         assert "FATAL" in res.stderr
 
-    def test_production_legacy_secret_only_fails_closed(self):
-        """Production with only legacy SESSION_SECRET set and HAMIGENZ_SESSION_SECRET absent must fail closed."""
+    def test_production_single_char_repetition_fails_closed(self):
+        """Production must reject single-character repetitions like 'a' * 32 or '1' * 32."""
+        for weak in ["a" * 32, "1" * 40, "z" * 64]:
+            res = self._run_python_with_env({
+                "HAMIGENZ_ENV": "production",
+                "HAMIGENZ_SESSION_SECRET": weak,
+            })
+            assert res.returncode != 0
+            assert "FATAL: Insecure HAMIGENZ_SESSION_SECRET" in res.stderr
+
+    def test_production_trivial_repeated_pattern_fails_closed(self):
+        """Production must reject simple repeated chunks like '12345678' * 4."""
+        for weak in ["12345678" * 4, "password" * 4, "abab" * 10]:
+            res = self._run_python_with_env({
+                "HAMIGENZ_ENV": "production",
+                "HAMIGENZ_SESSION_SECRET": weak,
+            })
+            assert res.returncode != 0
+            assert "FATAL: Insecure HAMIGENZ_SESSION_SECRET" in res.stderr
+
+    def test_production_sequential_characters_fails_closed(self):
+        """Production must reject continuous sequential runs."""
         res = self._run_python_with_env({
             "HAMIGENZ_ENV": "production",
-            "SESSION_SECRET": "a" * 32,
+            "HAMIGENZ_SESSION_SECRET": "abcdefghijklmnopqrstuvwxyz012345",
+        })
+        assert res.returncode != 0
+        assert "FATAL: Insecure HAMIGENZ_SESSION_SECRET" in res.stderr
+
+    def test_production_legacy_secret_only_fails_closed(self):
+        """Production with only legacy SESSION_SECRET set and HAMIGENZ_SESSION_SECRET absent must fail closed."""
+        valid_legacy = "c48f8a1e2b6d39459a72b0c13e5d71a8f942bc03e1678da4b2e5917fc83410a9"
+        res = self._run_python_with_env({
+            "HAMIGENZ_ENV": "production",
+            "SESSION_SECRET": valid_legacy,
         })
         assert res.returncode != 0
         assert "FATAL: HAMIGENZ_SESSION_SECRET environment variable must be set in production mode." in res.stderr
 
     def test_production_valid_secret_succeeds(self):
-        valid_secret = "a" * 32
+        # Realistic, cryptographically diverse secret (64-char hex or complex string)
+        valid_secret = "c48f8a1e2b6d39459a72b0c13e5d71a8f942bc03e1678da4b2e5917fc83410a9"
         res = self._run_python_with_env({
             "HAMIGENZ_ENV": "production",
             "HAMIGENZ_SESSION_SECRET": valid_secret,

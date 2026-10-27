@@ -38,6 +38,42 @@ _INSECURE_SECRETS = {
     "12345678901234567890123456789012",
 }
 
+
+def _is_weak_secret(secret: str) -> bool:
+    """
+    Reject obvious low-entropy and placeholder patterns.
+    Note: Heuristic pattern checks reject obvious misconfigurations but cannot
+    prove an arbitrary secret has sufficient entropy. Production secrets must be
+    generated using a cryptographically secure random source (e.g. secrets.token_hex(32)).
+    """
+    s_lower = secret.lower().strip()
+    if s_lower in _INSECURE_SECRETS:
+        return True
+    # Obvious low character diversity (e.g. single-character repetition or fewer than 8 unique characters)
+    if len(set(s_lower)) < 8:
+        return True
+    # Obvious repeating chunks (e.g. "12345678" * 4, "secret1234" * 4)
+    for chunk_len in range(1, len(s_lower) // 2 + 1):
+        chunk = s_lower[:chunk_len]
+        repeats = len(s_lower) // chunk_len
+        if repeats >= 2 and chunk * repeats == s_lower[: chunk_len * repeats]:
+            if (chunk_len * repeats) >= len(s_lower) - 2:
+                return True
+    # Obvious sequential ASCII runs of length >= 10 (e.g. "abcdefghijklmnopqrstuvwxyz012345")
+    max_seq = 1
+    cur_seq = 1
+    for i in range(len(s_lower) - 1):
+        if ord(s_lower[i + 1]) - ord(s_lower[i]) == 1:
+            cur_seq += 1
+            if cur_seq > max_seq:
+                max_seq = cur_seq
+        else:
+            cur_seq = 1
+    if max_seq >= 10:
+        return True
+    return False
+
+
 if _ENV == "production":
     # In production, HAMIGENZ_SESSION_SECRET is strictly required.
     # Legacy SESSION_SECRET must not silently override or fulfill this canonical requirement.
@@ -49,9 +85,10 @@ if _ENV == "production":
         raise ValueError(
             "FATAL: HAMIGENZ_SESSION_SECRET must be at least 32 characters in production mode."
         )
-    if _CANONICAL_SECRET.lower() in _INSECURE_SECRETS:
+    if _is_weak_secret(_CANONICAL_SECRET):
         raise ValueError(
-            "FATAL: Insecure HAMIGENZ_SESSION_SECRET provided in production mode."
+            "FATAL: Insecure HAMIGENZ_SESSION_SECRET provided in production mode. "
+            "Obvious weak pattern detected (production secrets must be generated using a cryptographically secure method)."
         )
     SESSION_SECRET = _CANONICAL_SECRET.encode("utf-8")
 else:
