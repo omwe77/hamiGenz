@@ -209,6 +209,12 @@ def get_processing_semaphore() -> asyncio.Semaphore:
         app.state.processing_semaphore = asyncio.Semaphore(max(1, min(16, max_concurrent)))
     return app.state.processing_semaphore
 
+def get_active_supervisor_tasks() -> set[asyncio.Task]:
+    """Return the registry of in-flight supervisor tasks holding strong references (Task 2.1.1-R3)."""
+    if not hasattr(app.state, "active_supervisor_tasks") or app.state.active_supervisor_tasks is None:
+        app.state.active_supervisor_tasks = set()
+    return app.state.active_supervisor_tasks
+
 # CORS for frontend — explicit origins only (wildcard + credentials is an
 # invalid/unsafe combination and browsers reject it).
 # Configure extra origins via CORS_EXTRA_ORIGINS (comma-separated).
@@ -568,10 +574,9 @@ async def upload_document(
             pass
         raise HTTPException(503, "Server busy processing documents. Please try again shortly.")
 
-    # Worker execution: cancellation-safe worker supervision (Task 2.1.1-R2)
+    # Worker execution: supervisor-owned terminal cleanup (Task 2.1.1-R3)
     proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
     deadline = time.monotonic() + proc_timeout_sec
-    caller_active = True
     MAX_PAGES = 200
     thread_done = threading.Event()
 
@@ -603,46 +608,59 @@ async def upload_document(
             worker_outcome = "error"
             worker_payload = exc
         finally:
+            # 1. Guarantee the synchronous worker thread has completely stopped
             if not thread_done.is_set():
                 await asyncio.to_thread(thread_done.wait)
 
+            # 2. Supervisor-owned terminal cleanup: runs reliably regardless of caller state
             try:
-                # If caller has cancelled, handle terminal outcome and safe file cleanup
-                if not caller_active:
-                    if worker_outcome in ("timeout", "error"):
+                if worker_outcome in ("timeout", "error"):
+                    try:
+                        Path(filepath).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                elif worker_outcome == "ok" and isinstance(worker_payload, dict):
+                    if worker_payload.get("status") == "error":
                         try:
                             Path(filepath).unlink(missing_ok=True)
                         except OSError:
                             pass
-                    elif worker_outcome == "ok" and isinstance(worker_payload, dict):
-                        if worker_payload.get("status") == "error":
-                            try:
-                                Path(filepath).unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                        elif worker_payload.get("pages", 0) > MAX_PAGES:
+                    elif worker_payload.get("pages", 0) > MAX_PAGES:
+                        try:
                             app.state.vector_store.remove_document(doc_id)
+                        except Exception:
+                            pass
+                        try:
                             app.state.metadata.delete_document(doc_id, session_id=session_id)
-                            try:
-                                Path(filepath).unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                        # If committed successfully within limits, preserve document data and file
+                        except Exception:
+                            pass
+                        try:
+                            Path(filepath).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    # If valid, successful, and within limits, keep document representations and file
+            except Exception as cleanup_exc:
+                print(f"[hamigenz] Terminal cleanup error for {doc_id}: {cleanup_exc}")
             finally:
+                # 3. Release permit strictly after worker has stopped and terminal cleanup has finished
                 sem.release()
 
         return worker_outcome, worker_payload
 
+    # Keep a strong application-level reference to the supervisor task until it finishes
+    active_tasks = get_active_supervisor_tasks()
     supervisor_task = asyncio.create_task(_supervised_worker())
+    active_tasks.add(supervisor_task)
+    supervisor_task.add_done_callback(active_tasks.discard)
+
     try:
         outcome, payload = await asyncio.shield(supervisor_task)
     except asyncio.CancelledError:
-        caller_active = False
+        # Request coroutine cancelled; supervisor_task continues in background to terminal state
         raise
-    finally:
-        caller_active = False
 
     if outcome == "timeout":
+        # Idempotent cleanup in case supervisor already unlinked
         try:
             Path(filepath).unlink(missing_ok=True)
         except OSError:
@@ -665,8 +683,14 @@ async def upload_document(
 
     # ── Resource limits on processed documents ────────────────────────
     if result["pages"] > MAX_PAGES:
-        app.state.vector_store.remove_document(doc_id)
-        app.state.metadata.delete_document(doc_id, session_id=session_id)
+        try:
+            app.state.vector_store.remove_document(doc_id)
+        except Exception:
+            pass
+        try:
+            app.state.metadata.delete_document(doc_id, session_id=session_id)
+        except Exception:
+            pass
         try:
             Path(filepath).unlink(missing_ok=True)
         except OSError:

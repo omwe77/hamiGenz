@@ -44,6 +44,14 @@ from vector_store import Pipeline, VectorStore, EmbeddingService, ProcessingTime
 from document_processor import Chunker, MetadataStore
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """Reset in-memory rate limiters between tests to prevent IP ceiling saturation."""
+    from rate_limiter import _ip_limiters, _session_limiters
+    _ip_limiters.clear()
+    _session_limiters.clear()
+
+
 @pytest.fixture
 def mock_pipeline():
     """Ensure app.state.pipeline exists for testing upload_document."""
@@ -824,5 +832,257 @@ def test_deadline_crossing_during_persistence_never_returns_503(mock_pipeline):
                     assert resp.json()["pages"] == 1
                     assert not test_sem.locked()
                     assert test_sem._value == 1
+
+    asyncio.run(_run())
+
+
+# ─── 13. Cancellation Racing With Failed Worker Cleanup (Task 2.1.1-R3) ────
+
+def test_cancellation_racing_with_timeout_cleans_up_upload(mock_pipeline):
+    """
+    Verify that if a worker encounters ProcessingTimeoutError and the HTTP
+    request is cancelled concurrently (or right as it completes), the supervisor
+    reliably cleans up the upload file, releases the permit, and deregisters itself.
+    """
+    async def _run():
+        test_sem = asyncio.Semaphore(1)
+        worker_started = threading.Event()
+        allow_worker_fail = threading.Event()
+        saved_filepath = None
+
+        def timing_out_worker(filepath, *args, **kwargs):
+            nonlocal saved_filepath
+            saved_filepath = filepath
+            worker_started.set()
+            allow_worker_fail.wait(timeout=5.0)
+            raise ProcessingTimeoutError("Processing deadline exceeded in worker")
+
+        mock_pipeline.process_document.side_effect = timing_out_worker
+        valid_pdf_bytes = b"%PDF-1.4\n" + b"0" * 200
+
+        with patch.object(main, "get_processing_semaphore", return_value=test_sem):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                req_task = asyncio.create_task(
+                    client.post("/upload", files={"file": ("timeout_race.pdf", valid_pdf_bytes, "application/pdf")})
+                )
+
+                for _ in range(200):
+                    if worker_started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert worker_started.is_set(), "Worker did not start in time"
+                assert saved_filepath is not None
+                assert os.path.exists(saved_filepath)
+
+                # Cancel the HTTP request coroutine
+                req_task.cancel()
+                try:
+                    await req_task
+                except (asyncio.CancelledError, httpx.RequestError):
+                    pass
+
+                # Allow the worker to complete its failure
+                allow_worker_fail.set()
+
+                # Wait for any active supervisor tasks to finish terminal processing
+                active = main.get_active_supervisor_tasks()
+                if active:
+                    await asyncio.gather(*list(active), return_exceptions=True)
+
+                # Supervisor must have cleaned up the file and released the permit
+                assert not os.path.exists(saved_filepath), "Failed upload file was not cleaned up!"
+                assert not test_sem.locked()
+                assert test_sem._value == 1
+                assert len(main.get_active_supervisor_tasks()) == 0
+
+    asyncio.run(_run())
+
+
+def test_cancellation_racing_with_worker_error_cleans_up_upload(mock_pipeline):
+    """
+    Verify that if a worker raises an unhandled exception and the request
+    is cancelled, supervisor-owned cleanup unlinks the file and releases permit.
+    """
+    async def _run():
+        test_sem = asyncio.Semaphore(1)
+        worker_started = threading.Event()
+        allow_worker_fail = threading.Event()
+        saved_filepath = None
+
+        def failing_worker(filepath, *args, **kwargs):
+            nonlocal saved_filepath
+            saved_filepath = filepath
+            worker_started.set()
+            allow_worker_fail.wait(timeout=5.0)
+            raise RuntimeError("Fatal worker parsing error")
+
+        mock_pipeline.process_document.side_effect = failing_worker
+        valid_pdf_bytes = b"%PDF-1.4\n" + b"0" * 200
+
+        with patch.object(main, "get_processing_semaphore", return_value=test_sem):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                req_task = asyncio.create_task(
+                    client.post("/upload", files={"file": ("error_race.pdf", valid_pdf_bytes, "application/pdf")})
+                )
+
+                for _ in range(200):
+                    if worker_started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert worker_started.is_set(), "Worker did not start in time"
+                assert saved_filepath is not None
+                assert os.path.exists(saved_filepath)
+
+                # Cancel the request coroutine
+                req_task.cancel()
+                try:
+                    await req_task
+                except (asyncio.CancelledError, httpx.RequestError):
+                    pass
+
+                allow_worker_fail.set()
+
+                active = main.get_active_supervisor_tasks()
+                if active:
+                    await asyncio.gather(*list(active), return_exceptions=True)
+
+                assert not os.path.exists(saved_filepath), "Corrupted upload file was not cleaned up!"
+                assert not test_sem.locked()
+                assert test_sem._value == 1
+                assert len(main.get_active_supervisor_tasks()) == 0
+
+    asyncio.run(_run())
+
+
+def test_cancellation_with_exceeded_page_limit_cleans_up_representations(mock_pipeline):
+    """
+    Verify that if a worker succeeds but exceeds the page limit, and the caller
+    is cancelled, supervisor-owned cleanup evicts the vector/metadata representations
+    and unlinks the file.
+    """
+    async def _run():
+        test_sem = asyncio.Semaphore(1)
+        worker_started = threading.Event()
+        allow_worker_finish = threading.Event()
+        saved_filepath = None
+
+        def large_doc_worker(filepath, doc_id, filename, *args, **kwargs):
+            nonlocal saved_filepath
+            saved_filepath = filepath
+            worker_started.set()
+            allow_worker_finish.wait(timeout=5.0)
+            return {
+                "status": "success",
+                "doc_id": doc_id,
+                "filename": filename,
+                "pages": 250,  # Exceeds MAX_PAGES (200)
+                "chunks": 250,
+                "language_hint": "english",
+            }
+
+        mock_pipeline.process_document.side_effect = large_doc_worker
+        valid_pdf_bytes = b"%PDF-1.4\n" + b"0" * 200
+
+        with patch.object(main, "get_processing_semaphore", return_value=test_sem):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                req_task = asyncio.create_task(
+                    client.post("/upload", files={"file": ("too_large.pdf", valid_pdf_bytes, "application/pdf")})
+                )
+
+                for _ in range(200):
+                    if worker_started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert worker_started.is_set()
+                assert saved_filepath is not None
+
+                req_task.cancel()
+                try:
+                    await req_task
+                except (asyncio.CancelledError, httpx.RequestError):
+                    pass
+
+                allow_worker_finish.set()
+
+                active = main.get_active_supervisor_tasks()
+                if active:
+                    await asyncio.gather(*list(active), return_exceptions=True)
+
+                # Supervisor must have cleaned up the file, vector store, and metadata
+                assert not os.path.exists(saved_filepath), "Oversized upload file was not unlinked!"
+                app.state.vector_store.remove_document.assert_called()
+                app.state.metadata.delete_document.assert_called()
+                assert not test_sem.locked()
+                assert test_sem._value == 1
+
+    asyncio.run(_run())
+
+
+def test_cancellation_with_valid_document_preserves_committed_state(mock_pipeline):
+    """
+    Verify that if a worker completes successfully with a valid document within limits,
+    cancelling the HTTP request does NOT delete the committed document data or file.
+    """
+    async def _run():
+        test_sem = asyncio.Semaphore(1)
+        worker_started = threading.Event()
+        allow_worker_finish = threading.Event()
+        saved_filepath = None
+
+        def valid_worker(filepath, doc_id, filename, *args, **kwargs):
+            nonlocal saved_filepath
+            saved_filepath = filepath
+            worker_started.set()
+            allow_worker_finish.wait(timeout=5.0)
+            return {
+                "status": "success",
+                "doc_id": doc_id,
+                "filename": filename,
+                "pages": 2,
+                "chunks": 4,
+                "language_hint": "english",
+            }
+
+        mock_pipeline.process_document.side_effect = valid_worker
+        valid_pdf_bytes = b"%PDF-1.4\n" + b"0" * 200
+
+        with patch.object(main, "get_processing_semaphore", return_value=test_sem):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                req_task = asyncio.create_task(
+                    client.post("/upload", files={"file": ("valid_cancelled.pdf", valid_pdf_bytes, "application/pdf")})
+                )
+
+                for _ in range(200):
+                    if worker_started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert worker_started.is_set()
+                assert saved_filepath is not None
+
+                # Client cancels/disconnects while worker is finishing
+                req_task.cancel()
+                try:
+                    await req_task
+                except (asyncio.CancelledError, httpx.RequestError):
+                    pass
+
+                allow_worker_finish.set()
+
+                active = main.get_active_supervisor_tasks()
+                if active:
+                    await asyncio.gather(*list(active), return_exceptions=True)
+
+                # Valid committed file and representations must remain intact!
+                assert os.path.exists(saved_filepath), "Valid committed upload file was accidentally deleted!"
+                # Permit must be released
+                assert not test_sem.locked()
+                assert test_sem._value == 1
+                assert len(main.get_active_supervisor_tasks()) == 0
+
+                # Clean up the file created for this test
+                try:
+                    os.unlink(saved_filepath)
+                except OSError:
+                    pass
 
     asyncio.run(_run())
