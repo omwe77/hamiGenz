@@ -518,3 +518,311 @@ def test_persistence_boundary_consistency():
         assert metadata.get_document(doc_id, session_id="session_ok") is not None
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ─── 9. Cancellation-Safe Worker Supervision (Task 2.1.1-R2) ──────────────
+
+def test_cancellation_safe_worker_supervision(mock_pipeline):
+    """
+    Regression test for Task 2.1.1-R2:
+    Starts a worker, cancels the request coroutine while the worker is blocked, and proves:
+    - The worker remains active until explicitly released.
+    - The processing permit is not released prematurely.
+    - Another request cannot enter the protected processing stage before the original worker exits.
+    - Cleanup occurs only when safe, with storage outcome handled consistently.
+    """
+    async def _run():
+        test_sem = asyncio.Semaphore(1)
+        worker1_started = threading.Event()
+        worker1_blocked = threading.Event()
+        worker1_finished = threading.Event()
+        worker2_started = threading.Event()
+
+        def worker1_func(filepath, doc_id, filename, *args, **kwargs):
+            worker1_started.set()
+            worker1_blocked.wait(timeout=5.0)
+            worker1_finished.set()
+            return {
+                "status": "success",
+                "doc_id": doc_id,
+                "filename": filename,
+                "pages": 1,
+                "chunks": 1,
+                "language_hint": "english",
+            }
+
+        def worker2_func(filepath, doc_id, filename, *args, **kwargs):
+            worker2_started.set()
+            return {
+                "status": "success",
+                "doc_id": doc_id,
+                "filename": filename,
+                "pages": 1,
+                "chunks": 1,
+                "language_hint": "english",
+            }
+
+        call_count = 0
+        def dispatch_process(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return worker1_func(*args, **kwargs)
+            return worker2_func(*args, **kwargs)
+
+        mock_pipeline.process_document.side_effect = dispatch_process
+        valid_pdf_bytes = b"%PDF-1.4\n" + b"0" * 200
+
+        with patch.object(main, "get_processing_semaphore", return_value=test_sem):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                req1_task = asyncio.create_task(
+                    client.post("/upload", files={"file": ("doc1.pdf", valid_pdf_bytes, "application/pdf")})
+                )
+
+                # Wait until worker 1 starts executing in its thread
+                for _ in range(200):
+                    if worker1_started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert worker1_started.is_set(), "Worker 1 did not start in time"
+
+                # Cancel request 1 coroutine while worker 1 is blocked
+                req1_task.cancel()
+                try:
+                    await req1_task
+                except (asyncio.CancelledError, httpx.RequestError):
+                    pass
+
+                # Invariant 1: Worker 1 remains active
+                assert not worker1_finished.is_set(), "Worker 1 terminated prematurely upon coroutine cancellation!"
+
+                # Invariant 2: Processing permit remains occupied
+                assert test_sem.locked(), "Processing permit was released prematurely while worker 1 was active!"
+                assert test_sem._value == 0
+
+                # Invariant 3: Request 2 cannot enter processing stage while worker 1 is still running
+                req2_task = asyncio.create_task(
+                    client.post("/upload", files={"file": ("doc2.pdf", valid_pdf_bytes, "application/pdf")})
+                )
+                await asyncio.sleep(0.05)
+                assert not worker2_started.is_set(), "Worker 2 entered processing before worker 1 finished!"
+
+                # Invariant 4: Explicitly unblock worker 1
+                worker1_blocked.set()
+                for _ in range(200):
+                    if worker1_finished.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert worker1_finished.is_set(), "Worker 1 did not complete after being unblocked"
+
+                # Request 2 now enters and finishes cleanly
+                resp2 = await req2_task
+                assert resp2.status_code == 200
+                assert worker2_started.is_set()
+
+                # Permit is completely released back to 1
+                assert not test_sem.locked()
+                assert test_sem._value == 1
+
+    asyncio.run(_run())
+
+
+# ─── 10. Deadline Expiry During Embedding (Task 2.1.1-R2) ──────────────────
+
+def test_deadline_expires_during_embedding_no_state_written():
+    """
+    Verify that when a real Pipeline.process_document() deadline expires during
+    the embedding stage, it aborts cleanly with ProcessingTimeoutError and leaves
+    zero vector files, zero registry entries, and zero SQLite records.
+    """
+    import fitz
+    import numpy as np
+
+    tmp_dir = tempfile.mkdtemp(prefix="hamigenz_embed_deadline_")
+    try:
+        vectors_dir = os.path.join(tmp_dir, "vectors")
+        db_path = os.path.join(tmp_dir, "test.db")
+        upload_path = os.path.join(tmp_dir, "test.pdf")
+
+        # Create valid PDF with text
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((50, 72), "Line for embedding timeout verification.\n" * 5)
+        doc.save(upload_path)
+        doc.close()
+
+        doc_id = "doc_embed_timeout"
+        # Set generous deadline for extraction and chunking, then cross it explicitly during embedding
+        deadline = time.monotonic() + 1.0
+
+        def slow_embed_texts(texts):
+            rem = deadline - time.monotonic()
+            if rem > 0:
+                time.sleep(rem + 0.05)
+            return np.zeros((len(texts), 384), dtype=np.float32)
+
+        embedder = MagicMock()
+        embedder.dimension = 384
+        embedder.embed_texts.side_effect = slow_embed_texts
+
+        vstore = VectorStore(vectors_dir=vectors_dir, dimension=384)
+        chunker = Chunker(chunk_size=500, overlap=10)
+        metadata = MetadataStore(db_path=db_path)
+
+        pipeline = Pipeline(
+            embedding_service=embedder,
+            vector_store=vstore,
+            chunker=chunker,
+            metadata_store=metadata,
+        )
+
+        with pytest.raises(ProcessingTimeoutError) as exc_info:
+            pipeline.process_document(
+                filepath=upload_path,
+                doc_id=doc_id,
+                filename="test.pdf",
+                session_id="session_embed_test",
+                deadline=deadline,
+            )
+
+        assert "embedding" in str(exc_info.value).lower()
+
+        # Invariant: No vector artifacts on disk
+        faiss_file = os.path.join(vectors_dir, f"{doc_id}.faiss")
+        meta_file = os.path.join(vectors_dir, f"{doc_id}_meta.json")
+        assert not os.path.exists(faiss_file), "Ghost FAISS index was created on disk!"
+        assert not os.path.exists(meta_file), "Ghost vector metadata was created on disk!"
+
+        # Invariant: Doc id not in vector store registry
+        assert doc_id not in vstore._doc_indices
+
+        # Invariant: No SQLite records
+        assert metadata.get_document(doc_id, session_id="session_embed_test") is None
+        conn = metadata._get_connection()
+        chunk_count = conn.execute("SELECT count(*) FROM chunks WHERE doc_id=?", (doc_id,)).fetchone()[0]
+        conn.close()
+        assert chunk_count == 0, "Ghost chunks were committed to SQLite!"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ─── 11. Persistence Failure Triggers Atomic Rollback (Task 2.1.1-R2) ──────
+
+def test_persistence_failure_triggers_atomic_rollback():
+    """
+    Inject a failure during the persistence stage and verify that the atomic
+    rollback leaves no document or chunk records in SQLite and no vector artifacts
+    on disk or in memory.
+    """
+    import fitz
+    import numpy as np
+
+    tmp_dir = tempfile.mkdtemp(prefix="hamigenz_rollback_test_")
+    try:
+        vectors_dir = os.path.join(tmp_dir, "vectors")
+        db_path = os.path.join(tmp_dir, "test.db")
+        upload_path = os.path.join(tmp_dir, "test.pdf")
+
+        # Create valid PDF with text
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((50, 72), "Text for rollback verification.\n" * 5)
+        doc.save(upload_path)
+        doc.close()
+
+        embedder = MagicMock()
+        embedder.dimension = 384
+        embedder.embed_texts.return_value = np.zeros((1, 384), dtype=np.float32)
+
+        vstore = VectorStore(vectors_dir=vectors_dir, dimension=384)
+        chunker = Chunker(chunk_size=500, overlap=10)
+        metadata = MetadataStore(db_path=db_path)
+
+        # Inject error into metadata.add_chunks (after vector store has written)
+        def failing_add_chunks(chunks):
+            raise RuntimeError("Injected disk failure during chunk metadata write")
+        metadata.add_chunks = failing_add_chunks
+
+        pipeline = Pipeline(
+            embedding_service=embedder,
+            vector_store=vstore,
+            chunker=chunker,
+            metadata_store=metadata,
+        )
+
+        doc_id = "doc_rollback_01"
+        generous_deadline = time.monotonic() + 10.0
+
+        with pytest.raises(RuntimeError) as exc_info:
+            pipeline.process_document(
+                filepath=upload_path,
+                doc_id=doc_id,
+                filename="test.pdf",
+                session_id="session_rollback",
+                deadline=generous_deadline,
+            )
+
+        assert "Injected disk failure" in str(exc_info.value)
+
+        # Verify atomic rollback cleaned up vector artifacts
+        faiss_file = os.path.join(vectors_dir, f"{doc_id}.faiss")
+        meta_file = os.path.join(vectors_dir, f"{doc_id}_meta.json")
+        assert not os.path.exists(faiss_file), "FAISS index was not rolled back!"
+        assert not os.path.exists(meta_file), "Vector meta file was not rolled back!"
+        assert doc_id not in vstore._doc_indices, "Doc ID remained in vector store index!"
+
+        # Verify atomic rollback cleaned up database records
+        assert metadata.get_document(doc_id, session_id="session_rollback") is None
+        conn = metadata._get_connection()
+        chunk_count = conn.execute("SELECT count(*) FROM chunks WHERE doc_id=?", (doc_id,)).fetchone()[0]
+        conn.close()
+        assert chunk_count == 0, "Partial chunks were left in database!"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ─── 12. Deadline Crossing During Persistence (Task 2.1.1-R2) ─────────────
+
+def test_deadline_crossing_during_persistence_never_returns_503(mock_pipeline):
+    """
+    Verify that when the deadline is crossed while persistence is executing:
+    1. The route does NOT return HTTP 503.
+    2. The route waits for the persistence stage to finish.
+    3. The request completes with HTTP 200 and matches the committed state.
+    """
+    async def _run():
+        test_sem = asyncio.Semaphore(1)
+        persistence_entered = threading.Event()
+
+        def slow_persistence_worker(filepath, doc_id, filename, session_id=None, deadline=None):
+            persistence_entered.set()
+            # Simulate crossing deadline during persistence
+            time.sleep(0.08)
+            # Persistence completes successfully
+            return {
+                "status": "success",
+                "doc_id": doc_id,
+                "filename": filename,
+                "pages": 1,
+                "chunks": 1,
+                "language_hint": "english",
+            }
+
+        mock_pipeline.process_document.side_effect = slow_persistence_worker
+        valid_pdf_bytes = b"%PDF-1.4\n" + b"0" * 200
+
+        with patch.object(main, "get_processing_semaphore", return_value=test_sem):
+            with patch.dict(os.environ, {"HAMIGENZ_PROCESSING_TIMEOUT_SECONDS": "0.04"}):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                    resp = await client.post(
+                        "/upload",
+                        files={"file": ("test.pdf", valid_pdf_bytes, "application/pdf")},
+                    )
+
+                    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+                    assert resp.json()["doc_id"] is not None
+                    assert resp.json()["pages"] == 1
+                    assert not test_sem.locked()
+                    assert test_sem._value == 1
+
+    asyncio.run(_run())

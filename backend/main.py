@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -567,36 +568,94 @@ async def upload_document(
             pass
         raise HTTPException(503, "Server busy processing documents. Please try again shortly.")
 
-    # Worker execution: permit stays held until worker reaches a safe terminal state
-    try:
-        proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
-        deadline = time.monotonic() + proc_timeout_sec
-        result = await asyncio.to_thread(
-            pipeline.process_document,
-            str(filepath),
-            doc_id,
-            filename,
-            session_id=session_id,
-            deadline=deadline,
-        )
-    except ProcessingTimeoutError as e:
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise HTTPException(503, "Document processing timed out. Please try again shortly.") from e
-    except Exception as e:
-        print(f"[hamigenz] Document processing failed for {doc_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.") from e
-    finally:
-        sem.release()
+    # Worker execution: cancellation-safe worker supervision (Task 2.1.1-R2)
+    proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
+    deadline = time.monotonic() + proc_timeout_sec
+    caller_active = True
+    MAX_PAGES = 200
+    thread_done = threading.Event()
 
+    def _sync_worker():
+        try:
+            return pipeline.process_document(
+                str(filepath),
+                doc_id,
+                filename,
+                session_id=session_id,
+                deadline=deadline,
+            )
+        finally:
+            thread_done.set()
+
+    async def _supervised_worker():
+        worker_outcome = "error"
+        worker_payload = None
+        try:
+            worker_payload = await asyncio.to_thread(_sync_worker)
+            worker_outcome = "ok"
+        except ProcessingTimeoutError as exc:
+            worker_outcome = "timeout"
+            worker_payload = exc
+        except Exception as exc:
+            print(f"[hamigenz] Document processing failed for {doc_id}: {exc}")
+            import traceback
+            traceback.print_exc()
+            worker_outcome = "error"
+            worker_payload = exc
+        finally:
+            if not thread_done.is_set():
+                await asyncio.to_thread(thread_done.wait)
+
+            try:
+                # If caller has cancelled, handle terminal outcome and safe file cleanup
+                if not caller_active:
+                    if worker_outcome in ("timeout", "error"):
+                        try:
+                            Path(filepath).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    elif worker_outcome == "ok" and isinstance(worker_payload, dict):
+                        if worker_payload.get("status") == "error":
+                            try:
+                                Path(filepath).unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                        elif worker_payload.get("pages", 0) > MAX_PAGES:
+                            app.state.vector_store.remove_document(doc_id)
+                            app.state.metadata.delete_document(doc_id, session_id=session_id)
+                            try:
+                                Path(filepath).unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                        # If committed successfully within limits, preserve document data and file
+            finally:
+                sem.release()
+
+        return worker_outcome, worker_payload
+
+    supervisor_task = asyncio.create_task(_supervised_worker())
+    try:
+        outcome, payload = await asyncio.shield(supervisor_task)
+    except asyncio.CancelledError:
+        caller_active = False
+        raise
+    finally:
+        caller_active = False
+
+    if outcome == "timeout":
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(503, "Document processing timed out. Please try again shortly.") from payload
+    elif outcome == "error":
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.") from payload
+
+    result = payload
     if result["status"] == "error":
         try:
             Path(filepath).unlink(missing_ok=True)
@@ -605,7 +664,6 @@ async def upload_document(
         raise HTTPException(400, result.get("message", "Processing failed"))
 
     # ── Resource limits on processed documents ────────────────────────
-    MAX_PAGES = 200
     if result["pages"] > MAX_PAGES:
         app.state.vector_store.remove_document(doc_id)
         app.state.metadata.delete_document(doc_id, session_id=session_id)
