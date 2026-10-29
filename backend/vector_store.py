@@ -55,10 +55,11 @@ class EmbeddingService:
 class VectorStore:
     """FAISS-based vector storage with document isolation."""
 
-    def __init__(self, vectors_dir: str, dimension: int):
+    def __init__(self, vectors_dir: str, dimension: int, metadata_store=None):
         self.vectors_dir = Path(vectors_dir)
         self.vectors_dir.mkdir(parents=True, exist_ok=True)
         self.dimension = dimension
+        self.metadata_store = metadata_store
         self._doc_indices: dict[str, str] = {}  # doc_id -> index filepath
         self._load_registry()
 
@@ -176,43 +177,89 @@ class VectorStore:
         self._doc_indices[doc_id] = str(index_path)
         self._save_registry()
 
+    def resolve_active_paths(self, doc_id: str) -> tuple[Optional[Path], Optional[Path]]:
+        """Resolve active (faiss_path, meta_path) consistently with authoritative SQLite generation.
+
+        Handles:
+        - Generation N > 0: requires {doc_id}_g{N}.faiss and {doc_id}_g{N}_meta.json
+        - Generation 0 / legacy: supports {doc_id}_g0.* and {doc_id}.*
+        - Missing active-generation files: explicitly logs warning and returns (None, None)
+        """
+        target_gen = None
+        if hasattr(self, "metadata_store") and self.metadata_store is not None:
+            try:
+                target_gen = self.metadata_store.get_reindex_generation(doc_id)
+            except Exception:
+                target_gen = None
+
+        if target_gen is not None and target_gen > 0:
+            gen_faiss = self.vectors_dir / f"{doc_id}_g{target_gen}.faiss"
+            gen_meta = self.vectors_dir / f"{doc_id}_g{target_gen}_meta.json"
+            if gen_faiss.exists() and gen_meta.exists():
+                if self._doc_indices.get(doc_id) != str(gen_faiss):
+                    self._doc_indices[doc_id] = str(gen_faiss)
+                return gen_faiss, gen_meta
+            else:
+                # Active generation files are missing!
+                print(f"[VectorStore] WARNING: Active generation {target_gen} files missing for {doc_id}")
+                return None, None
+
+        # Check for generation 0 files
+        g0_faiss = self.vectors_dir / f"{doc_id}_g0.faiss"
+        g0_meta = self.vectors_dir / f"{doc_id}_g0_meta.json"
+        if g0_faiss.exists() and g0_meta.exists():
+            if self._doc_indices.get(doc_id) != str(g0_faiss):
+                self._doc_indices[doc_id] = str(g0_faiss)
+            return g0_faiss, g0_meta
+
+        # Fallback to legacy flat naming
+        flat_faiss = self.vectors_dir / f"{doc_id}.faiss"
+        flat_meta = self.vectors_dir / f"{doc_id}_meta.json"
+        if flat_faiss.exists() and flat_meta.exists():
+            if self._doc_indices.get(doc_id) != str(flat_faiss):
+                self._doc_indices[doc_id] = str(flat_faiss)
+            return flat_faiss, flat_meta
+
+        # Check existing entry in _doc_indices if present
+        idx = self._doc_indices.get(doc_id)
+        if idx:
+            p = Path(idx)
+            if p.exists():
+                m = p.with_name(p.stem + "_meta.json") if p.name.endswith(".faiss") else None
+                if m and m.exists():
+                    return p, m
+
+        return None, None
+
     def search(self, doc_id: str, query_embedding: np.ndarray,
                top_k: int = 5) -> list[dict]:
         """
-        Search a specific document's index.
+        Search a specific document's active index and matching generation metadata.
         Returns list of {chunk_id, page_num, text, score, filename}
         """
-        if doc_id not in self._doc_indices:
+        faiss_path, meta_path = self.resolve_active_paths(doc_id)
+        if not faiss_path or not meta_path:
             return []
 
-        index_path = self._doc_indices[doc_id]
-        if not Path(index_path).exists():
-            return []
-
-        index = faiss.read_index(index_path)
+        index = faiss.read_index(str(faiss_path))
         query_vec = query_embedding.astype(np.float32).reshape(1, -1)
 
         scores, ids = index.search(query_vec, top_k)
-
-        # Load metadata
-        meta_path = self.vectors_dir / f"{doc_id}_meta.json"
-        if not meta_path.exists():
-            return []
 
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
 
         results = []
         for score, idx in zip(scores[0], ids[0]):
-            if idx >= len(meta):
+            if idx < 0 or idx >= len(meta):
                 continue
             results.append({
                 "chunk_id": meta[idx]["chunk_id"],
                 "page_num": meta[idx]["page_num"],
                 "text": meta[idx]["text"],
                 "score": float(score),
-                "filename": meta[idx]["filename"],
-                "source_type": meta[idx]["source_type"],
+                "filename": meta[idx].get("filename", ""),
+                "source_type": meta[idx].get("source_type", "unknown"),
             })
 
         return results
@@ -220,26 +267,32 @@ class VectorStore:
     def search_all(self, query_embedding: np.ndarray,
                    top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """
-        Search across all documents.
+        Search across all documents using active generation indexes and metadata.
         Returns merged results with doc_id.
         """
         all_results = []
         query_vec = query_embedding.astype(np.float32).reshape(1, -1)
 
-        for doc_id, index_path in self._doc_indices.items():
-            if not Path(index_path).exists():
+        if hasattr(self, "metadata_store") and self.metadata_store is not None:
+            try:
+                doc_ids = [d["doc_id"] for d in self.metadata_store.list_all_documents()]
+            except Exception:
+                doc_ids = list(self._doc_indices.keys())
+        else:
+            doc_ids = list(self._doc_indices.keys())
+
+        for doc_id in doc_ids:
+            faiss_path, meta_path = self.resolve_active_paths(doc_id)
+            if not faiss_path or not meta_path:
                 continue
-            index = faiss.read_index(index_path)
+            index = faiss.read_index(str(faiss_path))
             scores, ids = index.search(query_vec, top_k)
 
-            meta_path = self.vectors_dir / f"{doc_id}_meta.json"
-            if not meta_path.exists():
-                continue
             with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
 
             for score, idx in zip(scores[0], ids[0]):
-                if idx >= len(meta):
+                if idx < 0 or idx >= len(meta):
                     continue
                 if float(score) < min_score:
                     continue
@@ -260,7 +313,7 @@ class VectorStore:
     def search_documents(self, doc_ids: list[str], query_embedding: np.ndarray,
                          top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """
-        Search only across the specified authorized document IDs.
+        Search only across the specified authorized document IDs using active generation artifacts.
         Prevents cross-user / cross-session vector search leakage.
         """
         if not doc_ids:
@@ -271,20 +324,17 @@ class VectorStore:
         allowed_set = set(doc_ids)
 
         for doc_id in allowed_set:
-            index_path = self._doc_indices.get(doc_id)
-            if not index_path or not Path(index_path).exists():
+            faiss_path, meta_path = self.resolve_active_paths(doc_id)
+            if not faiss_path or not meta_path:
                 continue
-            index = faiss.read_index(index_path)
+            index = faiss.read_index(str(faiss_path))
             scores, ids = index.search(query_vec, top_k)
 
-            meta_path = self.vectors_dir / f"{doc_id}_meta.json"
-            if not meta_path.exists():
-                continue
             with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
 
             for score, idx in zip(scores[0], ids[0]):
-                if idx >= len(meta):
+                if idx < 0 or idx >= len(meta):
                     continue
                 if float(score) < min_score:
                     continue
@@ -302,18 +352,71 @@ class VectorStore:
         return all_results[:top_k]
 
     def get_chunk_texts(self, doc_id: str) -> list[str]:
-        """Return the stored text for every chunk of a document.
+        """Return the stored text for every chunk of a document from active generation metadata.
 
         Used by the hybrid retriever to rebuild the BM25 index without
         re-reading the original upload file.
         """
-        meta_path = self.vectors_dir / f"{doc_id}_meta.json"
-        if not meta_path.exists():
+        _, meta_path = self.resolve_active_paths(doc_id)
+        if not meta_path or not meta_path.exists():
             return []
         import json
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
         return [m.get("text", "") or "" for m in meta]
+
+    def add_document_to_path(
+        self,
+        doc_id: str,
+        faiss_path: Path,
+        meta_path: Path,
+        chunks: list[dict],
+        embeddings,
+    ) -> None:
+        """Write a FAISS index and chunk-meta JSON to explicit (staging) paths.
+
+        Does NOT update _doc_indices or registry.json — the caller decides
+        when to make these paths the active generation (via swap_document).
+        Used by the staged reindex flow (Task 2.1.2).
+        """
+        index = faiss.IndexFlatIP(self.dimension)
+        index.add(embeddings)
+        faiss.write_index(index, str(faiss_path))
+        meta = [
+            {
+                "chunk_id": c["chunk_id"],
+                "page_num": c["page_num"],
+                "text": c["text"],
+                "source_type": c["source_type"],
+                "filename": c["filename"],
+            }
+            for c in chunks
+        ]
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    def swap_document(
+        self,
+        doc_id: str,
+        new_faiss_path: Path,
+        old_faiss_path: Path,
+        old_meta_path: Path,
+    ) -> None:
+        """Point _doc_indices at the new generation's FAISS file and discard old files.
+
+        Called after the SQLite commit succeeds so the in-memory registry
+        matches the durable generation pointer.  Old files are unlinked
+        post-commit; any OSError is logged and swallowed (startup scavenger
+        will clean up on next boot).
+        Used by the staged reindex flow (Task 2.1.2).
+        """
+        self._doc_indices[doc_id] = str(new_faiss_path)
+        self._save_registry()
+        for path in (old_faiss_path, old_meta_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                print(f"[VectorStore] swap_document: could not remove {path}: {exc}")
 
     def remove_document(self, doc_id: str) -> None:
         """Remove a document's index and metadata."""
@@ -346,6 +449,8 @@ class Pipeline:
         self.vector_store = vector_store
         self.chunker = chunker
         self.metadata = metadata_store
+        if hasattr(self.vector_store, "metadata_store") and self.vector_store.metadata_store is None:
+            self.vector_store.metadata_store = metadata_store
 
     def process_document(self, filepath: str, doc_id: str,
                          filename: str, session_id: str = "__anonymous__",
@@ -414,7 +519,108 @@ class Pipeline:
             "language_hint": language_hint,
         }
 
+    def process_document_staged(
+        self,
+        filepath: str,
+        doc_id: str,
+        filename: str,
+        session_id: str,
+        new_gen: int,
+        faiss_path: Path,
+        meta_json_path: Path,
+        deadline: float | None = None,
+        expected_gen: int | None = None,
+    ) -> dict:
+        """Extract → chunk → embed → persist to generation-specific paths.
+
+        Identical to process_document up through embedding; then writes FAISS
+        to faiss_path/meta_json_path via add_document_to_path, and commits
+        SQLite via metadata.commit_reindex — the single durable commit point.
+        Used by the safe staged reindex flow (Task 2.1.2).
+        """
+        from document_processor import DocumentProcessor
+        processor = DocumentProcessor(upload_dir="")
+
+        def _check_deadline(stage: str):
+            if deadline is not None and time.monotonic() > deadline:
+                raise ProcessingTimeoutError(
+                    f"Reindex deadline exceeded after stage: {stage}"
+                )
+
+        _check_deadline("start")
+        pages = processor.extract_text(filepath)
+        page_count = len(pages)
+        _check_deadline("extraction")
+
+        # Page-limit enforcement (Task 2.1.2-E2): Reject oversized documents BEFORE any commit
+        if page_count > 200:
+            return {
+                "status": "error",
+                "message": "Document has too many pages (max 200).",
+                "pages": page_count,
+            }
+
+        language_hint = self._detect_language_hint(pages)
+        chunks = self.chunker.chunk_pages(pages, doc_id, filename)
+        _check_deadline("chunking")
+        if not chunks:
+            return {"status": "error", "message": "No extractable text found in document."}
+        texts = [c["text"] for c in chunks]
+        embeddings = self.embedder.embed_texts(texts)
+        _check_deadline("embedding")
+
+        # Persist: write staged FAISS, then atomic SQLite commit
+        try:
+            self.vector_store.add_document_to_path(
+                doc_id, faiss_path, meta_json_path, chunks, embeddings
+            )
+            self.metadata.commit_reindex(
+                doc_id=doc_id,
+                new_gen=new_gen,
+                filename=filename,
+                filepath=filepath,
+                page_count=page_count,
+                language_hint=language_hint,
+                chunks=chunks,
+                expected_gen=expected_gen if expected_gen is not None else (new_gen - 1),
+            )
+            # Immediate post-commit activation: swap FAISS registry and discard old files
+            # Runs inside worker thread so cancellation of route coroutine cannot prevent activation
+            old_faiss = self.vector_store.vectors_dir / f"{doc_id}_g{new_gen - 1}.faiss"
+            if not old_faiss.exists():
+                old_faiss = self.vector_store.vectors_dir / f"{doc_id}.faiss"
+            old_meta = self.vector_store.vectors_dir / f"{doc_id}_g{new_gen - 1}_meta.json"
+            if not old_meta.exists():
+                old_meta = self.vector_store.vectors_dir / f"{doc_id}_meta.json"
+            self.vector_store.swap_document(
+                doc_id=doc_id,
+                new_faiss_path=faiss_path,
+                old_faiss_path=old_faiss,
+                old_meta_path=old_meta,
+            )
+        except Exception:
+            # Rollback: remove staged FAISS artifacts; old generation intact
+            try:
+                faiss_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                meta_json_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+        return {
+            "status": "success",
+            "doc_id": doc_id,
+            "filename": filename,
+            "pages": page_count,
+            "chunks": len(chunks),
+            "language_hint": language_hint,
+        }
+
     def query(self, doc_id: str | None, question: str,
+
               allowed_doc_ids: list[str] | None = None,
               top_k: int = 5, min_score: float = 0.10) -> list[dict]:
         """

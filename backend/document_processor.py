@@ -464,13 +464,19 @@ class MetadataStore:
             );
         """)
 
-        # Migration: Ensure session_id and last_accessed_at columns exist
+        # Migration: Ensure session_id, last_accessed_at, reindex_generation columns exist
         cursor = conn.execute("PRAGMA table_info(documents)")
         existing_cols = {row[1] for row in cursor.fetchall()}
         if "session_id" not in existing_cols:
             conn.execute("ALTER TABLE documents ADD COLUMN session_id TEXT;")
         if "last_accessed_at" not in existing_cols:
             conn.execute("ALTER TABLE documents ADD COLUMN last_accessed_at TEXT;")
+        if "reindex_generation" not in existing_cols:
+            # Generation counter: bumped once per committed reindex (Task 2.1.2)
+            conn.execute(
+                "ALTER TABLE documents ADD COLUMN"
+                " reindex_generation INTEGER NOT NULL DEFAULT 0;"
+            )
 
         # Safe migration: Quarantine legacy unowned records to prevent accidental access
         conn.execute("""
@@ -517,6 +523,85 @@ class MetadataStore:
         conn.commit()
         conn.close()
 
+    def get_reindex_generation(self, doc_id: str) -> int:
+        """Return the current active reindex_generation for doc_id, or 0 if absent."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT reindex_generation FROM documents WHERE doc_id=?", (doc_id,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else 0
+
+    def commit_reindex(
+        self,
+        doc_id: str,
+        new_gen: int,
+        filename: str,
+        filepath: str,
+        page_count: int,
+        language_hint: str,
+        chunks: list[dict],
+        expected_gen: Optional[int] = None,
+    ) -> None:
+        """
+        Atomic reindex commit (Task 2.1.2):
+        - Verifies document exists and generation matches expected_gen in BEGIN IMMEDIATE
+        - Replaces all chunks for doc_id
+        - Updates documents row: generation, filename, filepath, page_count,
+          language_hint, form_fields=NULL, last_accessed_at=now
+        - upload_date is intentionally NOT touched
+        This is the single durable commit point; nothing before this is visible
+        to users and nothing after is at risk from pre-commit failures.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if expected_gen is None:
+            expected_gen = new_gen - 1
+        conn = self._get_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            # Verify document still exists and generation matches expected
+            row = conn.execute(
+                "SELECT reindex_generation FROM documents WHERE doc_id=?", (doc_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Cannot commit reindex: document '{doc_id}' not found.")
+            actual_gen = row[0] if row[0] is not None else 0
+            if actual_gen != expected_gen:
+                raise ValueError(
+                    f"Cannot commit reindex: document '{doc_id}' generation mismatch "
+                    f"(expected {expected_gen}, found {actual_gen})."
+                )
+
+            conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+            conn.executemany(
+                "INSERT INTO chunks (chunk_id, doc_id, page_num, text, source_type)"
+                " VALUES (?,?,?,?,?)",
+                [
+                    (c["chunk_id"], c["doc_id"], c["page_num"], c["text"], c["source_type"])
+                    for c in chunks
+                ],
+            )
+            conn.execute(
+                """
+                UPDATE documents
+                   SET reindex_generation = ?,
+                       filename            = ?,
+                       filepath            = ?,
+                       page_count          = ?,
+                       language_hint       = ?,
+                       form_fields         = NULL,
+                       last_accessed_at    = ?
+                 WHERE doc_id = ?
+                """,
+                (new_gen, filename, filepath, page_count, language_hint, now_iso, doc_id),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
     def get_document(self, doc_id: str, session_id: Optional[str] = None) -> Optional[dict]:
         """
         Retrieve document metadata.
@@ -526,13 +611,13 @@ class MetadataStore:
         conn = self._get_connection()
         if session_id is not None:
             row = conn.execute(
-                "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at "
+                "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at, reindex_generation "
                 "FROM documents WHERE doc_id=? AND session_id=?",
                 (doc_id, session_id)
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at "
+                "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at, reindex_generation "
                 "FROM documents WHERE doc_id=?",
                 (doc_id,)
             ).fetchone()
@@ -548,7 +633,8 @@ class MetadataStore:
             return {
                 "doc_id": row[0], "filename": row[1], "filepath": row[2],
                 "upload_date": row[3], "page_count": row[4], "language_hint": row[5],
-                "session_id": row[6], "last_accessed_at": row[7]
+                "session_id": row[6], "last_accessed_at": row[7],
+                "reindex_generation": row[8] if row[8] is not None else 0,
             }
         conn.close()
         return None
@@ -575,6 +661,15 @@ class MetadataStore:
         conn.close()
         return deleted
 
+    def list_all_documents(self) -> list[dict]:
+        """Return all documents across all sessions (used by startup scavenger)."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT doc_id, reindex_generation FROM documents"
+        ).fetchall()
+        conn.close()
+        return [{"doc_id": r[0], "reindex_generation": r[1] or 0} for r in rows]
+
     def list_documents(self, session_id: Optional[str] = None) -> list[dict]:
         """
         List documents for the specified session_id.
@@ -585,7 +680,7 @@ class MetadataStore:
 
         conn = self._get_connection()
         rows = conn.execute(
-            "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at "
+            "SELECT doc_id, filename, filepath, upload_date, page_count, language_hint, session_id, last_accessed_at, reindex_generation "
             "FROM documents WHERE session_id=? ORDER BY upload_date DESC",
             (session_id,)
         ).fetchall()
@@ -593,7 +688,8 @@ class MetadataStore:
         return [{
             "doc_id": r[0], "filename": r[1], "filepath": r[2],
             "upload_date": r[3], "page_count": r[4], "language_hint": r[5],
-            "session_id": r[6], "last_accessed_at": r[7]
+            "session_id": r[6], "last_accessed_at": r[7],
+            "reindex_generation": r[8] if r[8] is not None else 0,
         } for r in rows]
 
     def get_form_fields(self, doc_id: str, session_id: Optional[str] = None) -> list[dict]:

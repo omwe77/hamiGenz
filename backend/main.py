@@ -90,6 +90,75 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
 REINDEX_ON_STARTUP = os.getenv("REINDEX_ON_STARTUP", "1") not in ("0", "false", "no")
 
 
+def _run_reindex_scavenger(
+    metadata, vector_store, upload_dir: Path, vectors_dir: Path
+) -> None:
+    """Remove orphaned generation artifacts, purge stale registry entries, and reconcile (Task 2.1.2-E2).
+
+    Pattern: {doc_id}_g{N}.ext / {doc_id}_g{N}.faiss / {doc_id}_g{N}_meta.json
+    - Removes stale registry entries for documents that no longer exist in SQLite
+    - Removes files whose generation != documents.reindex_generation (or whose doc_id is gone)
+    - Explicitly handles missing active-generation files
+    - Rebuilds _doc_indices and registry.json from surviving active-gen FAISS files
+    """
+    import re as _re
+    try:
+        all_docs = metadata.list_all_documents()
+    except Exception as exc:
+        print(f"[hamigenz] scavenger: list_all_documents failed: {exc}")
+        return
+    active_gens: dict[str, int] = {
+        d["doc_id"]: d.get("reindex_generation", 0) for d in all_docs
+    }
+    valid_doc_ids = set(active_gens.keys())
+
+    # 1. Purge stale registry entries for docs deleted from SQLite
+    stale_keys = [k for k in list(vector_store._doc_indices.keys()) if k not in valid_doc_ids]
+    for k in stale_keys:
+        del vector_store._doc_indices[k]
+        print(f"[hamigenz] scavenger: removed stale registry entry for {k}")
+
+    # 2. Remove orphaned generation files
+    gen_pat = _re.compile(r"^(.+)_g(\d+)(?:_meta\.json|\.faiss|\.[a-z0-9]+)$")
+    removed = 0
+    for directory in (upload_dir, vectors_dir):
+        for fpath in list(directory.iterdir()):
+            m = gen_pat.match(fpath.name)
+            if not m:
+                continue
+            file_doc_id, file_gen = m.group(1), int(m.group(2))
+            active_gen = active_gens.get(file_doc_id)
+            orphaned = (active_gen is None) or (file_gen != active_gen)
+            if orphaned:
+                try:
+                    fpath.unlink(missing_ok=True)
+                    removed += 1
+                except OSError as exc:
+                    print(f"[hamigenz] scavenger: failed to remove {fpath}: {exc}")
+    if removed:
+        print(f"[hamigenz] scavenger: removed {removed} orphaned generation artifact(s)")
+
+    # 3. Explicitly reconcile _doc_indices from authoritative active-gen FAISS files
+    for doc_id, active_gen in active_gens.items():
+        gen_faiss = vectors_dir / f"{doc_id}_g{active_gen}.faiss"
+        flat_faiss = vectors_dir / f"{doc_id}.faiss"  # legacy pre-2.1.2 name
+        if active_gen > 0:
+            if gen_faiss.exists():
+                vector_store._doc_indices[doc_id] = str(gen_faiss)
+            else:
+                print(f"[hamigenz] scavenger WARNING: active gen {active_gen} FAISS missing for {doc_id}")
+                vector_store._doc_indices.pop(doc_id, None)
+        else:
+            if gen_faiss.exists():
+                vector_store._doc_indices[doc_id] = str(gen_faiss)
+            elif flat_faiss.exists():
+                vector_store._doc_indices[doc_id] = str(flat_faiss)
+            else:
+                print(f"[hamigenz] scavenger WARNING: gen 0 FAISS missing for {doc_id}")
+                vector_store._doc_indices.pop(doc_id, None)
+    vector_store._save_registry()
+
+
 # ─── Lifespan ────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -102,12 +171,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize services
     app.state.embedder = EmbeddingService(model_name=EMBED_MODEL)
+    app.state.chunker = Chunker(chunk_size=500, overlap=50)
+    app.state.metadata = MetadataStore(db_path=str(DB_PATH))
     app.state.vector_store = VectorStore(
         vectors_dir=str(VECTORS_DIR),
         dimension=app.state.embedder.dimension,
+        metadata_store=app.state.metadata,
     )
-    app.state.chunker = Chunker(chunk_size=500, overlap=50)
-    app.state.metadata = MetadataStore(db_path=str(DB_PATH))
 
     # Embedding-model migration guard: if the stored stamp differs from the
     # active model, existing vectors are from a DIFFERENT embedding space
@@ -185,6 +255,10 @@ async def lifespan(app: FastAPI):
         print(f"[hamigenz] Warning: Ollama may not be fully reachable: {e}")
 
     get_processing_semaphore()
+    get_reindex_locks()
+    _run_reindex_scavenger(
+        app.state.metadata, app.state.vector_store, UPLOAD_DIR, VECTORS_DIR
+    )
     print(f"[hamigenz] Ready. Embedder: {EMBED_MODEL}, LLM: {OLLAMA_MODEL}")
     yield
     print("[hamigenz] Shutting down...")
@@ -214,6 +288,13 @@ def get_active_supervisor_tasks() -> set[asyncio.Task]:
     if not hasattr(app.state, "active_supervisor_tasks") or app.state.active_supervisor_tasks is None:
         app.state.active_supervisor_tasks = set()
     return app.state.active_supervisor_tasks
+
+def get_reindex_locks() -> dict:
+    """Per-doc-id asyncio.Lock dict for staged reindex serialization (Task 2.1.2)."""
+    if not hasattr(app.state, "_reindex_locks") or app.state._reindex_locks is None:
+        app.state._reindex_locks = {}
+    return app.state._reindex_locks
+
 
 # CORS for frontend — explicit origins only (wildcard + credentials is an
 # invalid/unsafe combination and browsers reject it).
@@ -538,29 +619,92 @@ async def upload_document(
     if expected and not (head.startswith(expected) or tiff_be):
         raise HTTPException(400, "File content does not match its type. Upload rejected.")
 
-    # Save under a generated internal name (user filename never touches disk)
+    # ── Per-document reindex serialization (Task 2.1.2 / Task 2.1.2-E2) ──
+    # Acquire lock BEFORE writing any staging file to prevent concurrent requests
+    # from overwriting or unlinking each other's staged uploads.
+    # ponytail: in-process asyncio.Lock only — upgrade to DB advisory lock if multi-worker needed
+    _reindex_lock: "asyncio.Lock | None" = None
+    if reindex_doc_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
+            raise HTTPException(400, "Invalid document id")
+        # Enforce that caller owns reindex_doc_id
+        verify_document_owner(app, reindex_doc_id, session_id)
+
+        _locks = get_reindex_locks()
+        if reindex_doc_id not in _locks:
+            _locks[reindex_doc_id] = asyncio.Lock()
+        _reindex_lock = _locks[reindex_doc_id]
+        if _reindex_lock.locked():
+            # Another reindex already in progress for this doc — reject immediately
+            # without writing or unlinking any file!
+            raise HTTPException(
+                409, "A reindex operation is already in progress for this document."
+            )
+        await _reindex_lock.acquire()
+
+    # Save upload file
     processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
     try:
         if reindex_doc_id:
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
-                raise HTTPException(400, "Invalid document id")
-            # Enforce that caller owns reindex_doc_id
-            verify_document_owner(app, reindex_doc_id, session_id)
-            # Clean the old representations before reprocessing
-            app.state.vector_store.remove_document(reindex_doc_id)
-            app.state.metadata.delete_document(reindex_doc_id, session_id=session_id)
-            filepath, doc_id = processor.save_upload(
-                file_bytes, filename, doc_id=reindex_doc_id)
+            cur_gen = app.state.metadata.get_reindex_generation(reindex_doc_id)
+            new_gen = cur_gen + 1
+            _stage_ext = re.sub(
+                r"[^a-z0-9]", "", Path(filename).suffix.lower()
+            )[:5]
+            _stage_name = (
+                f"{reindex_doc_id}_g{new_gen}.{_stage_ext}"
+                if _stage_ext
+                else f"{reindex_doc_id}_g{new_gen}"
+            )
+            staging_upload_path = UPLOAD_DIR / _stage_name
+            staging_upload_path.write_bytes(file_bytes)
+            filepath = str(staging_upload_path)
+            doc_id = reindex_doc_id
+            staged_faiss = VECTORS_DIR / f"{doc_id}_g{new_gen}.faiss"
+            staged_meta = VECTORS_DIR / f"{doc_id}_g{new_gen}_meta.json"
         else:
             filepath, doc_id = processor.save_upload(file_bytes, filename)
-    except ValueError as e:
+            cur_gen = None
+            new_gen = None
+            staging_upload_path = None
+            staged_faiss = None
+            staged_meta = None
+    except Exception as e:
+        if _reindex_lock is not None and _reindex_lock.locked():
+            _reindex_lock.release()
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(400, "Invalid upload") from e
+
+    def _cleanup_staging_artifacts():
+        """Remove only this attempt's staging upload and vector artifacts (Task 2.1.2)."""
+        try:
+            Path(filepath).unlink(missing_ok=True)
+        except OSError:
+            pass
+        if reindex_doc_id:
+            if staged_faiss is not None:
+                try:
+                    staged_faiss.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if staged_meta is not None:
+                try:
+                    staged_meta.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     # Process
     if not hasattr(app.state, "pipeline"):
+        if _reindex_lock is not None and _reindex_lock.locked():
+            _reindex_lock.release()
+        _cleanup_staging_artifacts()
         raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
     pipeline = app.state.pipeline
     sem = get_processing_semaphore()
+
+    # Track supervisor launch so lock release ownership transfers cleanly
+    supervisor_started = False
 
     # Queue acquisition: separate queue timeout before worker starts
     queue_timeout_sec = float(os.environ.get("HAMIGENZ_QUEUE_TIMEOUT_SECONDS", 15.0))
@@ -568,11 +712,15 @@ async def upload_document(
         async with asyncio.timeout(queue_timeout_sec):
             await sem.acquire()
     except TimeoutError:
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
+        _cleanup_staging_artifacts()
+        if _reindex_lock is not None and _reindex_lock.locked():
+            _reindex_lock.release()
         raise HTTPException(503, "Server busy processing documents. Please try again shortly.")
+    except Exception:
+        _cleanup_staging_artifacts()
+        if _reindex_lock is not None and _reindex_lock.locked():
+            _reindex_lock.release()
+        raise
 
     # Worker execution: supervisor-owned terminal cleanup (Task 2.1.1-R3)
     proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
@@ -582,6 +730,19 @@ async def upload_document(
 
     def _sync_worker():
         try:
+            if reindex_doc_id and new_gen is not None:
+                # Staged reindex: uses generation-specific paths, atomic commit (Task 2.1.2)
+                return pipeline.process_document_staged(
+                    filepath=str(filepath),
+                    doc_id=doc_id,
+                    filename=filename,
+                    session_id=session_id,
+                    new_gen=new_gen,
+                    faiss_path=staged_faiss,
+                    meta_json_path=staged_meta,
+                    deadline=deadline,
+                    expected_gen=cur_gen,
+                )
             return pipeline.process_document(
                 str(filepath),
                 doc_id,
@@ -615,39 +776,36 @@ async def upload_document(
             # 2. Supervisor-owned terminal cleanup: runs reliably regardless of caller state
             try:
                 if worker_outcome in ("timeout", "error"):
-                    try:
-                        Path(filepath).unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    _cleanup_staging_artifacts()
                 elif worker_outcome == "ok" and isinstance(worker_payload, dict):
                     if worker_payload.get("status") == "error":
-                        try:
-                            Path(filepath).unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                        _cleanup_staging_artifacts()
                     elif worker_payload.get("pages", 0) > MAX_PAGES:
-                        try:
-                            app.state.vector_store.remove_document(doc_id)
-                        except Exception:
-                            pass
-                        try:
-                            app.state.metadata.delete_document(doc_id, session_id=session_id)
-                        except Exception:
-                            pass
-                        try:
-                            Path(filepath).unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                        # For new document: purge; for reindex: process_document_staged rejected before commit
+                        if not reindex_doc_id:
+                            try:
+                                app.state.vector_store.remove_document(doc_id)
+                            except Exception:
+                                pass
+                            try:
+                                app.state.metadata.delete_document(doc_id, session_id=session_id)
+                            except Exception:
+                                pass
+                        _cleanup_staging_artifacts()
                     # If valid, successful, and within limits, keep document representations and file
             except Exception as cleanup_exc:
                 print(f"[hamigenz] Terminal cleanup error for {doc_id}: {cleanup_exc}")
             finally:
                 # 3. Release permit strictly after worker has stopped and terminal cleanup has finished
                 sem.release()
+                # 4. Supervisor owns releasing the reindex lock upon worker completion (Task 2.1.2-E2)
+                if _reindex_lock is not None and _reindex_lock.locked():
+                    _reindex_lock.release()
 
         return worker_outcome, worker_payload
 
-    # Keep a strong application-level reference to the supervisor task until it finishes
+    # Transfer lock ownership to supervisor task before launching
+    supervisor_started = True
     active_tasks = get_active_supervisor_tasks()
     supervisor_task = asyncio.create_task(_supervised_worker())
     active_tasks.add(supervisor_task)
@@ -657,45 +815,47 @@ async def upload_document(
         outcome, payload = await asyncio.shield(supervisor_task)
     except asyncio.CancelledError:
         # Request coroutine cancelled; supervisor_task continues in background to terminal state
+        # DO NOT release _reindex_lock here — supervisor owns it until background worker exits
         raise
+    finally:
+        # Safety net: only release if supervisor never launched
+        if not supervisor_started and _reindex_lock is not None and _reindex_lock.locked():
+            _reindex_lock.release()
 
     if outcome == "timeout":
         # Idempotent cleanup in case supervisor already unlinked
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
+        _cleanup_staging_artifacts()
         raise HTTPException(503, "Document processing timed out. Please try again shortly.") from payload
     elif outcome == "error":
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
+        _cleanup_staging_artifacts()
         raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.") from payload
 
     result = payload
     if result["status"] == "error":
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
+        _cleanup_staging_artifacts()
         raise HTTPException(400, result.get("message", "Processing failed"))
 
     # ── Resource limits on processed documents ────────────────────────
     if result["pages"] > MAX_PAGES:
-        try:
-            app.state.vector_store.remove_document(doc_id)
-        except Exception:
-            pass
-        try:
-            app.state.metadata.delete_document(doc_id, session_id=session_id)
-        except Exception:
-            pass
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
+        if not reindex_doc_id:
+            try:
+                app.state.vector_store.remove_document(doc_id)
+            except Exception:
+                pass
+            try:
+                app.state.metadata.delete_document(doc_id, session_id=session_id)
+            except Exception:
+                pass
+        _cleanup_staging_artifacts()
         raise HTTPException(400, f"Document has too many pages (max {MAX_PAGES}).")
+
+    # ── Reindex post-commit: update _doc_indices and remove old generation files ──
+    # swap_document was executed inside process_document_staged right after commit_reindex.
+    # Sync here as an idempotent safeguard.
+    if reindex_doc_id and new_gen is not None:
+        new_faiss = VECTORS_DIR / f"{doc_id}_g{new_gen}.faiss"
+        if new_faiss.exists():
+            app.state.vector_store._doc_indices[doc_id] = str(new_faiss)
 
     return UploadResponse(
         doc_id=doc_id,
@@ -705,6 +865,7 @@ async def upload_document(
         language_hint=result["language_hint"],
         message=f"Document processed successfully. {result['chunks']} chunks indexed.",
     )
+
 
 
 @app.post("/ask", response_model=AskResponse)
