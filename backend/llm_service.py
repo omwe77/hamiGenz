@@ -5,7 +5,7 @@ import os
 import re
 import json
 import requests
-from typing import Optional
+from typing import Optional, Any
 
 from document_processor import DocumentProcessor
 
@@ -117,6 +117,162 @@ The JSON must parse with json.loads().
                 pass
 
         return {"error": "Could not parse JSON response", "raw": text[:500]}
+
+class GeminiService:
+    """Interface to Google Gemini LLM via official google-genai SDK."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "gemini-3.5-flash-lite",
+        client: Optional[Any] = None,
+    ):
+        self.model = model
+        self.api_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
+        if not self.api_key and client is None:
+            raise ValueError(
+                "GEMINI_API_KEY is required when LLM_PROVIDER is set to 'gemini'."
+            )
+        if client is not None:
+            self.client = client
+        else:
+            try:
+                from google import genai
+                self.client = genai.Client(api_key=self.api_key)
+            except Exception as e:
+                self._handle_api_error(e)
+
+    def _handle_api_error(self, exc: Exception) -> None:
+        """Sanitize error message to prevent leaking credentials/content and raise LLMUnavailableError."""
+        msg = str(exc)
+        if self.api_key and self.api_key in msg:
+            msg = msg.replace(self.api_key, "[REDACTED_API_KEY]")
+        msg = re.sub(r'(?i)(authorization|api[-_]?key|x-goog-api-key)[:=\s]+[a-zA-Z0-9_\-\.]+', r'\1: [REDACTED]', msg)
+        raise LLMUnavailableError(f"Gemini backend error: {msg}") from exc
+    def generate(
+        self,
+        prompt: str,
+        stream: bool = False,
+        options: Optional[dict] = None,
+        timeout: int = 120,
+    ) -> str:
+        """
+        Generate a response from Gemini.
+        Supports streaming and maps supported generation options.
+        """
+        supported_keys = {
+            "temperature",
+            "top_p",
+            "top_k",
+            "max_output_tokens",
+            "max_tokens",
+            "num_predict",
+        }
+        gen_config_kwargs: dict[str, Any] = {}
+        if options is not None:
+            unsupported = [k for k in options if k not in supported_keys]
+            if unsupported:
+                raise ValueError(
+                    f"Unsupported Gemini option(s): {', '.join(sorted(unsupported))}."
+                )
+            if "temperature" in options:
+                gen_config_kwargs["temperature"] = float(options["temperature"])
+            if "top_p" in options:
+                gen_config_kwargs["top_p"] = float(options["top_p"])
+            if "top_k" in options:
+                gen_config_kwargs["top_k"] = int(options["top_k"])
+            for tok_key in ("max_output_tokens", "max_tokens", "num_predict"):
+                if tok_key in options:
+                    gen_config_kwargs["max_output_tokens"] = int(options[tok_key])
+                    break
+        else:
+            gen_config_kwargs = {
+                "temperature": 0.3,
+                "top_p": 0.9,
+            }
+
+        try:
+            if hasattr(self.client, "interactions") and hasattr(self.client.interactions, "create"):
+                call_kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "input": prompt,
+                    "timeout": float(timeout),
+                    "store": False,  # Do not opt into server-side interaction storage
+                }
+                if stream:
+                    call_kwargs["stream"] = True
+                if gen_config_kwargs:
+                    call_kwargs["generation_config"] = gen_config_kwargs
+
+                resp = self.client.interactions.create(**call_kwargs)
+
+                if stream:
+                    chunks = []
+                    for event in resp:
+                        text_part = None
+                        if hasattr(event, "delta") and event.delta:
+                            text_part = event.delta
+                        elif hasattr(event, "text") and event.text:
+                            text_part = event.text
+                        elif hasattr(event, "output_text") and event.output_text:
+                            text_part = event.output_text
+                        elif isinstance(event, dict):
+                            text_part = event.get("delta") or event.get("text") or event.get("output_text")
+                        if text_part:
+                            chunks.append(str(text_part))
+                    return "".join(chunks)
+                else:
+                    if hasattr(resp, "output_text") and resp.output_text is not None:
+                        return str(resp.output_text)
+                    if hasattr(resp, "text") and resp.text is not None:
+                        return str(resp.text)
+                    if isinstance(resp, dict):
+                        return str(resp.get("output_text") or resp.get("text") or "")
+                    return str(resp)
+
+            elif hasattr(self.client, "models") and hasattr(self.client.models, "generate_content"):
+                from google.genai import types
+                cfg = types.GenerateContentConfig(**gen_config_kwargs) if gen_config_kwargs else None
+                if stream:
+                    stream_resp = self.client.models.generate_content_stream(
+                        model=self.model,
+                        contents=prompt,
+                        config=cfg,
+                    )
+                    chunks = [c.text for c in stream_resp if hasattr(c, "text") and c.text]
+                    return "".join(chunks)
+                else:
+                    resp = self.client.models.generate_content(
+                        model=self.model,
+                        contents=prompt,
+                        config=cfg,
+                    )
+                    return resp.text or ""
+            else:
+                raise AttributeError("Client has neither 'interactions.create' nor 'models.generate_content'")
+        except Exception as exc:
+            if isinstance(exc, (ValueError, TypeError)):
+                raise
+            self._handle_api_error(exc)
+
+    def generate_structured(self, prompt: str) -> dict:
+        """
+        Generate a structured JSON response.
+        Wraps prompt to request JSON output.
+        """
+        wrapper = f"""{prompt}
+
+Respond ONLY with valid JSON. No other text, no markdown fences, no explanation.
+The JSON must parse with json.loads().
+"""
+        raw = self.generate(wrapper)
+        return self._parse_json_response(raw)
+
+    @staticmethod
+    def _parse_json_response(text: str) -> dict:
+        """Extract JSON object from LLM response text."""
+        return OllamaService._parse_json_response(text)
+
 
 
 class GroundingValidator:

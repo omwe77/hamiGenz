@@ -44,10 +44,15 @@ registry.json
 *.sqlite
 *.sqlite3
 
-# Environment variables
+# Environment variables and secrets
 .env
-.env.local
-.env.*.local
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.sample
+!**/.env.*.example
+!**/.env.*.sample
 
 # Logs
 *.log

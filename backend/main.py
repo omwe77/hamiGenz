@@ -63,6 +63,7 @@ from document_processor import DocumentProcessor, Chunker, MetadataStore
 from vector_store import EmbeddingService, VectorStore, Pipeline, ProcessingTimeoutError
 from llm_service import (
     OllamaService,
+    GeminiService,
     LLMUnavailableError,
     GroundingValidator,
     ExplanationEngine,
@@ -80,8 +81,11 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 VECTORS_DIR = DATA_DIR / "vectors"
 DB_PATH = DATA_DIR / "hamigenz.db"
 
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 # Multilingual embedding model — chosen via tests/evaluation retrieval
 # benchmark (PR-014): all-MiniLM-L6-v2 scored Hit@1 0.22 / MRR 0.41 overall
 # and 0.0 Hit@1 on English→Nepali cross-lingual queries; this model scores
@@ -215,20 +219,36 @@ async def lifespan(app: FastAPI):
                 print(f"[hamigenz] Failed to remove stale index {doc_id}: {exc}")
         app.state.vector_store.write_model_stamp(EMBED_MODEL)
 
-    app.state.ollama = OllamaService(base_url=OLLAMA_BASE, model=OLLAMA_MODEL)
+    # Provider initialization (Task 3.1)
+    if LLM_PROVIDER == "gemini":
+        if not GEMINI_API_KEY:
+            raise ValueError(
+                "GEMINI_API_KEY environment variable is required when LLM_PROVIDER is set to 'gemini'."
+            )
+        app.state.llm = GeminiService(api_key=GEMINI_API_KEY, model=GEMINI_MODEL)
+    elif LLM_PROVIDER in ("ollama", ""):
+        app.state.llm = OllamaService(base_url=OLLAMA_BASE, model=OLLAMA_MODEL)
+    else:
+        raise ValueError(
+            f"Unsupported LLM_PROVIDER: '{LLM_PROVIDER}'. Expected 'ollama' or 'gemini'."
+        )
+
+    # Maintain app.state.ollama as backward-compatible alias for existing tests and routes
+    app.state.ollama = app.state.llm
+
     app.state.pipeline = Pipeline(
         embedding_service=app.state.embedder,
         vector_store=app.state.vector_store,
         chunker=app.state.chunker,
         metadata_store=app.state.metadata,
     )
-    app.state.validator = GroundingValidator(app.state.ollama)
-    app.state.verification = VerificationLayer(app.state.ollama, app.state.validator)
-    app.state.explainer = ExplanationEngine(app.state.ollama)
-    app.state.action_extractor = ActionExtractor(app.state.ollama)
-    app.state.form_service = FormUnderstandingService(app.state.ollama)
+    app.state.validator = GroundingValidator(app.state.llm)
+    app.state.verification = VerificationLayer(app.state.llm, app.state.validator)
+    app.state.explainer = ExplanationEngine(app.state.llm)
+    app.state.action_extractor = ActionExtractor(app.state.llm)
+    app.state.form_service = FormUnderstandingService(app.state.llm)
     app.state.official_answer = OfficialAnswerService(
-        app.state.ollama, app.state.verification
+        app.state.llm, app.state.verification
     )
 
     # ── OKF knowledge bundle ──────────────────────────────────────────────
@@ -247,19 +267,23 @@ async def lifespan(app: FastAPI):
     # ── User feedback store ────────────────────────────────────────────────
     app.state.feedback = FeedbackStore(DATA_DIR / "feedback.db")
 
-    # Check Ollama connectivity
-    try:
-        models_resp = app.state.ollama._verify()
-        print(f"[hamigenz] Ollama connected, model: {OLLAMA_MODEL}")
-    except Exception as e:
-        print(f"[hamigenz] Warning: Ollama may not be fully reachable: {e}")
+    # Check LLM connectivity
+    if LLM_PROVIDER == "gemini":
+        print(f"[hamigenz] Gemini provider active, model: {GEMINI_MODEL}")
+    else:
+        try:
+            models_resp = app.state.ollama._verify()
+            print(f"[hamigenz] Ollama connected, model: {OLLAMA_MODEL}")
+        except Exception as e:
+            print(f"[hamigenz] Warning: Ollama may not be fully reachable: {e}")
 
     get_processing_semaphore()
     get_reindex_locks()
     _run_reindex_scavenger(
         app.state.metadata, app.state.vector_store, UPLOAD_DIR, VECTORS_DIR
     )
-    print(f"[hamigenz] Ready. Embedder: {EMBED_MODEL}, LLM: {OLLAMA_MODEL}")
+    active_llm_model = GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_MODEL
+    print(f"[hamigenz] Ready. Provider: {LLM_PROVIDER}, Embedder: {EMBED_MODEL}, LLM: {active_llm_model}")
     yield
     print("[hamigenz] Shutting down...")
 
