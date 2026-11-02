@@ -593,10 +593,13 @@ def verify_document_owner(app, doc_id: str, session_id: Optional[str]) -> dict:
 
 @app.get("/health")
 async def health():
+    active_model = GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_MODEL
     return {
         "status": "ok",
         "service": "hamigenz",
         "version": "0.1.0",
+        "provider": LLM_PROVIDER,
+        "llm_model": active_model,
         "ollama_model": OLLAMA_MODEL,
         "embedder": EMBED_MODEL,
     }

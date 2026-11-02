@@ -138,24 +138,107 @@ def is_trusted_proxy(ip_str: str) -> bool:
         return False
 
 
+def parse_trust_railway_proxy(val: Optional[str] = None) -> bool:
+    """
+    Parse the TRUST_RAILWAY_PROXY environment variable or provided string.
+
+    Rules:
+    - '1', 'true', 'yes', 'on' -> True
+    - '0', 'false', 'no', 'off', empty, or None -> False
+    - Unknown values -> False (fails closed with security warning)
+    """
+    if val is None:
+        val = os.getenv("TRUST_RAILWAY_PROXY")
+    if val is None:
+        return False
+    clean = val.strip().lower()
+    if not clean:
+        return False
+    if clean in ("1", "true", "yes", "on"):
+        return True
+    if clean in ("0", "false", "no", "off"):
+        return False
+    print(f"[hamigenz security] Warning: Unknown boolean value for TRUST_RAILWAY_PROXY: '{val}'. Failing closed to False.")
+    return False
+
+
+def is_railway_environment() -> bool:
+    """
+    Determine whether to trust Railway edge proxy headers (X-Real-IP).
+
+    1. If TRUST_RAILWAY_PROXY is explicitly configured with a non-empty value,
+       its parsed boolean value takes precedence:
+       - '1', 'true', 'yes', 'on' -> True
+       - '0', 'false', 'no', 'off' -> False
+       - Unknown values fail closed to False.
+    2. If TRUST_RAILWAY_PROXY is unset or empty, auto-detects Railway presence via
+       RAILWAY_ENVIRONMENT or RAILWAY_PROJECT_ID.
+    """
+    raw_override = os.getenv("TRUST_RAILWAY_PROXY")
+    if raw_override is not None and raw_override.strip() != "":
+        clean = raw_override.strip().lower()
+        if clean in ("1", "true", "yes", "on"):
+            return True
+        if clean in ("0", "false", "no", "off"):
+            return False
+        print(f"[hamigenz security] Warning: Unknown boolean value for TRUST_RAILWAY_PROXY: '{raw_override}'. Failing closed to False.")
+        return False
+
+    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+
+
 def resolve_client_ip(request: Request) -> str:
     """
     Safely resolve the true client IP address.
-    
-    Rules:
-    1. If the direct peer (request.client.host) is NOT a trusted proxy,
-       return direct peer. Never read forwarding headers from untrusted peers.
-    2. If direct peer IS trusted, parse X-Forwarded-For right-to-left.
-       Return the first untrusted IP found.
-    3. CF-Connecting-IP is respected only when direct peer is a trusted proxy.
+
+    Trust model:
+    1. Railway deployment: Railway's public HTTP edge terminates external traffic
+       and injects the authentic client IP in the `X-Real-IP` header (overwriting
+       any client-supplied value). When running in Railway (auto-detected via
+       RAILWAY_ENVIRONMENT or RAILWAY_PROJECT_ID, or manually forced via
+       TRUST_RAILWAY_PROXY=1), X-Real-IP is parsed and validated as a strict IPv4/IPv6
+       address. Invalid or missing values fall back safely to direct peer.
+    2. Trusted local proxies: When the direct peer is explicitly listed in
+       TRUSTED_PROXIES (e.g. 127.0.0.1, ::1), X-Real-IP, CF-Connecting-IP,
+       and right-to-left X-Forwarded-For hops are evaluated.
+    3. Untrusted direct peer: If not on Railway and direct peer is untrusted,
+       all forwarding headers (X-Real-IP, X-Forwarded-For, CF-Connecting-IP)
+       are strictly ignored to prevent header spoofing.
     """
     direct_peer = request.client.host if (request.client and request.client.host) else "127.0.0.1"
 
+    # 1. Railway edge proxy trust
+    if is_railway_environment():
+        x_real_ip = request.headers.get("x-real-ip")
+        if x_real_ip:
+            clean = x_real_ip.strip()
+            if ":" in clean and not clean.startswith("[") and clean.count(":") == 1:
+                clean = clean.split(":")[0]
+            try:
+                ipaddress.ip_address(clean)
+                return clean
+            except ValueError:
+                pass
+        return direct_peer
+
+    # 2. Local / configured trusted proxy trust
     if not is_trusted_proxy(direct_peer):
         # Untrusted direct peer — headers could be spoofed, ignore them completely
         return direct_peer
 
-    # Peer is trusted: check CF-Connecting-IP first if valid IP
+    # Peer is trusted: check X-Real-IP first if valid IP
+    x_real_ip = request.headers.get("x-real-ip")
+    if x_real_ip:
+        clean = x_real_ip.strip()
+        if ":" in clean and not clean.startswith("[") and clean.count(":") == 1:
+            clean = clean.split(":")[0]
+        try:
+            ipaddress.ip_address(clean)
+            return clean
+        except ValueError:
+            pass
+
+    # Check CF-Connecting-IP
     cf_connecting_ip = request.headers.get("cf-connecting-ip")
     if cf_connecting_ip:
         cf_clean = cf_connecting_ip.strip()
