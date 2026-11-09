@@ -52,7 +52,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt -r requirements.txt httpx==0.28.1
+          pip install -r backend/requirements.txt httpx==0.28.1 pytest==8.3.4
 
       - name: Run deterministic regression & evaluation tests (Default Rate Limits)
         env:
