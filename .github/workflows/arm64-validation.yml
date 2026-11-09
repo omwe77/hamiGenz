@@ -1,0 +1,179 @@
+name: ARM64 Native Validation
+
+'on':
+  push:
+    branches:
+      - chore/arm64-native-validation
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arm64-build-and-validate:
+    name: Native ARM64 Docker Build & Runtime Suite
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Inspect runner environment & hardware
+        run: |
+          echo "=== RUNNER HARDWARE & KERNEL ==="
+          uname -a
+          uname -m
+          lscpu
+          free -h
+          df -h
+
+      - name: Build root Docker image on native ARM64
+        id: build_step
+        run: |
+          echo "Starting Docker build on native ARM64..."
+          BUILD_START=$(date +%s)
+          docker build -t hamigenz-backend:arm64-val .
+          BUILD_END=$(date +%s)
+          BUILD_DURATION=$((BUILD_END - BUILD_START))
+          echo "BUILD_DURATION_SEC=${BUILD_DURATION}" >> $GITHUB_ENV
+          echo "Build finished in ${BUILD_DURATION} seconds."
+
+      - name: Inspect image metadata & architecture
+        run: |
+          echo "=== DOCKER IMAGE METADATA ==="
+          docker image inspect hamigenz-backend:arm64-val \
+            --format 'Image Architecture: {{.Architecture}} | OS: {{.Os}} | Size: {{.Size}} bytes'
+          IMAGE_BYTES=$(docker image inspect hamigenz-backend:arm64-val --format '{{.Size}}')
+          IMAGE_MB=$((IMAGE_BYTES / 1024 / 1024))
+          echo "Image Size: ${IMAGE_MB} MB"
+          ARCH=$(docker image inspect hamigenz-backend:arm64-val --format '{{.Architecture}}')
+          if [ "$ARCH" != "arm64" ]; then
+            echo "ERROR: Expected image architecture arm64, got $ARCH"
+            exit 1
+          fi
+
+      - name: Create shared Hugging Face cache volume
+        run: |
+          # Reusable cache volume mounted at /app/backend/data/huggingface (HF_HOME)
+          # Prevents downloading the 470 MB model multiple times across tests
+          docker volume create hamigenz-hf-cache
+
+      - name: Execute in-container runtime test suite (Tests 1-8)
+        run: |
+          echo "Running in-container test suite with mounted HF model cache..."
+          docker run --rm \
+            -v "${{ github.workspace }}/tests/arm64_runtime_validation.py:/app/test_arm64.py" \
+            -v hamigenz-hf-cache:/app/backend/data/huggingface \
+            hamigenz-backend:arm64-val \
+            python /app/test_arm64.py
+
+      - name: Test 9 — Start real FastAPI application & verify health endpoint
+        run: |
+          echo "Starting FastAPI container with production secret and mounted model cache..."
+          APP_START=$(date +%s)
+          docker run -d --name hamigenz-app-val \
+            -p 8000:8000 \
+            -e HAMIGENZ_ENV=production \
+            -e HAMIGENZ_SESSION_SECRET=c0ffee1234567890abcdef1234567890abcdef1234567890abcdef1234567890 \
+            -e LLM_PROVIDER=ollama \
+            -v hamigenz-hf-cache:/app/backend/data/huggingface \
+            hamigenz-backend:arm64-val
+
+          echo "Waiting for /health endpoint response..."
+          HEALTH_OK=0
+          for i in $(seq 1 30); do
+            if curl -s -f http://127.0.0.1:8000/health > /tmp/health_resp.json; then
+              HEALTH_OK=1
+              break
+            fi
+            echo "Attempt $i: waiting for application startup..."
+            sleep 2
+          done
+
+          if [ "$HEALTH_OK" -ne 1 ]; then
+            echo "ERROR: Application failed to respond within 60s. Container logs:"
+            docker logs hamigenz-app-val
+            exit 1
+          fi
+
+          APP_READY=$(date +%s)
+          STARTUP_DURATION=$((APP_READY - APP_START))
+          echo "Application reached healthy state in ${STARTUP_DURATION}s."
+
+          echo "Health response JSON:"
+          cat /tmp/health_resp.json
+          echo ""
+
+          python3 -c "
+          import json
+          data = json.load(open('/tmp/health_resp.json'))
+          assert data.get('status') == 'ok', f'Unexpected status: {data}'
+          assert data.get('service') == 'hamigenz', f'Unexpected service: {data}'
+          assert data.get('version') == '0.1.0', f'Unexpected version: {data}'
+          assert data.get('embedder') == 'paraphrase-multilingual-MiniLM-L12-v2', f'Unexpected embedder: {data}'
+          assert data.get('provider') == 'ollama', f'Unexpected provider: {data}'
+          print('>>> PASS: /health endpoint returned 200 OK matching real application specification.')
+          "
+
+          echo "=== Container logs ==="
+          docker logs hamigenz-app-val | tail -n 25
+
+          docker stop hamigenz-app-val
+          docker rm hamigenz-app-val
+
+      - name: Test 10 — Verify data persistence across container recreation
+        run: |
+          echo "Creating temporary Docker volume for persistence verification..."
+          docker volume create hamigenz-persist-val-vol
+
+          echo "Starting Container A to write state into /app/backend/data..."
+          docker run --rm \
+            -v hamigenz-persist-val-vol:/app/backend/data \
+            hamigenz-backend:arm64-val \
+            python -c "
+          import pathlib, sqlite3
+          pathlib.Path('/app/backend/data/marker.txt').write_text('arm64-volume-persistence-ok')
+          conn = sqlite3.connect('/app/backend/data/test_lifecycle.db')
+          conn.execute('CREATE TABLE lifecycle (key TEXT PRIMARY KEY, val TEXT)')
+          conn.execute('INSERT INTO lifecycle VALUES (\'k1\', \'persisted_across_containers\')')
+          conn.commit()
+          conn.close()
+          print('Container A successfully wrote marker and SQLite state.')
+          "
+
+          echo "Starting Container B to read and verify persisted state from /app/backend/data..."
+          docker run --rm \
+            -v hamigenz-persist-val-vol:/app/backend/data \
+            hamigenz-backend:arm64-val \
+            python -c "
+          import pathlib, sqlite3
+          marker = pathlib.Path('/app/backend/data/marker.txt').read_text()
+          assert marker == 'arm64-volume-persistence-ok', f'Marker mismatch: {marker}'
+          conn = sqlite3.connect('/app/backend/data/test_lifecycle.db')
+          cur = conn.execute('SELECT val FROM lifecycle WHERE key=\'k1\'')
+          row = cur.fetchone()
+          assert row and row[0] == 'persisted_across_containers', f'Unexpected row: {row}'
+          conn.close()
+          print('>>> PASS: Container B verified persistence of state created by Container A.')
+          "
+
+          docker volume rm hamigenz-persist-val-vol
+
+      - name: Summary metrics & teardown
+        if: always()
+        run: |
+          # Cleanup any lingering test containers or volumes
+          docker stop hamigenz-app-val 2>/dev/null || true
+          docker rm hamigenz-app-val 2>/dev/null || true
+          docker volume rm hamigenz-hf-cache 2>/dev/null || true
+          docker volume rm hamigenz-persist-val-vol 2>/dev/null || true
+          echo "==========================================================="
+          echo "ARM64 NATIVE VALIDATION COMPLETED"
+          if [ -n \"$BUILD_DURATION_SEC\" ]; then
+            echo "Docker Build Duration: ${BUILD_DURATION_SEC}s"
+          fi
+          echo "==========================================================="
