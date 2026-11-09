@@ -55,6 +55,14 @@ jobs:
             echo "ERROR: Expected image architecture arm64, got $ARCH"
             exit 1
           fi
+          echo "Verifying PyTorch package in built image..."
+          docker run --rm hamigenz-backend:arm64-val python -c "
+          import torch
+          print('Installed PyTorch:', torch.__version__, '| CUDA:', torch.version.cuda)
+          assert torch.__version__ == '2.15.0+cpu', f'Expected 2.15.0+cpu, got {torch.__version__}'
+          assert torch.version.cuda is None, f'Expected None CUDA, got {torch.version.cuda}'
+          print('Verified: CPU-only PyTorch build preserved without CUDA bloat.')
+          "
 
       - name: Create shared Hugging Face cache volume
         run: |
@@ -73,12 +81,14 @@ jobs:
 
       - name: Test 9 — Start real FastAPI application & verify health endpoint
         run: |
+          echo "Generating ephemeral 32-byte production session secret for CI smoke test..."
+          EPHEMERAL_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
           echo "Starting FastAPI container with production secret and mounted model cache..."
           APP_START=$(date +%s)
           docker run -d --name hamigenz-app-val \
             -p 8000:8000 \
             -e HAMIGENZ_ENV=production \
-            -e HAMIGENZ_SESSION_SECRET=c0ffee1234567890abcdef1234567890abcdef1234567890abcdef1234567890 \
+            -e HAMIGENZ_SESSION_SECRET="${EPHEMERAL_SECRET}" \
             -e LLM_PROVIDER=ollama \
             -v hamigenz-hf-cache:/app/backend/data/huggingface \
             hamigenz-backend:arm64-val

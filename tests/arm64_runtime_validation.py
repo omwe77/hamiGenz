@@ -100,18 +100,46 @@ def test_3_dependency_imports():
 
 
 def test_4_pytorch_cpu_tensor():
-    log_header("4. PyTorch CPU Tensor Operations")
+    log_header("4. PyTorch CPU-Only Build & Tensor Operations")
     import torch
 
     device = torch.device("cpu")
     print(f"PyTorch Version: {torch.__version__}, Device: {device}")
+    print(f"PyTorch CUDA Version: {torch.version.cuda}")
+
+    # 1. Verify CPU-only build identity
+    assert "+cpu" in torch.__version__, f"Expected '+cpu' in PyTorch version, got '{torch.__version__}'"
+    assert torch.__version__ == "2.15.0+cpu", f"PyTorch version mismatch: expected '2.15.0+cpu', got '{torch.__version__}'"
+
+    # 2. Verify CUDA is completely disabled/None
+    assert torch.version.cuda is None, f"Expected torch.version.cuda to be None on CPU build, got {torch.version.cuda}"
+    assert not torch.cuda.is_available(), "CUDA unexpectedly reported as available on CPU-only runner!"
+
+    # 3. Verify no NVIDIA, CUDA, or Triton packages exist in the environment
+    pip_list_out = subprocess.run(
+        [sys.executable, "-m", "pip", "list", "--format=freeze"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    forbidden_prefixes = ("nvidia-", "nvidia_", "cuda-", "cuda_", "triton", "pytorch-triton", "pytorch_triton")
+    gpu_bloat_pkgs = [
+        p for p in pip_list_out
+        if any(p.lower().startswith(prefix) for prefix in forbidden_prefixes)
+    ]
+    print(f"Forbidden GPU/CUDA/Triton package check: {len(gpu_bloat_pkgs)} packages found.")
+    if gpu_bloat_pkgs:
+        print(f"Detected unwanted packages: {gpu_bloat_pkgs}")
+    assert len(gpu_bloat_pkgs) == 0, f"Found unwanted GPU/CUDA/Triton packages in CPU-only build: {gpu_bloat_pkgs}"
+
+    # 4. Perform numerical CPU tensor operation
     a = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device=device)
     b = torch.tensor([[5.0, 6.0], [7.0, 8.0]], device=device)
     c = torch.matmul(a, b)
     expected = torch.tensor([[19.0, 22.0], [43.0, 50.0]], device=device)
     assert torch.allclose(c, expected), f"Matrix multiply mismatch:\n{c}\nvs\n{expected}"
     print(f"Matrix multiply result:\n{c.tolist()}")
-    print(">>> PASS: PyTorch CPU tensor operations function accurately.")
+    print(">>> PASS: PyTorch verified as CPU-only build (torch==2.15.0+cpu) without CUDA bloat.")
 
 
 def test_5_sentence_transformer_embedding():
