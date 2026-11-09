@@ -30,7 +30,7 @@ export function buildCsp(env: CspEnv = process.env): string {
     let parsed: URL;
     try {
       parsed = new URL(rawApiUrl);
-    } catch (err: any) {
+    } catch {
       throw new Error(
         `Invalid NEXT_PUBLIC_API_BASE_URL '${rawApiUrl}': malformed URL. ` +
         `Must be an absolute URL like 'https://api.example.com'.`
