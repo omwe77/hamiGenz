@@ -870,7 +870,8 @@ async def upload_document(
         except MultiPartException as mpe:
             raise HTTPException(400, f"Malformed multipart form data: {mpe.message}") from mpe
         except Exception as exc:
-            raise HTTPException(400, f"Malformed multipart form data: {exc}") from exc
+            print(f"[hamigenz] Malformed multipart form data: {exc}")
+            raise HTTPException(400, "Malformed multipart form data.") from exc
 
         # Guaranteed close of ALL FormData entries — including unexpected or duplicate file fields —
         # regardless of which validation path exits. upload_file.close() alone only covers the
@@ -930,7 +931,8 @@ async def upload_document(
                 staging_path = None
             if isinstance(exc, HTTPException):
                 raise
-            raise HTTPException(500, f"Failed to save upload: {exc}") from exc
+            print(f"[hamigenz] Failed to save upload: {exc}")
+            raise HTTPException(500, "Failed to save uploaded document.") from exc
         except BaseException:
             if staging_path is not None:
                 try:
@@ -1876,8 +1878,8 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
     except HTTPException:
         raise
     except Exception as e:
-        print(f"fill_image failed for doc {doc_id}: {e}")
-        raise HTTPException(500, f"Fill preview failed: {e}")
+        print(f"[hamigenz] fill_image failed for doc {doc_id}: {e}")
+        raise HTTPException(500, "Could not generate form fill preview.") from e
 
 
 @app.post("/documents/{doc_id}/form-fields")
@@ -1888,7 +1890,8 @@ async def set_form_fields(doc_id: str, req: dict, request: Request, _rl: None = 
     try:
         values = [v for v in (req.get("values") or req.get("fields") or [])]
     except Exception as e:
-        raise HTTPException(400, f"Invalid form fields: {e}") from e
+        print(f"[hamigenz] Invalid form fields for doc {doc_id}: {e}")
+        raise HTTPException(400, "Invalid form fields payload.") from e
 
     app.state.metadata.set_form_fields(doc_id, values, session_id=session_id)
     return {"doc_id": doc_id, "count": len(values), "saved": True}

@@ -31,7 +31,9 @@ env/
 tests/
 test/
 backend/_fill_pipeline_test.py
+backend/_fill_integration_test.py
 backend/_pos_test.py
+setup-github.sh
 
 # Documentation
 docs/

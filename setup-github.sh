@@ -2,16 +2,16 @@
 # GitHub setup and push script for hamiGenZ
 set -e
 
-REPO_NAME="hamigenz"
-GITHUB_USER="omwe77"
+REPO_NAME="${REPO_NAME:-"hamigenz"}"
+GITHUB_USER="${GITHUB_USER:-"omwe77"}"
 BRANCH_BASE="feat"
-PROJECT_DIR="/c/Users/LENOVO/OneDrive - London Metropolitan University/Documents/my_projects/hamigenz"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-cd "$PROJECT_DIR"
+cd "$SCRIPT_DIR"
 
 echo "=== Setting up git identity ==="
-git config user.name "LENOVO"
-git config user.email "np01ai4a250216@islingtoncollege.edu.np"
+git config user.name "${GIT_AUTHOR_NAME:-"Developer"}"
+git config user.email "${GIT_AUTHOR_EMAIL:-"developer@example.com"}"
 
 echo "=== Initializing git repo ==="
 git init
