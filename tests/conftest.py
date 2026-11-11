@@ -72,3 +72,17 @@ def mock_offline_embeddings(monkeypatch):
 
     if "main" in sys.modules:
         monkeypatch.setattr(sys.modules["main"], "EmbeddingService", MockEmbeddingService)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiters():
+    """
+    Clear in-memory sliding-window rate limiters between tests to prevent
+    cross-test state contamination in test suites with many requests.
+    """
+    try:
+        from rate_limiter import _ip_limiters, _session_limiters
+        _ip_limiters.clear()
+        _session_limiters.clear()
+    except (ImportError, AttributeError):
+        pass
