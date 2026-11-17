@@ -80,7 +80,7 @@ class TestExceptionInformationDisclosure:
     """Exception details and system paths must never be disclosed to API clients."""
 
     def test_upload_save_exception_hides_system_paths(self, monkeypatch):
-        import asyncio
+        import anyio
         from unittest.mock import MagicMock
         from main import app
         import session_auth
@@ -113,7 +113,7 @@ class TestExceptionInformationDisclosure:
                     headers={"X-Session-Token": token},
                 )
 
-        resp = asyncio.run(run())
+        resp = anyio.run(run)
         assert resp.status_code == 500
         data = resp.json()
         assert data["detail"] == "Failed to save uploaded document."
@@ -122,7 +122,7 @@ class TestExceptionInformationDisclosure:
         assert secret_path not in resp.text
 
     def test_fill_preview_exception_hides_system_details(self, monkeypatch):
-        import asyncio
+        import anyio
         from unittest.mock import MagicMock
         from main import app, UPLOAD_DIR
         import session_auth
@@ -153,11 +153,11 @@ class TestExceptionInformationDisclosure:
             ) as client:
                 return await client.post(
                     f"/documents/{doc_id}/page/1/fill-image",
-                    json={"values": {"name": "Test"}},
+                    json={"values": [{"label": "name", "value": "Test"}]},
                     headers={"X-Session-Token": token},
                 )
 
-        resp = asyncio.run(run())
+        resp = anyio.run(run)
         assert resp.status_code == 500
         data = resp.json()
         assert data["detail"] == "Could not generate form fill preview."
@@ -166,7 +166,7 @@ class TestExceptionInformationDisclosure:
         assert "BufferError" not in resp.text
 
     def test_set_form_fields_invalid_payload_sanitized(self):
-        import asyncio
+        import anyio
         from unittest.mock import MagicMock
         from main import app
         import session_auth
@@ -192,7 +192,7 @@ class TestExceptionInformationDisclosure:
                     headers={"X-Session-Token": token},
                 )
 
-        resp = asyncio.run(run())
+        resp = anyio.run(run)
         assert resp.status_code == 400
         data = resp.json()
         assert data["detail"] == "Invalid form fields payload."
