@@ -1,4 +1,4 @@
-﻿# hamiGenZ — Release & Recovery Ledger
+# hamiGenZ — Release & Recovery Ledger
 
 ## Milestone 1 (M1): Repository Hygiene & Test Suite Stabilization
 
@@ -55,10 +55,14 @@
 
 ### Remaining Milestone 1 Tasks
 
-1. **[M1-TASK-05] PR Submission & CI Gate:** ✅ SUBMITTED
+1. **[M1-TASK-05] PR Submission & CI Gate:** ✅ COMPLETE
    - **PR:** https://github.com/omwe77/hamiGenz/pull/3
-   - Branch `fix/security-test-suite-anyio` → `main`
-   - Awaiting GitHub Actions CI green checks before merge.
+   - **CI Run:** `44120463217` — all 3 jobs green
+     - Backend CI (Python 3.11): ✅ SUCCESS
+     - Frontend CI (Node 24): ✅ SUCCESS
+     - Docker Validation: ✅ SUCCESS
+     - Vercel Preview: ✅ SUCCESS
+   - Ready for review and merge.
 
 2. **[M1-TASK-06] Nepali OCR Engine Fallback Hardening:**
    - Address the documented Nepali traineddata path issue in `backend/ocr_engines.py` as noted in `.tasklist-hamigenz.md`.
