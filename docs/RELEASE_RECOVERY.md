@@ -55,9 +55,10 @@
 
 ### Remaining Milestone 1 Tasks
 
-1. **[M1-TASK-05] PR Submission & CI Gate:**
-   - Submit PR for `fix/security-test-suite-anyio` to `main` using `pr-body.md`.
-   - Ensure all GitHub Actions CI checks are green before merging.
+1. **[M1-TASK-05] PR Submission & CI Gate:** ✅ SUBMITTED
+   - **PR:** https://github.com/omwe77/hamiGenz/pull/3
+   - Branch `fix/security-test-suite-anyio` → `main`
+   - Awaiting GitHub Actions CI green checks before merge.
 
 2. **[M1-TASK-06] Nepali OCR Engine Fallback Hardening:**
    - Address the documented Nepali traineddata path issue in `backend/ocr_engines.py` as noted in `.tasklist-hamigenz.md`.
