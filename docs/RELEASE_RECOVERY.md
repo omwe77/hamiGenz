@@ -76,12 +76,24 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 ### Tasks
 
 #### [M2-TASK-01] Nepali OCR Engine Reliability & Fallback Hardening
-- **Status:** In Progress
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
 - **Branch:** `feat/m2-ocr-reliability`
-- **Target:** `backend/ocr_engines.py`
-- **Scope:**
-  - Robust Tesseract binary & TESSDATA_PREFIX discovery for Windows/Linux.
-  - Explicit detection of Nepali ('nep') and English ('eng') traineddata availability.
-  - Graceful fallback for optional deep-learning engines (EasyOCR, TrOCR).
-  - Offline-safe model loading with zero runtime network calls.
-  - Actionable diagnostics for missing dependencies and traineddata.
+- **Files Modified:**
+  - `backend/ocr_engines.py`: dynamic discovery, actionable diagnostics (`diagnose_tesseract()`), graceful fallback, Devanagari preference scoring, `local_files_only=True` for offline safety.
+  - `backend/requirements.txt`: pinned `easyocr==1.7.2` and `transformers==4.57.6`.
+  - `tests/test_ocr.py`: wrapped manual diagnostics in `if __name__ == "__main__":` guard and eliminated hardcoded paths.
+  - `tests/test_ocr_engines.py`: 33 deterministic unit tests covering Tesseract detection, fallback cascades, Devanagari character counting, and offline enforcement.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_ocr_engines.py -v` -> 29 passed, 4 skipped (integration checks when system binary unconfigured), 0 failed.
+  - Zero network activity: verified `local_files_only=True` prevents downloads during OCR requests.
+  - Document understanding pipeline backwards compatibility preserved.
+
+---
+
+### Next Milestone 2 Tasks
+
+1. **[M2-TASK-02] Document Processor Extraction Resilience & Error Boundary:**
+   - Harden `backend/document_processor.py` against corrupted PDFs, zero-page uploads, and multi-page memory spikes.
+   - Enforce bounded memory streaming during rasterization and PyMuPDF text layer extraction.
