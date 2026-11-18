@@ -109,6 +109,23 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 
 ### Next Milestone 2 Tasks
 
-1. **[M2-TASK-03] Vector Store / Generation-Safe Reindexing Lock & Cleanups:**
-   - Audit `backend/document_processor.py` indexing operations, FAISS vector index serialization, and concurrency safety during re-indexing.
-   - Verify generation cleanup and stale segment pruning.
+#### [M2-TASK-03] Vector Store / Generation-Safe Reindexing Lock & Cleanups
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
+- **Branch:** `feat/m2-ocr-reliability`
+- **Files Modified:**
+  - `backend/vector_store.py`: Enhanced `VectorStore.remove_document` to automatically discover and purge all generation-specific artifacts (`{doc_id}_g*.faiss`, `{doc_id}_g*_meta.json`) in addition to flat legacy files, preventing disk leakages during document deletion after staged re-indexing.
+  - `tests/test_reindex_safety.py`: Added `test_T23_remove_document_purges_all_generation_artifacts` verifying complete multi-generation artifact removal.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_reindex_safety.py -v` -> 23/23 passed in 6.42s.
+  - Ingress safety: `pytest tests/test_upload_ingress.py -q` -> 35/35 passed in 6.84s.
+  - Pipeline ingestion: `pytest tests/test_pipeline.py -q` -> 13 passed, 1 skipped.
+
+---
+
+### Next Milestone 2 Tasks
+
+1. **[M2-TASK-04] Official Source Registry & Verified Domain Validation:**
+   - Audit `backend/official_sources.py` and URL validation for Nepal Government portals (`.gov.np`).
+   - Harden source registry against schema drift, invalid schemes, and lookalike domains.
