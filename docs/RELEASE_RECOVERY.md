@@ -92,8 +92,23 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 
 ---
 
+#### [M2-TASK-02] Document Processor Extraction Resilience & Error Boundary
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
+- **Branch:** `feat/m2-ocr-reliability`
+- **Files Modified:**
+  - `backend/document_processor.py`: Context-managed PDF and PIL document lifetime, corruption and zero-byte protection, password-protected PDF check, zero-page check, bounded `max_pages=200`, out-of-bounds page rendering guard returning `None`/`[]`/`""`, Unicode NFC normalization with stdlib `unicodedata`, and integrated OCR cascade fallback.
+  - `tests/test_document_processor.py`: 25 deterministic unit tests covering nonexistent files, empty/corrupt files, 0-page PDFs, max-page bounds, clean text extraction, out-of-bounds rendering, upload path neutralization, custom doc IDs, Unicode NFC normalization, and OCR fallback delegation.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_document_processor.py -v` -> 25/25 passed in 6.12s.
+  - Combined suite: `pytest tests/test_document_processor.py tests/test_ocr_engines.py tests/test_security.py -v` -> 68 passed, 0 failed.
+  - Zero unclosed file handles; robust bounds enforcement on all rendering methods.
+
+---
+
 ### Next Milestone 2 Tasks
 
-1. **[M2-TASK-02] Document Processor Extraction Resilience & Error Boundary:**
-   - Harden `backend/document_processor.py` against corrupted PDFs, zero-page uploads, and multi-page memory spikes.
-   - Enforce bounded memory streaming during rasterization and PyMuPDF text layer extraction.
+1. **[M2-TASK-03] Vector Store / Generation-Safe Reindexing Lock & Cleanups:**
+   - Audit `backend/document_processor.py` indexing operations, FAISS vector index serialization, and concurrency safety during re-indexing.
+   - Verify generation cleanup and stale segment pruning.
