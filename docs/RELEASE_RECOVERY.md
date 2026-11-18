@@ -48,21 +48,40 @@
 - **Status:** Complete (Prepared for Review)
 - **Date:** 2026-11-17
 - **Artifact:** `pr-body.md`
-- **Target:** `main` from branch `fix/security-test-suite-anyio` (Commit `e293713`)
-- **Summary:** Documented 26 changed files, diff statistics (+2790 / -514), key architectural & security changes, and test execution evidence.
+- **Target:** `main` from branch `fix/security-test-suite-anyio` (Final Head Commit `84e7a01`)
+- **Summary:** Documented 26 changed files, diff statistics (+2816 / -514), key architectural & security changes, and test execution evidence.
+
+#### [M1-TASK-05] PR Submission & CI Gate
+- **Status:** Complete (Verified Green on PR Head `84e7a01`)
+- **Date:** 2026-11-17 / 2026-11-18
+- **PR:** https://github.com/omwe77/hamiGenz/pull/3
+- **Head SHA:** `84e7a017afadd932306bf1c1d8fc8a4ce004a508`
+- **CI Run (`44121472236`):**
+  - Backend CI (Python 3.11): ✅ SUCCESS
+  - Frontend CI (Node 24): ✅ SUCCESS
+  - Docker Validation: ✅ SUCCESS
+  - Vercel Preview: ✅ SUCCESS
+- **Merge Gate:** Awaiting explicit owner approval before merging into `main`.
 
 ---
 
-### Remaining Milestone 1 Tasks
+### Milestone 1 Status: COMPLETE (Ready for Owner Merge Approval)
 
-1. **[M1-TASK-05] PR Submission & CI Gate:** ✅ COMPLETE
-   - **PR:** https://github.com/omwe77/hamiGenz/pull/3
-   - **CI Run:** `44120463217` — all 3 jobs green
-     - Backend CI (Python 3.11): ✅ SUCCESS
-     - Frontend CI (Node 24): ✅ SUCCESS
-     - Docker Validation: ✅ SUCCESS
-     - Vercel Preview: ✅ SUCCESS
-   - Ready for review and merge.
+All M1 quality gates, test suite migrations, and CI baselines are established and passing.
 
-2. **[M1-TASK-06] Nepali OCR Engine Fallback Hardening:**
-   - Address the documented Nepali traineddata path issue in `backend/ocr_engines.py` as noted in `.tasklist-hamigenz.md`.
+---
+
+## Milestone 2 (M2): Pipeline Reliability & OCR Hardening
+
+### Tasks
+
+#### [M2-TASK-01] Nepali OCR Engine Reliability & Fallback Hardening
+- **Status:** In Progress
+- **Branch:** `feat/m2-ocr-reliability`
+- **Target:** `backend/ocr_engines.py`
+- **Scope:**
+  - Robust Tesseract binary & TESSDATA_PREFIX discovery for Windows/Linux.
+  - Explicit detection of Nepali ('nep') and English ('eng') traineddata availability.
+  - Graceful fallback for optional deep-learning engines (EasyOCR, TrOCR).
+  - Offline-safe model loading with zero runtime network calls.
+  - Actionable diagnostics for missing dependencies and traineddata.
