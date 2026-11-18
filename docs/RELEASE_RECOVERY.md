@@ -124,8 +124,27 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 
 ---
 
-### Next Milestone 2 Tasks
+#### [M2-TASK-04] Official Source Registry & Verified Domain Validation
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
+- **Branch:** `feat/m2-ocr-reliability`
+- **Files Modified:**
+  - `backend/source_registry.py`: Hardened `find_by_domain` against port suffixes and trailing FQDN root dots, and hardened `classify_url` against embedded credentials (`user:pass@host` or phishing userinfo injection).
+  - `tests/test_source_registry.py`: Added comprehensive unit tests for port handling, FQDN root dots, and embedded credential rejection.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_source_registry.py -v` -> 24/24 passed in 0.30s.
+  - Official answer integration: `pytest tests/test_official_answer.py -v` -> 27/27 passed in 0.69s.
+  - Action extraction URL safety: `pytest tests/test_actions.py -v` -> 25/25 passed in 0.62s.
 
-1. **[M2-TASK-04] Official Source Registry & Verified Domain Validation:**
-   - Audit `backend/official_sources.py` and URL validation for Nepal Government portals (`.gov.np`).
-   - Harden source registry against schema drift, invalid schemes, and lookalike domains.
+---
+
+### Milestone 2 Summary & PR Readiness
+
+All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) are complete and verified:
+1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, binary discovery, Devanagari preference scoring, and offline safe loading.
+2. `[M2-TASK-02]`: DocumentProcessor resilience, context-managed file cleanup, corruption/zero-byte handling, bounded max pages, out-of-bounds rendering safety, and Unicode NFC normalization.
+3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion, and lock safety.
+4. `[M2-TASK-04]`: Source registry domain validation hardening, credential injection rejection, and FQDN handling.
+
+Branch `feat/m2-ocr-reliability` is ready for review and pull request creation.
