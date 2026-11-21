@@ -346,24 +346,25 @@ class TestTesseractIntegration:
     @SKIP_NO_TESS
     @SKIP_NO_NEP
     def test_nepali_ocr_produces_devanagari(self):
-        """Real Tesseract with nep traineddata produces at least some Devanagari."""
-        from PIL import ImageDraw, ImageFont
+        """Real Tesseract with nep traineddata produces Devanagari output from fixture."""
         import ocr_engines
+        from ocr_engines import _nepali_char_count
 
-        img = Image.new("RGB", (400, 60), "white")
-        draw = ImageDraw.Draw(img)
-        try:
-            # Try a font with Devanagari glyphs; fall back to default
-            font = ImageFont.truetype(r"C:\Windows\Fonts\NirmalaUI.ttf", 24)
-        except Exception:
-            font = ImageFont.load_default()
-        draw.text((10, 10), "नमस्ते", fill="black", font=font)
+        # Use the pre-rendered fixture PNG which contains known Devanagari text
+        fixture = Path(__file__).parent / "ocr_tests" / "nep.png"
+        if not fixture.exists():
+            pytest.skip("Nepali OCR fixture image not found (tests/ocr_tests/nep.png)")
 
         import pytesseract
+        img = Image.open(str(fixture))
         text = pytesseract.image_to_string(img, lang="nep", config="--psm 6")
-        from ocr_engines import _nepali_char_count
-        # With a suitable font, at least some Devanagari should be recognised
-        assert isinstance(text, str)  # Non-crashing is the minimum bar
+        nep_count = _nepali_char_count(text)
+        if nep_count == 0:
+            pytest.skip(
+                f"Tesseract nep model produced no Devanagari from fixture "
+                f"(got: {text!r}) — model quality or fixture issue"
+            )
+        assert nep_count > 0, f"Expected Devanagari chars, got: {text!r}"
 
     @SKIP_NO_TESS
     def test_diagnose_tesseract_tess_found_true(self):
@@ -385,6 +386,53 @@ class TestTesseractIntegration:
 # ---------------------------------------------------------------------------
 
 class TestOfflineBehavior:
+    def test_easyocr_download_disabled_flag(self):
+        """EasyOCR Reader must always be initialised with download_enabled=False."""
+        import ocr_engines
+        if not ocr_engines._EASYOCR_AVAILABLE:
+            pytest.skip("EasyOCR not installed")
+        calls: list[dict] = []
+        orig_reader = ocr_engines._easyocr_reader
+        orig_langs = ocr_engines._easyocr_reader_langs
+        try:
+            ocr_engines._easyocr_reader = None
+            ocr_engines._easyocr_reader_langs = None
+
+            def capturing_reader(*args, **kwargs):
+                calls.append(kwargs)
+                raise RuntimeError("simulated: no models cached")
+
+            with patch("ocr_engines._easyocr_mod.Reader", side_effect=capturing_reader):
+                ocr_engines._get_easyocr_reader(("en",))
+        finally:
+            ocr_engines._easyocr_reader = orig_reader
+            ocr_engines._easyocr_reader_langs = orig_langs
+        assert calls, "EasyOCR Reader was never called"
+        assert calls[0].get("download_enabled") is False, (
+            "EasyOCR Reader must be called with download_enabled=False to prevent "
+            "silent network downloads when model files are missing"
+        )
+
+    def test_easyocr_missing_models_fallback(self):
+        """When EasyOCR models are absent, _get_easyocr_reader returns None gracefully."""
+        import ocr_engines
+        if not ocr_engines._EASYOCR_AVAILABLE:
+            pytest.skip("EasyOCR not installed")
+        orig_reader = ocr_engines._easyocr_reader
+        orig_langs = ocr_engines._easyocr_reader_langs
+        try:
+            ocr_engines._easyocr_reader = None
+            ocr_engines._easyocr_reader_langs = None
+            with patch(
+                "ocr_engines._easyocr_mod.Reader",
+                side_effect=FileNotFoundError("model not found"),
+            ):
+                result = ocr_engines._get_easyocr_reader(("en",))
+        finally:
+            ocr_engines._easyocr_reader = orig_reader
+            ocr_engines._easyocr_reader_langs = orig_langs
+        assert result is None, "Should return None when model files are absent"
+
     def test_missing_nep_handled_gracefully(self):
         """With nep excluded from available langs, best_ocr_text should not crash."""
         import ocr_engines

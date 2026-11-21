@@ -57,6 +57,34 @@ def reset_rate_limits():
 
 
 @pytest.fixture(autouse=True)
+def isolated_upload_dir(tmp_path):
+    """Redirect main.UPLOAD_DIR to a fresh temp dir for each test.
+
+    Avoids permission issues in sandboxed environments and keeps tests hermetic.
+    Also patches the module-level UPLOAD_DIR / VECTORS_DIR names imported into
+    this test module so path constructions like `UPLOAD_DIR / "foo.pdf"` resolve
+    to the temp dir too.
+    """
+    import main as _main
+    import tests.test_reindex_safety as _self
+    new_up = tmp_path / "uploads"
+    new_vec = tmp_path / "vectors"
+    new_up.mkdir()
+    new_vec.mkdir()
+    old_up = _main.UPLOAD_DIR
+    old_vec = _main.VECTORS_DIR
+    _main.UPLOAD_DIR = new_up
+    _main.VECTORS_DIR = new_vec
+    _self.UPLOAD_DIR = new_up
+    _self.VECTORS_DIR = new_vec
+    yield new_up
+    _main.UPLOAD_DIR = old_up
+    _main.VECTORS_DIR = old_vec
+    _self.UPLOAD_DIR = old_up
+    _self.VECTORS_DIR = old_vec
+
+
+@pytest.fixture(autouse=True)
 def reset_reindex_locks():
     """Clear per-doc reindex locks between tests."""
     if hasattr(app.state, "_reindex_locks"):

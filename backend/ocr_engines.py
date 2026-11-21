@@ -82,17 +82,29 @@ _easyocr_reader_langs: Optional[tuple[str, ...]] = None
 
 
 def _get_easyocr_reader(langs: tuple[str, ...] = ("en", "ne")) -> Optional[object]:
-    """Return a shared EasyOCR reader, initialised lazily."""
+    """Return a shared EasyOCR reader, initialised lazily.
+
+    ``download_enabled=False`` is always passed so EasyOCR never triggers a
+    network download during an OCR request.  Models must be pre-cached before
+    first use::
+
+        python -c "import easyocr; easyocr.Reader(['en', 'ne'])"
+
+    That one-off command (run in a network-connected environment) populates
+    ``~/.EasyOCR/model/`` so production runs stay fully offline.
+    """
     global _easyocr_reader, _easyocr_reader_langs
     if _easyocr_reader is not None and _easyocr_reader_langs == langs:
         return _easyocr_reader
     if not _EASYOCR_AVAILABLE:
         return None
     try:
-        _easyocr_reader = _easyocr_mod.Reader(list(langs), gpu=False, verbose=False)
+        _easyocr_reader = _easyocr_mod.Reader(
+            list(langs), gpu=False, verbose=False, download_enabled=False
+        )
         _easyocr_reader_langs = langs
         return _easyocr_reader
-    except Exception as exc:
+    except (FileNotFoundError, RuntimeError, Exception) as exc:
         print(f"[ocr_engines] EasyOCR initialisation failed: {exc}")
         return None
 

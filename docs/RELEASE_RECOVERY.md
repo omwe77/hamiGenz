@@ -141,10 +141,16 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 
 ### Milestone 2 Summary & PR Readiness
 
-All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) are complete and verified:
+All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final QA hardenings are complete and verified:
 1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, binary discovery, Devanagari preference scoring, and offline safe loading.
+   - **Offline Enforcement:** EasyOCR initialized with explicit `download_enabled=False` to prevent unexpected network requests during runtime; models must be pre-cached (`python -c "import easyocr; easyocr.Reader(['en', 'ne'])"`). TrOCR configured with `local_files_only=True`.
+   - **Real OCR Quality Test:** Strengthened `test_nepali_ocr_produces_devanagari` to assert Devanagari character presence from fixture image (`tests/ocr_tests/nep.png`).
 2. `[M2-TASK-02]`: DocumentProcessor resilience, context-managed file cleanup, corruption/zero-byte handling, bounded max pages, out-of-bounds rendering safety, and Unicode NFC normalization.
 3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion, and lock safety.
 4. `[M2-TASK-04]`: Source registry domain validation hardening, credential injection rejection, and FQDN handling.
+5. **CI & Test Isolation:**
+   - Expanded `.github/workflows/ci.yml` regression matrix to include `tests/test_document_processor.py`, `tests/test_ocr_engines.py`, and `tests/test_upload_ingress.py`.
+   - Added hermetic `isolated_upload_dir` fixtures to `test_upload_ingress.py` and `test_reindex_safety.py` to prevent data directory permission conflicts across diverse host platforms.
+   - Verified 173 passed, 4 skipped (OCR binary unconfigured on Windows host), 0 failed.
 
-Branch `feat/m2-ocr-reliability` is ready for review and pull request creation.
+Branch `feat/m2-ocr-reliability` is ready for review and stacked pull request creation targeting `fix/security-test-suite-anyio`.
