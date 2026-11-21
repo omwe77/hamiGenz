@@ -199,17 +199,21 @@ class TestEasyOCRDegradation:
     def test_reader_init_exception_returns_empty(self):
         import ocr_engines
         orig_available = ocr_engines._EASYOCR_AVAILABLE
+        orig_mod = ocr_engines._easyocr_mod
         orig_reader = ocr_engines._easyocr_reader
         orig_langs = ocr_engines._easyocr_reader_langs
         try:
+            mock_mod = MagicMock()
+            mock_mod.Reader.side_effect = RuntimeError("no model")
             ocr_engines._EASYOCR_AVAILABLE = True
+            ocr_engines._easyocr_mod = mock_mod
             ocr_engines._easyocr_reader = None
             ocr_engines._easyocr_reader_langs = None
-            with patch.object(ocr_engines._easyocr_mod, "Reader", side_effect=RuntimeError("no model")):
-                result = ocr_engines._get_easyocr_reader(("en",))
-                assert result is None
+            result = ocr_engines._get_easyocr_reader(("en",))
+            assert result is None
         finally:
             ocr_engines._EASYOCR_AVAILABLE = orig_available
+            ocr_engines._easyocr_mod = orig_mod
             ocr_engines._easyocr_reader = orig_reader
             ocr_engines._easyocr_reader_langs = orig_langs
 
@@ -332,6 +336,54 @@ class TestBestOCRTextMocked:
             result = ocr_engines.best_ocr_text(_blank_image(), prefer="english")
         assert isinstance(result, str)
 
+    def test_easyocr_skipped_when_devanagari_threshold_met(self):
+        """When Tesseract returns >= 10 Devanagari chars, EasyOCR secondary pass is skipped."""
+        import ocr_engines
+        easyocr_mock = MagicMock()
+        with self._mock_langs(["eng", "nep"]), \
+             self._mock_tess("नेपाल सरकारको कार्यालय"), \
+             patch("ocr_engines._easyocr_ocr", easyocr_mock):
+            result = ocr_engines.best_ocr_text(_blank_image(), prefer="nepali")
+        assert "नेपाल" in result
+        assert easyocr_mock.call_count == 0, "EasyOCR should be skipped when threshold >= 10 is met"
+
+    def test_easyocr_runs_when_devanagari_insufficient(self):
+        """When Tesseract returns < 10 Devanagari chars, EasyOCR secondary pass runs."""
+        import ocr_engines
+        easyocr_mock = MagicMock(return_value="नेपाल सरकारको आधिकारिक सूचना")
+        with self._mock_langs(["eng", "nep"]), \
+             self._mock_tess("नेपा"), \
+             patch("ocr_engines._easyocr_ocr", easyocr_mock):
+            result = ocr_engines.best_ocr_text(_blank_image(), prefer="nepali")
+        assert easyocr_mock.call_count >= 1, "EasyOCR should run when Tesseract Devanagari is < 10 chars"
+        assert "सूचना" in result
+
+    def test_handwriting_preference_invokes_easyocr_and_trocr(self):
+        """prefer='handwriting' invokes both EasyOCR and TrOCR regardless of Tesseract char count."""
+        import ocr_engines
+        easyocr_mock = MagicMock(return_value="हस्तलिखित फारम")
+        trocr_mock = MagicMock(return_value="हस्तलिखित फारम ट्रओसीआर आधिकारिक दस्तावेज")
+        with self._mock_langs(["eng", "nep"]), \
+             self._mock_tess("हस्त"), \
+             patch("ocr_engines._easyocr_ocr", easyocr_mock), \
+             patch("ocr_engines._trocr_ocr", trocr_mock):
+            result = ocr_engines.best_ocr_text(_blank_image(), prefer="handwriting")
+        assert easyocr_mock.call_count >= 1
+        assert trocr_mock.call_count >= 1
+        assert "ट्रओसीआर" in result
+
+    def test_trocr_fallback_when_primary_engines_empty(self):
+        """When Tesseract and EasyOCR return empty text, TrOCR fallback is invoked."""
+        import ocr_engines
+        trocr_mock = MagicMock(return_value="TrOCR fallback result")
+        with self._mock_langs(["eng", "nep"]), \
+             self._mock_tess(""), \
+             patch("ocr_engines._easyocr_ocr", return_value=""), \
+             patch("ocr_engines._trocr_ocr", trocr_mock):
+            result = ocr_engines.best_ocr_text(_blank_image(), prefer="nepali")
+        assert trocr_mock.call_count >= 1
+        assert result == "TrOCR fallback result"
+
 
 # ---------------------------------------------------------------------------
 # INTEGRATION: Real Tesseract (skipped when not configured)
@@ -362,20 +414,41 @@ class TestTesseractIntegration:
     def test_nepali_ocr_produces_devanagari(self):
         """Real Tesseract with nep traineddata produces Devanagari output from fixture.
 
-        Must assert actual Devanagari character presence without converting
-        zero-character failures into passing skips.
+        Asserts expected transcription for tests/ocr_tests/nep.png using NFC Unicode
+        normalization and computes Character Error Rate (CER) via Levenshtein distance.
         """
+        import unicodedata
         from ocr_engines import _nepali_char_count
 
-        # Use the pre-rendered fixture PNG which contains known Devanagari text
         fixture = Path(__file__).parent / "ocr_tests" / "nep.png"
         assert fixture.exists(), "Nepali OCR fixture image missing (tests/ocr_tests/nep.png)"
 
         import pytesseract
         img = Image.open(str(fixture))
-        text = pytesseract.image_to_string(img, lang="nep", config="--psm 6")
-        nep_count = _nepali_char_count(text)
-        assert nep_count > 0, f"Expected Devanagari chars from fixture, got: {text!r}"
+        raw_text = pytesseract.image_to_string(img, lang="nep", config="--psm 6")
+        normalized = unicodedata.normalize("NFC", raw_text).strip()
+
+        # Known expected transcription rendered in fixture
+        expected = "नेपाल सरकार"
+        assert normalized == expected, (
+            f"Expected transcription {expected!r}, got {normalized!r}"
+        )
+
+        # Calculate exact Character Error Rate (CER) via Levenshtein edit distance
+        ref = expected
+        hyp = normalized
+        d = [[0] * (len(hyp) + 1) for _ in range(len(ref) + 1)]
+        for i in range(len(ref) + 1):
+            d[i][0] = i
+        for j in range(len(hyp) + 1):
+            d[0][j] = j
+        for i in range(1, len(ref) + 1):
+            for j in range(1, len(hyp) + 1):
+                cost = 0 if ref[i - 1] == hyp[j - 1] else 1
+                d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+        cer = d[len(ref)][len(hyp)] / max(len(ref), 1)
+        assert cer == 0.0, f"Expected CER 0.0, got {cer}"
+        assert _nepali_char_count(normalized) >= 5
 
     @SKIP_NO_TESS
     def test_diagnose_tesseract_tess_found_true(self):
@@ -400,22 +473,28 @@ class TestOfflineBehavior:
     def test_easyocr_download_disabled_flag(self):
         """EasyOCR Reader must always be initialised with download_enabled=False."""
         import ocr_engines
-        if not ocr_engines._EASYOCR_AVAILABLE:
-            pytest.skip("EasyOCR not installed")
-        calls: list[dict] = []
+        orig_available = ocr_engines._EASYOCR_AVAILABLE
+        orig_mod = ocr_engines._easyocr_mod
         orig_reader = ocr_engines._easyocr_reader
         orig_langs = ocr_engines._easyocr_reader_langs
         try:
-            ocr_engines._easyocr_reader = None
-            ocr_engines._easyocr_reader_langs = None
+            calls: list[dict] = []
 
             def capturing_reader(*args, **kwargs):
                 calls.append(kwargs)
                 raise RuntimeError("simulated: no models cached")
 
-            with patch("ocr_engines._easyocr_mod.Reader", side_effect=capturing_reader):
-                ocr_engines._get_easyocr_reader(("en",))
+            mock_mod = MagicMock()
+            mock_mod.Reader = capturing_reader
+            ocr_engines._EASYOCR_AVAILABLE = True
+            ocr_engines._easyocr_mod = mock_mod
+            ocr_engines._easyocr_reader = None
+            ocr_engines._easyocr_reader_langs = None
+
+            ocr_engines._get_easyocr_reader(("en",))
         finally:
+            ocr_engines._EASYOCR_AVAILABLE = orig_available
+            ocr_engines._easyocr_mod = orig_mod
             ocr_engines._easyocr_reader = orig_reader
             ocr_engines._easyocr_reader_langs = orig_langs
         assert calls, "EasyOCR Reader was never called"
@@ -427,19 +506,21 @@ class TestOfflineBehavior:
     def test_easyocr_missing_models_fallback(self):
         """When EasyOCR models are absent, _get_easyocr_reader returns None gracefully."""
         import ocr_engines
-        if not ocr_engines._EASYOCR_AVAILABLE:
-            pytest.skip("EasyOCR not installed")
+        orig_available = ocr_engines._EASYOCR_AVAILABLE
+        orig_mod = ocr_engines._easyocr_mod
         orig_reader = ocr_engines._easyocr_reader
         orig_langs = ocr_engines._easyocr_reader_langs
         try:
+            mock_mod = MagicMock()
+            mock_mod.Reader.side_effect = FileNotFoundError("model not found")
+            ocr_engines._EASYOCR_AVAILABLE = True
+            ocr_engines._easyocr_mod = mock_mod
             ocr_engines._easyocr_reader = None
             ocr_engines._easyocr_reader_langs = None
-            with patch(
-                "ocr_engines._easyocr_mod.Reader",
-                side_effect=FileNotFoundError("model not found"),
-            ):
-                result = ocr_engines._get_easyocr_reader(("en",))
+            result = ocr_engines._get_easyocr_reader(("en",))
         finally:
+            ocr_engines._EASYOCR_AVAILABLE = orig_available
+            ocr_engines._easyocr_mod = orig_mod
             ocr_engines._easyocr_reader = orig_reader
             ocr_engines._easyocr_reader_langs = orig_langs
         assert result is None, "Should return None when model files are absent"

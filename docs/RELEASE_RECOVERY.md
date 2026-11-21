@@ -55,13 +55,21 @@
 - **Status:** Complete (Verified Green on PR Head `84e7a01`)
 - **Date:** 2026-11-17 / 2026-11-18
 - **PR:** https://github.com/omwe77/hamiGenz/pull/3
-- **Head SHA:** `84e7a017afadd932306bf1c1d8fc8a4ce004a508`
+- **Historical Head SHA:** `84e7a017afadd932306bf1c1d8fc8a4ce004a508`
 - **CI Run (`44121472236`):**
   - Backend CI (Python 3.11): ✅ SUCCESS
   - Frontend CI (Node 24): ✅ SUCCESS
   - Docker Validation: ✅ SUCCESS
   - Vercel Preview: ✅ SUCCESS
 - **Merge Gate:** Awaiting explicit owner approval before merging into `main`.
+
+#### [M1-AMENDMENT] Latest Status Amendment & Head Verification
+- **Date:** 2026-11-21
+- **PR:** https://github.com/omwe77/hamiGenz/pull/3
+- **Target Branch:** `main`
+- **Current Head SHA:** `17341d2ffa55ae368ad370715050db5050bbd8f4` (amended from initial head `84e7a01`)
+- **CI Status:** Green across Backend CI, Frontend CI, Docker, and Vercel.
+- **PR State:** OPEN, unmerged. Awaiting explicit owner approval.
 
 ---
 
@@ -144,15 +152,16 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final QA hardenings are complete and verified:
 1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, binary discovery, Devanagari preference scoring, and offline safe loading.
    - **Offline Enforcement:** EasyOCR initialized with explicit `download_enabled=False` to prevent unexpected network requests during runtime; models must be pre-cached (`python -c "import easyocr; easyocr.Reader(['en', 'ne'])"`). TrOCR configured with `local_files_only=True`.
-   - **Performance & Cascade Strategy:** Hardened `best_ocr_text` to execute EasyOCR only when Tesseract extracts insufficient Devanagari (< 10 chars) or when handwriting is explicitly preferred, eliminating redundant PyTorch CPU latency when Tesseract succeeds. Enabled TrOCR fallback when primary engines produce no text.
-   - **Real OCR Quality Test:** Pre-rendered reference fixture image (`tests/ocr_tests/nep.png`) with crisp Devanagari glyphs; updated `test_nepali_ocr_produces_devanagari` to assert Devanagari output presence without converting failures into skips.
+   - **Performance & Cascade Strategy:** Hardened `best_ocr_text` to execute EasyOCR only when Tesseract extracts insufficient Devanagari (< 10 chars) or when handwriting is explicitly preferred, eliminating redundant PyTorch CPU latency when Tesseract succeeds. Enabled TrOCR fallback when primary engines produce no text. Added tests confirming threshold skipping, fallback execution, and handwriting behavior.
+   - **Real OCR Quality Test:** Pre-rendered reference fixture image (`tests/ocr_tests/nep.png`) with verified Devanagari glyphs; updated `test_nepali_ocr_produces_devanagari` to assert the exact transcription (`"नेपाल सरकार"`) with NFC normalization and verify 0.0 Character Error Rate (CER).
 2. `[M2-TASK-02]`: DocumentProcessor resilience, context-managed file cleanup, corruption/zero-byte handling, bounded max pages, out-of-bounds rendering safety, and Unicode NFC normalization.
-3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion, and lock safety.
-4. `[M2-TASK-04]`: Source registry domain validation hardening, credential injection rejection, and FQDN handling.
-5. **CI Trigger & Test Isolation:**
+3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion (`{doc_id}_g*.faiss` and `{doc_id}_g*_meta.json` plus legacy flat files), and lock safety.
+4. `[M2-TASK-04]`: Source registry domain validation (`find_by_domain` handling ports and trailing root dots) and credential injection defense (`classify_url` safely rejecting userinfo `user:pass@host`).
+5. **CI Trigger, Test Isolation & Full Regression:**
    - Expanded `.github/workflows/ci.yml` `pull_request` branch trigger to support stacked branches (`main`, `dev`, `chore/**`, `feat/**`, `fix/**`).
    - Expanded regression matrix to include `tests/test_document_processor.py`, `tests/test_ocr_engines.py`, and `tests/test_upload_ingress.py`.
    - Added hermetic `isolated_upload_dir` fixtures to `test_upload_ingress.py` and `test_reindex_safety.py`.
-   - Verified 35/35 passing in `test_ocr_engines.py` (0 skipped), 576 tests collected across the full codebase.
+   - **OCR Test Suite:** `pytest tests/test_ocr_engines.py -v` -> **39 passed, 0 skipped, 0 failed** in 6.12s.
+   - **Full Codebase Regression:** `pytest -q` -> **579 passed, 1 skipped, 10 warnings** across 580 collected tests in 296.84s (Python 3.12.10, Windows 11).
 
-Branch `feat/m2-ocr-reliability` is submitted as stacked PR #4 targeting `fix/security-test-suite-anyio`.
+Branch `feat/m2-ocr-reliability` is submitted as stacked PR #4 targeting `fix/security-test-suite-anyio`. Awaiting explicit owner approval.
