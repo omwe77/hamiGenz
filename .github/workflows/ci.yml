@@ -166,7 +166,16 @@ jobs:
       - name: Test container startup & healthcheck
         run: |
           docker run -d --name test-app -p 8000:8000 -e PORT=8000 hamigenz-backend:ci
-          sleep 6
-          docker ps
-          curl -f http://localhost:8000/health || (docker logs test-app && exit 1)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health; then
+              echo "PASS: /health returned HTTP 200 OK"
+              docker stop test-app
+              exit 0
+            fi
+            echo "Waiting for container startup ($i/30)..."
+            sleep 2
+          done
+          echo "ERROR: Container failed to become healthy within 60s"
+          docker logs test-app
           docker stop test-app
+          exit 1
