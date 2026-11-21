@@ -32,7 +32,7 @@ class TestUploadFilenameNeutralization:
     def test_traversal_filename_stays_in_upload_dir(self):
         name, doc_id, filepath = self._saved_name("../../etc/passwd.pdf")
         assert filepath.startswith(os.path.abspath(self.tmp))
-        assert "/" not in name.replace("\\", "/").split("/")[-1] or True
+        assert "/" not in name and "\\" not in name
         # The saved name must be the generated doc_id, not the user's path
         assert name.startswith(doc_id)
 

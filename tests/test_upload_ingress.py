@@ -93,6 +93,7 @@ def _mock_app_state():
     app.state.metadata.get_reindex_generation.return_value = 0
     app.state.metadata.list_documents.return_value = [{"doc_id": "testdoc", "session_id": "sess1"}]
     # Fresh semaphores for each test
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     if hasattr(app.state, "_upload_admission_sem"):
         del app.state._upload_admission_sem
     if hasattr(app.state, "_staged_backlog_sem"):
@@ -238,6 +239,41 @@ class TestMaxBodySizeMiddleware:
 # ─── Integration tests (httpx ASGITransport, no lifespan) ────────────────────
 
 class TestUploadIngress:
+
+    # T3 — Streaming chunked body over 52 MiB to /upload endpoint yields 413, not 400
+    def test_T3_streaming_body_over_limit_endpoint_yields_413(self):
+        _mock_app_state()
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/upload",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"multipart/form-data; boundary=----WebKitFormBoundaryX"),
+                (b"x-session-token", b"sess-t3-stream"),
+            ],
+            "app": app,
+        }
+        prefix = b'------WebKitFormBoundaryX\r\nContent-Disposition: form-data; name="file"; filename="test.pdf"\r\nContent-Type: application/pdf\r\n\r\n'
+        chunk = b"x" * (64 * 1024)
+        chunks = [prefix] + [chunk] * ((_UPLOAD_BODY_LIMIT // (64 * 1024)) + 2)
+        q = list(chunks)
+
+        async def receive():
+            if q:
+                c = q.pop(0)
+                return {"type": "http.request", "body": c, "more_body": bool(q)}
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        status = None
+
+        async def send(msg):
+            nonlocal status
+            if msg["type"] == "http.response.start":
+                status = msg.get("status")
+
+        asyncio.run(app(scope, receive, send))
+        assert status == 413
 
     # T11 — Valid small PDF accepted end-to-end
     def test_T11_valid_pdf_accepted(self):

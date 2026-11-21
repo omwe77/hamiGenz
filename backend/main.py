@@ -865,7 +865,7 @@ async def upload_document(
         form = None
         try:
             form = await parser.parse()
-        except HTTPException:
+        except (_BodyTooLargeError, HTTPException):
             raise
         except MultiPartException as mpe:
             raise HTTPException(400, f"Malformed multipart form data: {mpe.message}") from mpe
@@ -898,6 +898,7 @@ async def upload_document(
             ".tif": b"II*\x00",
         }
         _CHUNK = 65536  # 64 KiB
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         staging_path = UPLOAD_DIR / f".tmp_{uuid.uuid4().hex}"
         total_file_bytes = 0
         try:
