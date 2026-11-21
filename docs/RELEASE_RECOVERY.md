@@ -48,20 +48,27 @@
 - **Status:** Complete (Prepared for Review)
 - **Date:** 2026-11-17
 - **Artifact:** `pr-body.md`
-- **Target:** `main` from branch `fix/security-test-suite-anyio` (Final Head Commit `84e7a01`)
+- **Target:** `main` from branch `fix/security-test-suite-anyio` (Final Head Commit `3ade165`)
 - **Summary:** Documented 26 changed files, diff statistics (+2816 / -514), key architectural & security changes, and test execution evidence.
 
 #### [M1-TASK-05] PR Submission & CI Gate
-- **Status:** Complete (Verified Green on PR Head `84e7a01`)
-- **Date:** 2026-11-17 / 2026-11-18
+- **Status:** Complete (Verified Green; defect-fix commit `3ade165` added 2026-11-21)
+- **Date:** 2026-11-17 / 2026-11-21
 - **PR:** https://github.com/omwe77/hamiGenz/pull/3
-- **Head SHA:** `84e7a017afadd932306bf1c1d8fc8a4ce004a508`
-- **CI Run (`44121472236`):**
+- **Head SHA:** `3ade165` (`17341d2` → `3ade165`: security/ingress defect fixes applied)
+- **Previous CI Run (`44121472236`) on `84e7a017`:**
   - Backend CI (Python 3.11): ✅ SUCCESS
   - Frontend CI (Node 24): ✅ SUCCESS
   - Docker Validation: ✅ SUCCESS
   - Vercel Preview: ✅ SUCCESS
-- **Merge Gate:** Awaiting explicit owner approval before merging into `main`.
+- **Local Verification on `3ade165`:**
+  - `pytest tests/test_security.py tests/test_upload_ingress.py`: 46/46 passed (57.59s, Python 3.12.10 / Windows)
+- **Defects Fixed:**
+  - [P2] `_BodyTooLargeError` re-raised from `upload_document` → 413 preserved (not swallowed into 400)
+  - [P2] `UPLOAD_DIR.mkdir()` before staging file open → no FileNotFoundError on clean checkouts
+  - [P3] Vacuous `or True` removed from traversal assertion in `test_security.py`
+  - [P3] `test_T3_streaming_body_over_limit_endpoint_yields_413` added to verify endpoint-level 413
+- **Merge Gate:** Awaiting explicit owner approval and CI confirmation on `3ade165` before merging into `main`.
 
 ---
 
