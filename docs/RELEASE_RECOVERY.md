@@ -66,6 +66,7 @@
 - **Defects Fixed:**
   - [P2] `_BodyTooLargeError` re-raised from `upload_document` → 413 preserved (not swallowed into 400)
   - [P2] `UPLOAD_DIR.mkdir()` before staging file open → no FileNotFoundError on clean checkouts
+  - [P2] Docker Non-Root Hardening: Created dedicated `hamigenz` user (UID/GID 10001), assigned `/app` and `/home/hamigenz` ownership, configured `USER 10001:10001`, and enhanced CI to test identity, writable directories, and startup
   - [P3] Vacuous `or True` removed from traversal assertion in `test_security.py`
   - [P3] `test_T3_streaming_body_over_limit_endpoint_yields_413` added to verify endpoint-level 413
 - **Merge Gate:** Awaiting explicit owner approval and CI confirmation on `3ade165` before merging into `main`.

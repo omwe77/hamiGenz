@@ -140,3 +140,33 @@ jobs:
         run: |
           docker build -t hamigenz-backend:ci .
           docker image inspect hamigenz-backend:ci --format 'Image Size: {{.Size}} bytes'
+
+      - name: Verify non-root container identity & writable directories
+        run: |
+          echo "=== Container Identity ==="
+          docker run --rm hamigenz-backend:ci id
+          docker run --rm hamigenz-backend:ci sh -c 'test "$(id -u)" = "10001" && echo "PASS: UID is 10001 (non-root)"'
+          docker run --rm hamigenz-backend:ci sh -c 'test "$(id -g)" = "10001" && echo "PASS: GID is 10001 (non-root)"'
+
+          echo "=== Writable Directory Verification ==="
+          docker run --rm hamigenz-backend:ci sh -c '
+            touch /app/backend/data/uploads/.test_write && rm /app/backend/data/uploads/.test_write && echo "PASS: uploads writable"
+            touch /app/backend/data/vectors/.test_write && rm /app/backend/data/vectors/.test_write && echo "PASS: vectors writable"
+            touch /app/backend/data/huggingface/.test_write && rm /app/backend/data/huggingface/.test_write && echo "PASS: huggingface writable"
+          '
+
+          echo "=== OCR & Python Dependencies Verification ==="
+          docker run --rm hamigenz-backend:ci python -c '
+          import pytesseract
+          import torch
+          print("PASS: PyTorch version:", torch.__version__)
+          print("PASS: Tesseract CLI available:", pytesseract.get_tesseract_version())
+          '
+
+      - name: Test container startup & healthcheck
+        run: |
+          docker run -d --name test-app -p 8000:8000 -e PORT=8000 hamigenz-backend:ci
+          sleep 6
+          docker ps
+          curl -f http://localhost:8000/health || (docker logs test-app && exit 1)
+          docker stop test-app
