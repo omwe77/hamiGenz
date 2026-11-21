@@ -268,9 +268,13 @@ def best_ocr_text(
 
     Strategy:
       1. Run Tesseract (primary, fast, no GPU).
-      2. If result has little Devanagari and prefer is 'nepali'/'handwriting',
-         also run EasyOCR and keep whichever produced more Devanagari chars.
-      3. TrOCR is only tried for prefer='handwriting' or if both others failed.
+      2. If result has insufficient Devanagari (< 10 chars) or prefer is
+         'handwriting', run EasyOCR and keep whichever produced more Devanagari.
+         If Tesseract already produced good Devanagari (>= 10 chars), skip EasyOCR
+         to avoid heavy PyTorch CPU/latency overhead.
+      3. TrOCR is tried for prefer='handwriting' or as a fallback if both
+         Tesseract and EasyOCR failed to produce any text.
+      4. If still empty, attempt English-only EasyOCR as last resort.
 
     Args:
         img: PIL Image to OCR.
@@ -292,18 +296,21 @@ def best_ocr_text(
     best_text = tesseract_text
     best_nepali = _nepali_char_count(tesseract_text)
 
-    # EasyOCR secondary pass for Devanagari content
-    if prefer in ("nepali", "handwriting"):
+    # EasyOCR secondary pass for Devanagari content when Tesseract output is weak (< 10 chars)
+    # or when handwriting is explicitly preferred.
+    if prefer == "handwriting" or (prefer == "nepali" and best_nepali < 10):
         easyocr_text = _easyocr_ocr(img)
         easy_nepali = _nepali_char_count(easyocr_text)
         if easy_nepali > best_nepali:
             best_text = easyocr_text
             best_nepali = easy_nepali
 
-    # TrOCR handwriting specialist (slower, only on request)
-    if prefer == "handwriting":
+    # TrOCR: tried for handwriting requests or as fallback when both Tesseract & EasyOCR yielded no text
+    if prefer == "handwriting" or not best_text.strip():
         trocr_text = _trocr_ocr(img)
-        if _nepali_char_count(trocr_text) > best_nepali and trocr_text:
+        if trocr_text and _nepali_char_count(trocr_text) > best_nepali:
+            best_text = trocr_text
+        elif trocr_text and not best_text.strip():
             best_text = trocr_text
 
     # Last resort: EasyOCR English-only

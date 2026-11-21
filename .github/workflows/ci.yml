@@ -11,6 +11,10 @@ on:
   pull_request:
     branches:
       - main
+      - dev
+      - 'chore/**'
+      - 'feat/**'
+      - 'fix/**'
   workflow_dispatch:
 
 # Enforce least-privilege token permissions

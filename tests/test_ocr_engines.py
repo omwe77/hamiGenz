@@ -28,6 +28,20 @@ if str(_BACKEND) not in sys.path:
 # Helpers
 # ---------------------------------------------------------------------------
 
+try:
+    from document_processor import (
+        TESSERACT_BIN as _DEFAULT_BIN,
+        PROJECT_TESSDATA as _DEFAULT_TESSDATA,
+    )
+    import pytesseract
+    if Path(str(_DEFAULT_BIN)).exists():
+        pytesseract.pytesseract.tesseract_cmd = str(_DEFAULT_BIN)
+    if _DEFAULT_TESSDATA.exists():
+        os.environ.setdefault("TESSDATA_PREFIX", str(_DEFAULT_TESSDATA))
+except ImportError:
+    pass
+
+
 def _blank_image(width: int = 200, height: int = 50) -> Image.Image:
     return Image.new("RGB", (width, height), color="white")
 
@@ -346,25 +360,22 @@ class TestTesseractIntegration:
     @SKIP_NO_TESS
     @SKIP_NO_NEP
     def test_nepali_ocr_produces_devanagari(self):
-        """Real Tesseract with nep traineddata produces Devanagari output from fixture."""
-        import ocr_engines
+        """Real Tesseract with nep traineddata produces Devanagari output from fixture.
+
+        Must assert actual Devanagari character presence without converting
+        zero-character failures into passing skips.
+        """
         from ocr_engines import _nepali_char_count
 
         # Use the pre-rendered fixture PNG which contains known Devanagari text
         fixture = Path(__file__).parent / "ocr_tests" / "nep.png"
-        if not fixture.exists():
-            pytest.skip("Nepali OCR fixture image not found (tests/ocr_tests/nep.png)")
+        assert fixture.exists(), "Nepali OCR fixture image missing (tests/ocr_tests/nep.png)"
 
         import pytesseract
         img = Image.open(str(fixture))
         text = pytesseract.image_to_string(img, lang="nep", config="--psm 6")
         nep_count = _nepali_char_count(text)
-        if nep_count == 0:
-            pytest.skip(
-                f"Tesseract nep model produced no Devanagari from fixture "
-                f"(got: {text!r}) — model quality or fixture issue"
-            )
-        assert nep_count > 0, f"Expected Devanagari chars, got: {text!r}"
+        assert nep_count > 0, f"Expected Devanagari chars from fixture, got: {text!r}"
 
     @SKIP_NO_TESS
     def test_diagnose_tesseract_tess_found_true(self):

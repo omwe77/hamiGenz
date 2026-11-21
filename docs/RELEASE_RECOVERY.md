@@ -144,13 +144,15 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final QA hardenings are complete and verified:
 1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, binary discovery, Devanagari preference scoring, and offline safe loading.
    - **Offline Enforcement:** EasyOCR initialized with explicit `download_enabled=False` to prevent unexpected network requests during runtime; models must be pre-cached (`python -c "import easyocr; easyocr.Reader(['en', 'ne'])"`). TrOCR configured with `local_files_only=True`.
-   - **Real OCR Quality Test:** Strengthened `test_nepali_ocr_produces_devanagari` to assert Devanagari character presence from fixture image (`tests/ocr_tests/nep.png`).
+   - **Performance & Cascade Strategy:** Hardened `best_ocr_text` to execute EasyOCR only when Tesseract extracts insufficient Devanagari (< 10 chars) or when handwriting is explicitly preferred, eliminating redundant PyTorch CPU latency when Tesseract succeeds. Enabled TrOCR fallback when primary engines produce no text.
+   - **Real OCR Quality Test:** Pre-rendered reference fixture image (`tests/ocr_tests/nep.png`) with crisp Devanagari glyphs; updated `test_nepali_ocr_produces_devanagari` to assert Devanagari output presence without converting failures into skips.
 2. `[M2-TASK-02]`: DocumentProcessor resilience, context-managed file cleanup, corruption/zero-byte handling, bounded max pages, out-of-bounds rendering safety, and Unicode NFC normalization.
 3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion, and lock safety.
 4. `[M2-TASK-04]`: Source registry domain validation hardening, credential injection rejection, and FQDN handling.
-5. **CI & Test Isolation:**
-   - Expanded `.github/workflows/ci.yml` regression matrix to include `tests/test_document_processor.py`, `tests/test_ocr_engines.py`, and `tests/test_upload_ingress.py`.
-   - Added hermetic `isolated_upload_dir` fixtures to `test_upload_ingress.py` and `test_reindex_safety.py` to prevent data directory permission conflicts across diverse host platforms.
-   - Verified 173 passed, 4 skipped (OCR binary unconfigured on Windows host), 0 failed.
+5. **CI Trigger & Test Isolation:**
+   - Expanded `.github/workflows/ci.yml` `pull_request` branch trigger to support stacked branches (`main`, `dev`, `chore/**`, `feat/**`, `fix/**`).
+   - Expanded regression matrix to include `tests/test_document_processor.py`, `tests/test_ocr_engines.py`, and `tests/test_upload_ingress.py`.
+   - Added hermetic `isolated_upload_dir` fixtures to `test_upload_ingress.py` and `test_reindex_safety.py`.
+   - Verified 35/35 passing in `test_ocr_engines.py` (0 skipped), 576 tests collected across the full codebase.
 
-Branch `feat/m2-ocr-reliability` is ready for review and stacked pull request creation targeting `fix/security-test-suite-anyio`.
+Branch `feat/m2-ocr-reliability` is submitted as stacked PR #4 targeting `fix/security-test-suite-anyio`.
