@@ -48,9 +48,11 @@ def get_source(source_id: str) -> dict | None:
 def find_by_domain(domain: str) -> dict | None:
     """Look up a curated source by hostname (subdomains count)."""
     host = (domain or "").lower().strip()
+    host = host.split(":")[0]  # strip port if present
+    host = host.rstrip(".")    # strip trailing FQDN root dot
     host = host.removeprefix("www.")
     for s in all_sources():
-        reg = s["domain"].lower().removeprefix("www.")
+        reg = s["domain"].lower().rstrip(".").removeprefix("www.")
         if host == reg or host.endswith("." + reg):
             return dict(s)
     return None
@@ -69,6 +71,8 @@ def classify_url(url: str) -> dict:
     except Exception:
         return {"classification": "unverified"}
     if parsed.scheme not in ("http", "https"):
+        return {"classification": "unverified"}
+    if parsed.username or parsed.password:
         return {"classification": "unverified"}
     src = find_by_domain(parsed.hostname or "")
     if not src:

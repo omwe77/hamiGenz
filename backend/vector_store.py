@@ -419,18 +419,27 @@ class VectorStore:
                 print(f"[VectorStore] swap_document: could not remove {path}: {exc}")
 
     def remove_document(self, doc_id: str) -> None:
-        """Remove a document's index and metadata."""
+        """Remove a document's index and metadata across all generations."""
         if doc_id in self._doc_indices:
             del self._doc_indices[doc_id]
             self._save_registry()
 
-        index_path = self.vectors_dir / f"{doc_id}.faiss"
-        if index_path.exists():
-            index_path.unlink()
+        # Remove unversioned flat files
+        for suffix in (f"{doc_id}.faiss", f"{doc_id}_meta.json"):
+            p = self.vectors_dir / suffix
+            if p.exists():
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
-        meta_path = self.vectors_dir / f"{doc_id}_meta.json"
-        if meta_path.exists():
-            meta_path.unlink()
+        # Purge any generation-specific vector files ({doc_id}_g*.faiss, {doc_id}_g*_meta.json)
+        for p in self.vectors_dir.glob(f"{doc_id}_g*"):
+            if p.name.endswith(".faiss") or p.name.endswith("_meta.json"):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 class ProcessingTimeoutError(RuntimeError):

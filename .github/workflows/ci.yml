@@ -11,6 +11,10 @@ on:
   pull_request:
     branches:
       - main
+      - dev
+      - 'chore/**'
+      - 'feat/**'
+      - 'fix/**'
   workflow_dispatch:
 
 # Enforce least-privilege token permissions
@@ -78,6 +82,9 @@ jobs:
             tests/test_pipeline.py::TestTextCleaner \
             tests/test_pipeline.py::TestChunker \
             tests/test_offline_embedding_mock.py \
+            tests/test_document_processor.py \
+            tests/test_ocr_engines.py \
+            tests/test_upload_ingress.py \
             -v
 
       - name: Run Phase 1.1 security tests under default rate limits

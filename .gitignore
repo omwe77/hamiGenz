@@ -80,7 +80,8 @@ frontend/.env.local
 
 # Testing scratch data
 tests/data/
-tests/ocr_tests/
+tests/ocr_tests/*
+!tests/ocr_tests/nep.png
 tests/tmp_graph/
 tests/tmp_search/
 
