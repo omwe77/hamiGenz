@@ -149,6 +149,26 @@ jobs:
           docker build -t hamigenz-backend:ci .
           docker image inspect hamigenz-backend:ci --format 'Image Size: {{.Size}} bytes'
 
+      - name: Pre-provision embedding model cache (host)
+        # Download sentence-transformers model on the CI runner host before starting the
+        # application container. This separates the network-dependent download (slow, variable)
+        # from application startup (deterministic). The provisioned cache is then volume-mounted
+        # into the container and startup runs with HF_HUB_OFFLINE=1 — no network at runtime.
+        run: |
+          pip install --quiet sentence-transformers==3.4.1
+          python - <<'EOF'
+          import os
+          from sentence_transformers import SentenceTransformer
+          cache_dir = os.path.abspath("ci-hf-cache")
+          os.makedirs(cache_dir, exist_ok=True)
+          print(f"[CI] Provisioning model to {cache_dir}")
+          m = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2", cache_folder=cache_dir)
+          dim = m.get_sentence_embedding_dimension()
+          print(f"[CI] Model ready. dim={dim}")
+          assert dim == 384, f"Unexpected dim: {dim}"
+          EOF
+          echo "MODEL_CACHE_DIR=$(pwd)/ci-hf-cache" >> $GITHUB_ENV
+
       - name: Verify non-root container identity & writable directories
         run: |
           echo "=== Container Identity ==="
@@ -171,19 +191,30 @@ jobs:
           print("PASS: Tesseract CLI available:", pytesseract.get_tesseract_version())
           '
 
-      - name: Test container startup & healthcheck
+      - name: Test container startup & healthcheck (offline model, non-root)
+        # Mount the host-provisioned model cache into the container's HF_HOME.
+        # HF_HUB_OFFLINE=1 proves startup does not require a network download.
+        # Container still runs as UID 10001; cache dir is readable by all.
         run: |
-          docker run -d --name test-app -p 8000:8000 -e PORT=8000 hamigenz-backend:ci
-          for i in $(seq 1 60); do
+          chmod -R a+rX "$MODEL_CACHE_DIR"
+          docker run -d \
+            --name test-app \
+            -p 8000:8000 \
+            -e PORT=8000 \
+            -e HF_HUB_OFFLINE=1 \
+            -e TRANSFORMERS_OFFLINE=1 \
+            -v "$MODEL_CACHE_DIR":/app/backend/data/huggingface:ro \
+            hamigenz-backend:ci
+          for i in $(seq 1 30); do
             if curl -sf http://localhost:8000/health; then
               echo "PASS: /health returned HTTP 200 OK"
               docker stop test-app
               exit 0
             fi
-            echo "Waiting for container startup ($i/60)..."
+            echo "Waiting for container startup ($i/30)..."
             sleep 2
           done
-          echo "ERROR: Container failed to become healthy within 120s"
+          echo "ERROR: Container failed to become healthy within 60s"
           docker logs test-app
           docker stop test-app
           exit 1
