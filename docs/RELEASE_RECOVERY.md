@@ -48,34 +48,36 @@
 - **Status:** Complete (Prepared for Review)
 - **Date:** 2026-11-17
 - **Artifact:** `pr-body.md`
-- **Target:** `main` from branch `fix/security-test-suite-anyio` (Final Head Commit `84e7a01`)
+- **Target:** `main` from branch `fix/security-test-suite-anyio` (Final Head Commit `3ade165`)
 - **Summary:** Documented 26 changed files, diff statistics (+2816 / -514), key architectural & security changes, and test execution evidence.
 
-#### [M1-TASK-05] PR Submission & CI Gate
-- **Status:** Complete (Verified Green on PR Head `84e7a01`)
-- **Date:** 2026-11-17 / 2026-11-18
+#### [M1-TASK-05] PR Submission, CI Gate & Trunk Merge
+- **Status:** Complete (Merged into `main`)
+- **Date:** 2026-11-17 / 2026-11-22
 - **PR:** https://github.com/omwe77/hamiGenz/pull/3
-- **Historical Head SHA:** `84e7a017afadd932306bf1c1d8fc8a4ce004a508`
-- **CI Run (`44121472236`):**
+- **Final Head SHA:** `a2bd0e5ebd4e57ba197cd5cd692461bbf449b9f0`
+- **Main Merge Commit:** `68d79e3ec24c6403369611a10ea797808e92bac9`
+- **CI Run on Main (`44985014326`):**
   - Backend CI (Python 3.11): ✅ SUCCESS
   - Frontend CI (Node 24): ✅ SUCCESS
   - Docker Validation: ✅ SUCCESS
   - Vercel Preview: ✅ SUCCESS
-- **Merge Gate:** Awaiting explicit owner approval before merging into `main`.
-
-#### [M1-AMENDMENT] Latest Status Amendment & Head Verification
-- **Date:** 2026-11-21
-- **PR:** https://github.com/omwe77/hamiGenz/pull/3
-- **Target Branch:** `main`
-- **Current Head SHA:** `17341d2ffa55ae368ad370715050db5050bbd8f4` (amended from initial head `84e7a01`)
-- **CI Status:** Green across Backend CI, Frontend CI, Docker, and Vercel.
-- **PR State:** OPEN, unmerged. Awaiting explicit owner approval.
+- **Local Full Suite Verification on `a2bd0e5`:**
+  - `pytest -q --tb=short`: 511 passed, 1 skipped across 512 tests (905.65s, Python 3.12.10 / Windows)
+- **Defects Fixed in M1:**
+  - [P2] `_BodyTooLargeError` re-raised from `upload_document` → 413 preserved (not swallowed into 400)
+  - [P2] `UPLOAD_DIR.mkdir()` before staging file open → no FileNotFoundError on clean checkouts
+  - [P2] Docker Non-Root Hardening: Created dedicated `hamigenz` user (UID/GID 10001), assigned `/app` and `/home/hamigenz` ownership, configured `USER 10001:10001`, and verified in CI (UID 10001, writable paths, `/health` 200 OK)
+  - [P3] Vacuous `or True` removed from traversal assertion in `test_security.py`
+  - [P3] `test_T3_streaming_body_over_limit_endpoint_yields_413` added to verify endpoint-level 413
 
 ---
 
-### Milestone 1 Status: COMPLETE (Ready for Owner Merge Approval)
+### Milestone 1 Status: COMPLETE (Merged into `main` at `68d79e3`)
 
-All M1 quality gates, test suite migrations, and CI baselines are established and passing.
+All M1 quality gates, test suite migrations, security hardening, and CI baselines are established, passing, and merged into `main`.
+
+---
 
 ---
 

@@ -25,6 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/share/tesseract-ocr/5/tessdata /usr/share/tessdata
 
+# Create dedicated non-root runtime user and group (UID/GID 10001)
+RUN groupadd -r -g 10001 hamigenz && \
+    useradd -r -u 10001 -g hamigenz -m -d /home/hamigenz -s /usr/sbin/nologin hamigenz
+
 # Install Python dependencies first for optimal Docker layer caching
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
@@ -38,10 +42,15 @@ COPY data/knowledge /app/data/knowledge
 # Copy backend application codebase
 COPY backend /app/backend
 
-# Create runtime directories for Railway persistent volume mount (/app/backend/data)
+# Create runtime directories, assign non-root ownership, and set permissions
 RUN mkdir -p /app/backend/data/uploads \
              /app/backend/data/vectors \
-             /app/backend/data/huggingface
+             /app/backend/data/huggingface && \
+    chown -R hamigenz:hamigenz /app /home/hamigenz && \
+    chmod -R 0775 /app/backend/data
+
+# Switch to dedicated non-root user
+USER 10001:10001
 
 EXPOSE ${PORT}
 
