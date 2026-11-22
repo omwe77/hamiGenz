@@ -56,7 +56,8 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt httpx==0.28.1 pytest==8.3.4
+          pip install torch==2.15.0+cpu torchvision==0.29.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          pip install -r backend/requirements.txt httpx==0.28.1 pytest==8.3.4 --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Run deterministic regression & evaluation tests (Default Rate Limits)
         env:
