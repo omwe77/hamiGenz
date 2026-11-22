@@ -62,6 +62,14 @@ class TestDomainLookup:
     def test_unknown_domain(self):
         assert find_by_domain("totally-unrelated.example") is None
 
+    def test_domain_with_port(self):
+        src = find_by_domain("nepalpassport.gov.np:8080")
+        assert src and src["id"] == "passport-dept"
+
+    def test_domain_trailing_dot(self):
+        src = find_by_domain("nepalpassport.gov.np.")
+        assert src and src["id"] == "passport-dept"
+
 
 class TestUrlClassification:
     def test_curated_verified_is_verified_official(self):
@@ -85,6 +93,14 @@ class TestUrlClassification:
 
     def test_garbage_rejected(self):
         assert classify_url("not a url")["classification"] == "unverified"
+
+    def test_embedded_credentials_rejected(self):
+        assert classify_url("https://user:pass@nepalpassport.gov.np/notice")["classification"] == "unverified"
+        assert classify_url("https://nepalpassport.gov.np@attacker.com/notice")["classification"] == "unverified"
+
+    def test_trailing_dot_fqdn_classified_correctly(self):
+        c = classify_url("https://nepalpassport.gov.np./fees")
+        assert c["classification"] == "verified_official"
 
 
 class TestAuthorityRank:

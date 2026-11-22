@@ -115,6 +115,27 @@ def reset_reindex_locks():
         app.state._reindex_locks.clear()
 
 
+@pytest.fixture(autouse=True)
+def isolated_upload_dir(tmp_path):
+    """Redirect main.UPLOAD_DIR to a fresh temp dir for each test.
+
+    The real backend/data/uploads may have restricted permissions in some
+    environments (Windows sandbox, CI containers).  Using a tmp_path keeps
+    tests hermetic and avoids polluting the development data directory.
+    """
+    import main as _main
+    new_dir = tmp_path / "uploads"
+    new_dir.mkdir()
+    old_dir = _main.UPLOAD_DIR
+    _main.UPLOAD_DIR = new_dir
+    # Patch the name imported into this module's namespace too
+    global UPLOAD_DIR
+    UPLOAD_DIR = new_dir
+    yield new_dir
+    _main.UPLOAD_DIR = old_dir
+    UPLOAD_DIR = old_dir
+
+
 # ─── ASGI unit tests (MaxBodySizeMiddleware only, no FastAPI lifespan) ────────
 
 class TestMaxBodySizeMiddleware:

@@ -11,6 +11,10 @@ on:
   pull_request:
     branches:
       - main
+      - dev
+      - 'chore/**'
+      - 'feat/**'
+      - 'fix/**'
   workflow_dispatch:
 
 # Enforce least-privilege token permissions
@@ -52,7 +56,8 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt httpx==0.28.1 pytest==8.3.4
+          pip install torch==2.15.0+cpu torchvision==0.29.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          pip install -r backend/requirements.txt httpx==0.28.1 pytest==8.3.4 --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Run deterministic regression & evaluation tests (Default Rate Limits)
         env:
@@ -78,6 +83,9 @@ jobs:
             tests/test_pipeline.py::TestTextCleaner \
             tests/test_pipeline.py::TestChunker \
             tests/test_offline_embedding_mock.py \
+            tests/test_document_processor.py \
+            tests/test_ocr_engines.py \
+            tests/test_upload_ingress.py \
             -v
 
       - name: Run Phase 1.1 security tests under default rate limits
@@ -141,6 +149,30 @@ jobs:
           docker build -t hamigenz-backend:ci .
           docker image inspect hamigenz-backend:ci --format 'Image Size: {{.Size}} bytes'
 
+      - name: Pre-provision embedding model cache (host)
+        # Download sentence-transformers model using HF_HOME so the directory layout
+        # matches exactly what the container expects ($HF_HOME/hub/models--...).
+        # cache_folder= uses a different layout than HF_HOME; we must use HF_HOME here
+        # so the mounted volume is found when HF_HUB_OFFLINE=1 inside the container.
+        run: |
+          pip install --quiet sentence-transformers==3.4.1
+          mkdir -p ci-hf-cache
+          HF_HOME="$(pwd)/ci-hf-cache" python - <<'EOF'
+          import os
+          from sentence_transformers import SentenceTransformer
+          hf_home = os.environ["HF_HOME"]
+          print(f"[CI] HF_HOME={hf_home}")
+          m = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+          dim = m.get_sentence_embedding_dimension()
+          print(f"[CI] Model ready. dim={dim}")
+          assert dim == 384, f"Unexpected dim: {dim}"
+          # Verify the hub cache subdirectory was created
+          hub_dir = os.path.join(hf_home, "hub")
+          assert os.path.isdir(hub_dir), f"Expected hub dir at {hub_dir}"
+          print(f"[CI] Cache layout verified: {os.listdir(hub_dir)}")
+          EOF
+          echo "MODEL_CACHE_DIR=$(pwd)/ci-hf-cache" >> $GITHUB_ENV
+
       - name: Verify non-root container identity & writable directories
         run: |
           echo "=== Container Identity ==="
@@ -163,9 +195,20 @@ jobs:
           print("PASS: Tesseract CLI available:", pytesseract.get_tesseract_version())
           '
 
-      - name: Test container startup & healthcheck
+      - name: Test container startup & healthcheck (offline model, non-root)
+        # Mount the host-provisioned model cache into the container's HF_HOME.
+        # HF_HUB_OFFLINE=1 proves startup does not require a network download.
+        # Container still runs as UID 10001; cache dir is readable by all.
         run: |
-          docker run -d --name test-app -p 8000:8000 -e PORT=8000 hamigenz-backend:ci
+          chmod -R a+rX "$MODEL_CACHE_DIR"
+          docker run -d \
+            --name test-app \
+            -p 8000:8000 \
+            -e PORT=8000 \
+            -e HF_HUB_OFFLINE=1 \
+            -e TRANSFORMERS_OFFLINE=1 \
+            -v "$MODEL_CACHE_DIR":/app/backend/data/huggingface:ro \
+            hamigenz-backend:ci
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8000/health; then
               echo "PASS: /health returned HTTP 200 OK"

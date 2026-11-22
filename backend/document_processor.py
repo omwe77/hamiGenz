@@ -8,6 +8,7 @@ import re
 import uuid
 import json
 import sqlite3
+import unicodedata
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timezone
@@ -90,11 +91,18 @@ def _build_lang_string(requested: str = "eng+nep") -> str:
 def _best_ocr_lang(img) -> str:
     """Choose the best OCR result by trying multiple configs.
 
-    For Devanagari-heavy pages, Nepali-only model usually beats
-    eng+nep combined (English model garbles Devanagari). We try
-    nep, eng+nep, and eng, then pick the one yielding most
-    Nepali characters (better Devanagari = better for Nepali docs).
+    Attempts multi-engine recognition via ocr_engines.best_ocr_text (which
+    handles Tesseract, EasyOCR, TrOCR, and Devanagari preference scoring).
+    Falls back to standalone in-module Tesseract cascade if ocr_engines is absent.
     """
+    try:
+        from ocr_engines import best_ocr_text
+        text = best_ocr_text(img, prefer="nepali")
+        if text and text.strip():
+            return text.strip()
+    except Exception:
+        pass
+
     nep_range = (0x0900, 0x097F)
 
     def cnt(text: str) -> int:
@@ -186,77 +194,98 @@ class DocumentProcessor:
         Path(src).replace(filepath)
         return str(filepath), doc_id
 
-    def extract_text(self, filepath: str) -> list[dict]:
+    def extract_text(self, filepath: str, max_pages: int = 200) -> list[dict]:
         """
-        Extract text from PDF or image.
+        Extract text from PDF or image with error boundary and bounded memory.
         Returns list of dicts: {page_num, text, source_type}
         """
-        ext = Path(filepath).suffix.lower()
+        path = Path(filepath)
+        if not path.is_file():
+            raise FileNotFoundError(f"File not found: {filepath}")
+        if path.stat().st_size == 0:
+            raise ValueError(f"File is empty (0 bytes): {filepath}")
+
+        ext = path.suffix.lower()
 
         if ext == ".pdf":
-            return self._extract_pdf(filepath)
+            return self._extract_pdf(filepath, max_pages=max_pages)
         elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".tif"):
             return self._extract_image(filepath)
         else:
             raise ValueError(f"Unsupported file type: {ext}")
 
-    def _extract_pdf(self, filepath: str) -> list[dict]:
-        """Try text extraction first, fall back to OCR per page if needed."""
-        pages = []
-        doc = fitz.open(filepath)
+    def _extract_pdf(self, filepath: str, max_pages: int = 200) -> list[dict]:
+        """Try text extraction first, fall back to OCR per page if needed.
 
-        for i, page in enumerate(doc):
-            text = page.get_text().strip()
-            images = page.get_images()
-            has_images = len(images) > 0
+        Guarantees prompt closure of PDF document handles and bounded page processing.
+        """
+        try:
+            doc = fitz.open(filepath)
+        except Exception as exc:
+            raise ValueError(f"Could not open PDF file: {exc}") from exc
 
-            # Heuristic: estimate if page is likely scanned (image-based)
-            # A page is "likely scanned" when:
-            #   - It has raster images AND very little extractable text, OR
-            #   - It has zero extractable text
-            char_count = len(text)
-            img_area = sum(
-                (img[2] or 0) * (img[3] or 0) for img in images
-            )  # width * height from PyMuPDF image xrefs
+        try:
+            if doc.is_encrypted and doc.needs_pass:
+                raise ValueError("PDF is password-protected and cannot be read.")
 
-            likely_scanned = (
-                (char_count == 0)
-                or (char_count < 80 and has_images and img_area > 50000)
-                or (char_count < 30)
-            )
+            page_count = len(doc)
+            if page_count == 0:
+                raise ValueError("PDF contains no pages.")
+            if page_count > max_pages:
+                raise ValueError(f"Document has too many pages ({page_count} > max {max_pages}).")
 
-            pages.append({
-                "page_num": i + 1,
-                "text": text,
-                "source_type": "text" if text and not likely_scanned else "empty",
-                "has_images": has_images,
-                "img_area": img_area,
-            })
+            pages = []
+            for i in range(page_count):
+                page = doc[i]
+                text = page.get_text().strip()
+                images = page.get_images()
+                has_images = len(images) > 0
 
-        # Second pass: OCR pages marked as likely scanned
-        for p in pages:
-            if p["source_type"] == "empty":
-                ocr_text = self._ocr_page_fitx(filepath, p["page_num"])
-                if ocr_text and len(ocr_text.strip()) > len(p["text"].strip()):
-                    p["text"] = ocr_text
-                    p["source_type"] = "ocr"
+                # Heuristic: estimate if page is likely scanned (image-based)
+                char_count = len(text)
+                img_area = sum(
+                    (img[2] or 0) * (img[3] or 0) for img in images
+                )
 
-        doc.close()
-        return pages
+                likely_scanned = (
+                    (char_count == 0)
+                    or (char_count < 80 and has_images and img_area > 50000)
+                    or (char_count < 30)
+                )
+
+                pages.append({
+                    "page_num": i + 1,
+                    "text": text,
+                    "source_type": "text" if text and not likely_scanned else "empty",
+                    "has_images": has_images,
+                    "img_area": img_area,
+                })
+
+            # Second pass: OCR pages marked as likely scanned
+            for p in pages:
+                if p["source_type"] == "empty":
+                    ocr_text = self._ocr_page_fitx(filepath, p["page_num"])
+                    if ocr_text and len(ocr_text.strip()) > len(p["text"].strip()):
+                        p["text"] = ocr_text
+                        p["source_type"] = "ocr"
+
+            return pages
+        finally:
+            doc.close()
 
     def render_page_image(self, filepath: str, page_num: int) -> bytes | None:
         """
         Render a single PDF page to PNG bytes for the document viewer.
-        Returns None if the page cannot be rendered.
+        Returns None if the page cannot be rendered or is out of bounds.
         """
         try:
-            doc = fitz.open(filepath)
-            page = doc[page_num - 1]
-            mat = fitz.Matrix(200/72, 200/72)  # 200 DPI for viewer display
-            pix = page.get_pixmap(matrix=mat)
-            img_bytes = pix.tobytes("png")
-            doc.close()
-            return img_bytes
+            with fitz.open(filepath) as doc:
+                if page_num < 1 or page_num > len(doc):
+                    return None
+                page = doc[page_num - 1]
+                mat = fitz.Matrix(200 / 72, 200 / 72)  # 200 DPI for viewer display
+                pix = page.get_pixmap(matrix=mat)
+                return pix.tobytes("png")
         except Exception as e:
             print(f"render_page_image failed for {filepath} page {page_num}: {e}")
             return None
@@ -264,30 +293,27 @@ class DocumentProcessor:
     def _render_page_pil(self, filepath: str, page_num: int, dpi: int = 200) -> Optional[Image.Image]:
         """Render one PDF page to a PIL Image at `dpi` for compositing answers."""
         try:
-            doc = fitz.open(filepath)
-            page = doc[page_num - 1]
-            mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
-            pix = page.get_pixmap(matrix=mat)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            doc.close()
-            return img
+            with fitz.open(filepath) as doc:
+                if page_num < 1 or page_num > len(doc):
+                    return None
+                page = doc[page_num - 1]
+                mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+                pix = page.get_pixmap(matrix=mat)
+                return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         except Exception as e:
             print(f"_render_page_pil failed for {filepath} page {page_num}: {e}")
             return None
 
     def _tesseract_word_boxes(self, filepath: str, page_num: int) -> list[dict]:
-        """Word-level bounding boxes via Tesseract TSV at 300 DPI.
-
-        Coordinates are in 300-DPI image pixels (same basis as OCR text), so
-        they can be scaled to the 200-DPI render used for display.
-        """
+        """Word-level bounding boxes via Tesseract TSV at 300 DPI."""
         try:
-            doc = fitz.open(filepath)
-            page = doc[page_num - 1]
-            mat = fitz.Matrix(300 / 72, 300 / 72)  # 300 DPI for OCR
-            pix = page.get_pixmap(matrix=mat)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            doc.close()
+            with fitz.open(filepath) as doc:
+                if page_num < 1 or page_num > len(doc):
+                    return []
+                page = doc[page_num - 1]
+                mat = fitz.Matrix(300 / 72, 300 / 72)  # 300 DPI for OCR
+                pix = page.get_pixmap(matrix=mat)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
             available = set(get_available_languages())
             lang = "nep" if "nep" in available else "eng"
@@ -299,7 +325,6 @@ class DocumentProcessor:
             for i in range(n):
                 text = data["text"][i].strip()
                 conf = data["conf"][i]
-                # conf is int in recent pytesseract, str in older versions
                 if isinstance(conf, int):
                     conf_val = conf
                 elif isinstance(conf, str):
@@ -320,21 +345,16 @@ class DocumentProcessor:
             print(f"_tesseract_word_boxes failed for {filepath} page {page_num}: {e}")
             return []
 
-
     def _ocr_page_fitx(self, filepath: str, page_num: int) -> str:
-        """OCR a single PDF page using PyMuPDF rendering + Tesseract.
-
-        Tries multiple OCR configurations and picks the best result
-        (most Nepali characters = better Devanagari recognition).
-        """
+        """OCR a single PDF page using PyMuPDF rendering + Tesseract."""
         try:
-            doc = fitz.open(filepath)
-            page = doc[page_num - 1]
-            # Render at 300 DPI for OCR quality
-            mat = fitz.Matrix(300/72, 300/72)
-            pix = page.get_pixmap(matrix=mat)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            doc.close()
+            with fitz.open(filepath) as doc:
+                if page_num < 1 or page_num > len(doc):
+                    return ""
+                page = doc[page_num - 1]
+                mat = fitz.Matrix(300 / 72, 300 / 72)
+                pix = page.get_pixmap(matrix=mat)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
             result = _best_ocr_lang(img)
             return result if result else ""
@@ -343,16 +363,24 @@ class DocumentProcessor:
             return ""
 
     def _extract_image(self, filepath: str) -> list[dict]:
-        """OCR a single image file, trying multiple configs."""
-        img = Image.open(filepath)
-        result = _best_ocr_lang(img)
-        return [{"page_num": 1, "text": result if result else "", "source_type": "ocr"}]
+        """OCR a single image file, properly closing resources and validating."""
+        try:
+            with Image.open(filepath) as img:
+                img.load()
+                result = _best_ocr_lang(img)
+                return [{"page_num": 1, "text": result if result else "", "source_type": "ocr"}]
+        except (Image.DecompressionBombError, Exception) as exc:
+            if isinstance(exc, (ValueError, FileNotFoundError)):
+                raise
+            raise ValueError(f"Could not open image file: {exc}") from exc
 
     @staticmethod
     def clean_text(text: str) -> str:
-        """Clean extracted text: normalize whitespace, fix common OCR issues."""
-        # Normalize Unicode
-        text = text.normalize("NFC") if hasattr(text, "normalize") else text
+        """Clean extracted text: normalize Unicode NFC, normalize whitespace, fix common OCR issues."""
+        if not text:
+            return ""
+        # Normalize Unicode NFC (Devanagari combining characters, vowels)
+        text = unicodedata.normalize("NFC", text)
         # Collapse multiple blank lines
         text = re.sub(r"\n{3,}", "\n\n", text)
         # Remove excessive spaces

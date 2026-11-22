@@ -51,31 +51,33 @@
 - **Target:** `main` from branch `fix/security-test-suite-anyio` (Final Head Commit `3ade165`)
 - **Summary:** Documented 26 changed files, diff statistics (+2816 / -514), key architectural & security changes, and test execution evidence.
 
-#### [M1-TASK-05] PR Submission & CI Gate
-- **Status:** Complete (Verified Green; defect-fix commit `3ade165` added 2026-11-21)
-- **Date:** 2026-11-17 / 2026-11-21
+#### [M1-TASK-05] PR Submission, CI Gate & Trunk Merge
+- **Status:** Complete (Merged into `main`)
+- **Date:** 2026-11-17 / 2026-11-22
 - **PR:** https://github.com/omwe77/hamiGenz/pull/3
-- **Head SHA:** `3ade165` (`17341d2` → `3ade165`: security/ingress defect fixes applied)
-- **Previous CI Run (`44121472236`) on `84e7a017`:**
+- **Final Head SHA:** `a2bd0e5ebd4e57ba197cd5cd692461bbf449b9f0`
+- **Main Merge Commit:** `68d79e3ec24c6403369611a10ea797808e92bac9`
+- **CI Run on Main (`44985014326`):**
   - Backend CI (Python 3.11): ✅ SUCCESS
   - Frontend CI (Node 24): ✅ SUCCESS
   - Docker Validation: ✅ SUCCESS
   - Vercel Preview: ✅ SUCCESS
-- **Local Verification on `3ade165`:**
-  - `pytest tests/test_security.py tests/test_upload_ingress.py`: 46/46 passed (57.59s, Python 3.12.10 / Windows)
-- **Defects Fixed:**
+- **Local Full Suite Verification on `a2bd0e5`:**
+  - `pytest -q --tb=short`: 511 passed, 1 skipped across 512 tests (905.65s, Python 3.12.10 / Windows)
+- **Defects Fixed in M1:**
   - [P2] `_BodyTooLargeError` re-raised from `upload_document` → 413 preserved (not swallowed into 400)
   - [P2] `UPLOAD_DIR.mkdir()` before staging file open → no FileNotFoundError on clean checkouts
-  - [P2] Docker Non-Root Hardening: Created dedicated `hamigenz` user (UID/GID 10001), assigned `/app` and `/home/hamigenz` ownership, configured `USER 10001:10001`, and enhanced CI to test identity, writable directories, and startup
+  - [P2] Docker Non-Root Hardening: Created dedicated `hamigenz` user (UID/GID 10001), assigned `/app` and `/home/hamigenz` ownership, configured `USER 10001:10001`, and verified in CI (UID 10001, writable paths, `/health` 200 OK)
   - [P3] Vacuous `or True` removed from traversal assertion in `test_security.py`
   - [P3] `test_T3_streaming_body_over_limit_endpoint_yields_413` added to verify endpoint-level 413
-- **Merge Gate:** Awaiting explicit owner approval and CI confirmation on `3ade165` before merging into `main`.
 
 ---
 
-### Milestone 1 Status: COMPLETE (Ready for Owner Merge Approval)
+### Milestone 1 Status: COMPLETE (Merged into `main` at `68d79e3`)
 
-All M1 quality gates, test suite migrations, and CI baselines are established and passing.
+All M1 quality gates, test suite migrations, security hardening, and CI baselines are established, passing, and merged into `main`.
+
+---
 
 ---
 
@@ -84,12 +86,84 @@ All M1 quality gates, test suite migrations, and CI baselines are established an
 ### Tasks
 
 #### [M2-TASK-01] Nepali OCR Engine Reliability & Fallback Hardening
-- **Status:** In Progress
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
 - **Branch:** `feat/m2-ocr-reliability`
-- **Target:** `backend/ocr_engines.py`
-- **Scope:**
-  - Robust Tesseract binary & TESSDATA_PREFIX discovery for Windows/Linux.
-  - Explicit detection of Nepali ('nep') and English ('eng') traineddata availability.
-  - Graceful fallback for optional deep-learning engines (EasyOCR, TrOCR).
-  - Offline-safe model loading with zero runtime network calls.
-  - Actionable diagnostics for missing dependencies and traineddata.
+- **Files Modified:**
+  - `backend/ocr_engines.py`: dynamic discovery, actionable diagnostics (`diagnose_tesseract()`), graceful fallback, Devanagari preference scoring, `local_files_only=True` for offline safety.
+  - `backend/requirements.txt`: pinned `easyocr==1.7.2` and `transformers==4.57.6`.
+  - `tests/test_ocr.py`: wrapped manual diagnostics in `if __name__ == "__main__":` guard and eliminated hardcoded paths.
+  - `tests/test_ocr_engines.py`: 33 deterministic unit tests covering Tesseract detection, fallback cascades, Devanagari character counting, and offline enforcement.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_ocr_engines.py -v` -> 29 passed, 4 skipped (integration checks when system binary unconfigured), 0 failed.
+  - Zero network activity: verified `local_files_only=True` prevents downloads during OCR requests.
+  - Document understanding pipeline backwards compatibility preserved.
+
+---
+
+#### [M2-TASK-02] Document Processor Extraction Resilience & Error Boundary
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
+- **Branch:** `feat/m2-ocr-reliability`
+- **Files Modified:**
+  - `backend/document_processor.py`: Context-managed PDF and PIL document lifetime, corruption and zero-byte protection, password-protected PDF check, zero-page check, bounded `max_pages=200`, out-of-bounds page rendering guard returning `None`/`[]`/`""`, Unicode NFC normalization with stdlib `unicodedata`, and integrated OCR cascade fallback.
+  - `tests/test_document_processor.py`: 25 deterministic unit tests covering nonexistent files, empty/corrupt files, 0-page PDFs, max-page bounds, clean text extraction, out-of-bounds rendering, upload path neutralization, custom doc IDs, Unicode NFC normalization, and OCR fallback delegation.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_document_processor.py -v` -> 25/25 passed in 6.12s.
+  - Combined suite: `pytest tests/test_document_processor.py tests/test_ocr_engines.py tests/test_security.py -v` -> 68 passed, 0 failed.
+  - Zero unclosed file handles; robust bounds enforcement on all rendering methods.
+
+---
+
+### Next Milestone 2 Tasks
+
+#### [M2-TASK-03] Vector Store / Generation-Safe Reindexing Lock & Cleanups
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
+- **Branch:** `feat/m2-ocr-reliability`
+- **Files Modified:**
+  - `backend/vector_store.py`: Enhanced `VectorStore.remove_document` to automatically discover and purge all generation-specific artifacts (`{doc_id}_g*.faiss`, `{doc_id}_g*_meta.json`) in addition to flat legacy files, preventing disk leakages during document deletion after staged re-indexing.
+  - `tests/test_reindex_safety.py`: Added `test_T23_remove_document_purges_all_generation_artifacts` verifying complete multi-generation artifact removal.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_reindex_safety.py -v` -> 23/23 passed in 6.42s.
+  - Ingress safety: `pytest tests/test_upload_ingress.py -q` -> 35/35 passed in 6.84s.
+  - Pipeline ingestion: `pytest tests/test_pipeline.py -q` -> 13 passed, 1 skipped.
+
+---
+
+#### [M2-TASK-04] Official Source Registry & Verified Domain Validation
+- **Status:** Complete (Verified)
+- **Date:** 2026-11-18
+- **Owner:** Antigravity (Lead Orchestrator)
+- **Branch:** `feat/m2-ocr-reliability`
+- **Files Modified:**
+  - `backend/source_registry.py`: Hardened `find_by_domain` against port suffixes and trailing FQDN root dots, and hardened `classify_url` against embedded credentials (`user:pass@host` or phishing userinfo injection).
+  - `tests/test_source_registry.py`: Added comprehensive unit tests for port handling, FQDN root dots, and embedded credential rejection.
+- **Verification Results:**
+  - Automated tests: `pytest tests/test_source_registry.py -v` -> 24/24 passed in 0.30s.
+  - Official answer integration: `pytest tests/test_official_answer.py -v` -> 27/27 passed in 0.69s.
+  - Action extraction URL safety: `pytest tests/test_actions.py -v` -> 25/25 passed in 0.62s.
+
+---
+
+### Milestone 2 Summary & PR Readiness
+
+All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final QA hardenings are complete and verified:
+1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, binary discovery, Devanagari preference scoring, and offline safe loading.
+   - **Offline Enforcement:** EasyOCR initialized with explicit `download_enabled=False` to prevent unexpected network requests during runtime; models must be pre-cached (`python -c "import easyocr; easyocr.Reader(['en', 'ne'])"`). TrOCR configured with `local_files_only=True`.
+   - **Performance & Cascade Strategy:** Hardened `best_ocr_text` to execute EasyOCR only when Tesseract extracts insufficient Devanagari (< 10 chars) or when handwriting is explicitly preferred, eliminating redundant PyTorch CPU latency when Tesseract succeeds. Enabled TrOCR fallback when primary engines produce no text. Added tests confirming threshold skipping, fallback execution, and handwriting behavior.
+   - **Real OCR Quality Test:** Pre-rendered reference fixture image (`tests/ocr_tests/nep.png`) with verified Devanagari glyphs; updated `test_nepali_ocr_produces_devanagari` to assert the exact transcription (`"नेपाल सरकार"`) with NFC normalization and verify 0.0 Character Error Rate (CER).
+2. `[M2-TASK-02]`: DocumentProcessor resilience, context-managed file cleanup, corruption/zero-byte handling, bounded max pages, out-of-bounds rendering safety, and Unicode NFC normalization.
+3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion (`{doc_id}_g*.faiss` and `{doc_id}_g*_meta.json` plus legacy flat files), and lock safety.
+4. `[M2-TASK-04]`: Source registry domain validation (`find_by_domain` handling ports and trailing root dots) and credential injection defense (`classify_url` safely rejecting userinfo `user:pass@host`).
+5. **CI Trigger, Test Isolation & Full Regression:**
+   - Expanded `.github/workflows/ci.yml` `pull_request` branch trigger to support stacked branches (`main`, `dev`, `chore/**`, `feat/**`, `fix/**`).
+   - Expanded regression matrix to include `tests/test_document_processor.py`, `tests/test_ocr_engines.py`, and `tests/test_upload_ingress.py`.
+   - Added hermetic `isolated_upload_dir` fixtures to `test_upload_ingress.py` and `test_reindex_safety.py`.
+   - **OCR Test Suite:** `pytest tests/test_ocr_engines.py -v` -> **39 passed, 0 skipped, 0 failed** in 6.12s.
+   - **Full Codebase Regression:** `pytest -q` -> **579 passed, 1 skipped, 10 warnings** across 580 collected tests in 296.84s (Python 3.12.10, Windows 11).
+
+Branch `feat/m2-ocr-reliability` is submitted as stacked PR #4 targeting `fix/security-test-suite-anyio`. Awaiting explicit owner approval.

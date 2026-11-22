@@ -32,8 +32,8 @@ RUN groupadd -r -g 10001 hamigenz && \
 # Install Python dependencies first for optimal Docker layer caching
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir -r /app/backend/requirements.txt
+    pip install --no-cache-dir torch==2.15.0+cpu torchvision==0.29.1+cpu --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r /app/backend/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Copy curated static knowledge assets required at runtime
 COPY data/okf /app/data/okf

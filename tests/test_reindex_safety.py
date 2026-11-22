@@ -57,6 +57,34 @@ def reset_rate_limits():
 
 
 @pytest.fixture(autouse=True)
+def isolated_upload_dir(tmp_path):
+    """Redirect main.UPLOAD_DIR to a fresh temp dir for each test.
+
+    Avoids permission issues in sandboxed environments and keeps tests hermetic.
+    Also patches the module-level UPLOAD_DIR / VECTORS_DIR names imported into
+    this test module so path constructions like `UPLOAD_DIR / "foo.pdf"` resolve
+    to the temp dir too.
+    """
+    import main as _main
+    import tests.test_reindex_safety as _self
+    new_up = tmp_path / "uploads"
+    new_vec = tmp_path / "vectors"
+    new_up.mkdir()
+    new_vec.mkdir()
+    old_up = _main.UPLOAD_DIR
+    old_vec = _main.VECTORS_DIR
+    _main.UPLOAD_DIR = new_up
+    _main.VECTORS_DIR = new_vec
+    _self.UPLOAD_DIR = new_up
+    _self.VECTORS_DIR = new_vec
+    yield new_up
+    _main.UPLOAD_DIR = old_up
+    _main.VECTORS_DIR = old_vec
+    _self.UPLOAD_DIR = old_up
+    _self.VECTORS_DIR = old_vec
+
+
+@pytest.fixture(autouse=True)
 def reset_reindex_locks():
     """Clear per-doc reindex locks between tests."""
     if hasattr(app.state, "_reindex_locks"):
@@ -1294,3 +1322,30 @@ def test_T22_failed_reindex_removes_staging_and_preserves_active_files(mock_pipe
     assert active_faiss.exists(), "Active FAISS file was deleted by failed reindex"
     assert active_faiss.read_bytes() == b"active faiss bytes"
     assert active_meta.exists(), "Active meta file was deleted by failed reindex"
+
+
+def test_T23_remove_document_purges_all_generation_artifacts(tmp_dirs):
+    """Calling VectorStore.remove_document must purge generation-specific files as well as flat files."""
+    up, vec = tmp_dirs
+    vs = VectorStore(vectors_dir=str(vec), dimension=4)
+
+    # Simulate existing active generation 2 files and legacy flat files
+    flat_faiss = vec / "doc1.faiss"
+    flat_meta = vec / "doc1_meta.json"
+    g1_faiss = vec / "doc1_g1.faiss"
+    g1_meta = vec / "doc1_g1_meta.json"
+    g2_faiss = vec / "doc1_g2.faiss"
+    g2_meta = vec / "doc1_g2_meta.json"
+
+    for p in (flat_faiss, flat_meta, g1_faiss, g1_meta, g2_faiss, g2_meta):
+        p.write_bytes(b"dummy")
+
+    vs._doc_indices["doc1"] = str(g2_faiss)
+    vs._save_registry()
+
+    vs.remove_document("doc1")
+
+    assert "doc1" not in vs._doc_indices
+    for p in (flat_faiss, flat_meta, g1_faiss, g1_meta, g2_faiss, g2_meta):
+        assert not p.exists(), f"File {p.name} was not removed by remove_document"
+
