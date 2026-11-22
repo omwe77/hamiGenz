@@ -150,22 +150,26 @@ jobs:
           docker image inspect hamigenz-backend:ci --format 'Image Size: {{.Size}} bytes'
 
       - name: Pre-provision embedding model cache (host)
-        # Download sentence-transformers model on the CI runner host before starting the
-        # application container. This separates the network-dependent download (slow, variable)
-        # from application startup (deterministic). The provisioned cache is then volume-mounted
-        # into the container and startup runs with HF_HUB_OFFLINE=1 — no network at runtime.
+        # Download sentence-transformers model using HF_HOME so the directory layout
+        # matches exactly what the container expects ($HF_HOME/hub/models--...).
+        # cache_folder= uses a different layout than HF_HOME; we must use HF_HOME here
+        # so the mounted volume is found when HF_HUB_OFFLINE=1 inside the container.
         run: |
           pip install --quiet sentence-transformers==3.4.1
-          python - <<'EOF'
+          mkdir -p ci-hf-cache
+          HF_HOME="$(pwd)/ci-hf-cache" python - <<'EOF'
           import os
           from sentence_transformers import SentenceTransformer
-          cache_dir = os.path.abspath("ci-hf-cache")
-          os.makedirs(cache_dir, exist_ok=True)
-          print(f"[CI] Provisioning model to {cache_dir}")
-          m = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2", cache_folder=cache_dir)
+          hf_home = os.environ["HF_HOME"]
+          print(f"[CI] HF_HOME={hf_home}")
+          m = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
           dim = m.get_sentence_embedding_dimension()
           print(f"[CI] Model ready. dim={dim}")
           assert dim == 384, f"Unexpected dim: {dim}"
+          # Verify the hub cache subdirectory was created
+          hub_dir = os.path.join(hf_home, "hub")
+          assert os.path.isdir(hub_dir), f"Expected hub dir at {hub_dir}"
+          print(f"[CI] Cache layout verified: {os.listdir(hub_dir)}")
           EOF
           echo "MODEL_CACHE_DIR=$(pwd)/ci-hf-cache" >> $GITHUB_ENV
 
