@@ -37,11 +37,19 @@ data/vectors/
 backend/data/uploads/
 backend/data/vectors/
 backend/data/*.db
+backend/data/*.db-wal
+backend/data/*.db-shm
+backend/data/huggingface/
+.cache/
 *.faiss
 *_meta.json
 registry.json
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.sqlite3
 
 # Environment variables and secrets
@@ -80,6 +88,8 @@ tests/tmp_search/
 .claude/
 .codex/
 .playwright-mcp/
+.impeccable/
+.tasklist*.md
 
 # Documentation assets (orphaned screenshots, not referenced in docs or README)
 docs/assets/
@@ -88,7 +98,7 @@ docs/assets/
 tests/nepali_ocr_verify.png
 tests/test_gen_current.png
 tests/nep_exact_repro.png
-tests/test_gen_current.png
+tests/e2e_results.json
 
 # Temporary browser/Playwright check scripts (session artefacts, never committed)
 frontend/check_*.py

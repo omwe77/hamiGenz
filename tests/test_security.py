@@ -32,7 +32,7 @@ class TestUploadFilenameNeutralization:
     def test_traversal_filename_stays_in_upload_dir(self):
         name, doc_id, filepath = self._saved_name("../../etc/passwd.pdf")
         assert filepath.startswith(os.path.abspath(self.tmp))
-        assert "/" not in name.replace("\\", "/").split("/")[-1] or True
+        assert "/" not in name and "\\" not in name
         # The saved name must be the generated doc_id, not the user's path
         assert name.startswith(doc_id)
 
@@ -66,3 +66,134 @@ class TestUploadFilenameNeutralization:
         _, doc_id, _ = self._saved_name("normal.pdf")
         assert len(doc_id) == 8
         int(doc_id, 16)  # must be hex
+
+
+httpx = None
+try:
+    import httpx
+except ImportError:
+    pass
+
+
+@pytest.mark.skipif(httpx is None, reason="httpx required for ASGI transport tests")
+class TestExceptionInformationDisclosure:
+    """Exception details and system paths must never be disclosed to API clients."""
+
+    def test_upload_save_exception_hides_system_paths(self, monkeypatch):
+        import anyio
+        from unittest.mock import MagicMock
+        from main import app
+        import session_auth
+        from starlette.datastructures import UploadFile
+
+        app.state.pipeline = MagicMock()
+        app.state.vector_store = MagicMock()
+        app.state.metadata = MagicMock()
+        if hasattr(app.state, "_upload_admission_sem"):
+            del app.state._upload_admission_sem
+        if hasattr(app.state, "_staged_backlog_sem"):
+            del app.state._staged_backlog_sem
+
+        sid = "sec-test-sid"
+        token = session_auth.generate_session_token(sid)
+        secret_path = "C:\\Users\\Administrator\\confidential\\temp_spool"
+
+        async def failing_read(self, *args, **kwargs):
+            raise OSError(f"Corrupted storage at internal path: {secret_path}")
+
+        monkeypatch.setattr(UploadFile, "read", failing_read)
+
+        async def run():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                return await client.post(
+                    "/upload",
+                    files={"file": ("test.pdf", b"%PDF-1.4 sample", "application/pdf")},
+                    headers={"X-Session-Token": token},
+                )
+
+        resp = anyio.run(run)
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["detail"] == "Failed to save uploaded document."
+        assert "Administrator" not in resp.text
+        assert "confidential" not in resp.text
+        assert secret_path not in resp.text
+
+    def test_fill_preview_exception_hides_system_details(self, monkeypatch):
+        import anyio
+        from unittest.mock import MagicMock
+        from main import app, UPLOAD_DIR
+        import session_auth
+
+        doc_id = "testdoc1"
+        sid = "sec-preview-sid"
+        token = session_auth.generate_session_token(sid)
+
+        test_file = UPLOAD_DIR / f"{doc_id}.pdf"
+        app.state.metadata = MagicMock()
+        app.state.metadata.get_document.return_value = {
+            "doc_id": doc_id,
+            "session_id": sid,
+            "filepath": str(test_file),
+        }
+        app.state.metadata.get_form_fields.return_value = {}
+
+        secret_err = "BufferError at /var/secrets/key.bin: fatal stack"
+
+        def mock_render(*args, **kwargs):
+            raise RuntimeError(secret_err)
+
+        monkeypatch.setattr("main._render_fill_preview_sync", mock_render)
+
+        async def run():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                return await client.post(
+                    f"/documents/{doc_id}/page/1/fill-image",
+                    json={"values": [{"label": "name", "value": "Test"}]},
+                    headers={"X-Session-Token": token},
+                )
+
+        resp = anyio.run(run)
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["detail"] == "Could not generate form fill preview."
+        assert secret_err not in resp.text
+        assert "secrets" not in resp.text
+        assert "BufferError" not in resp.text
+
+    def test_set_form_fields_invalid_payload_sanitized(self):
+        import anyio
+        from unittest.mock import MagicMock
+        from main import app
+        import session_auth
+
+        doc_id = "testdoc2"
+        sid = "sec-field-sid"
+        token = session_auth.generate_session_token(sid)
+
+        app.state.metadata = MagicMock()
+        app.state.metadata.get_document.return_value = {
+            "doc_id": doc_id,
+            "session_id": sid,
+            "filepath": "fake.pdf",
+        }
+
+        async def run():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                return await client.post(
+                    f"/documents/{doc_id}/form-fields",
+                    json={"values": 12345},
+                    headers={"X-Session-Token": token},
+                )
+
+        resp = anyio.run(run)
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["detail"] == "Invalid form fields payload."
+        assert "not iterable" not in resp.text

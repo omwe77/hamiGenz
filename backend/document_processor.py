@@ -166,6 +166,26 @@ class DocumentProcessor:
         filepath.write_bytes(file_bytes)
         return str(filepath), doc_id
 
+    def save_upload_from_path(self, src: "Path", filename: str,
+                              doc_id: str = "") -> tuple[str, str]:
+        """Move a pre-validated staged file into the upload directory.
+
+        Identical safety checks as save_upload; uses an atomic rename instead of
+        write_bytes so the file is never duplicated in memory.
+        """
+        if not doc_id:
+            doc_id = str(uuid.uuid4())[:8]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", doc_id):
+            raise ValueError("Invalid document id")
+        ext = Path(filename).suffix.lower()
+        ext = re.sub(r"[^a-z0-9]", "", ext)[:5]
+        safe_name = f"{doc_id}.{ext}" if ext else doc_id
+        filepath = self.upload_dir / safe_name
+        if not filepath.resolve().is_relative_to(self.upload_dir.resolve()):
+            raise ValueError("Resolved upload path escaped upload directory")
+        Path(src).replace(filepath)
+        return str(filepath), doc_id
+
     def extract_text(self, filepath: str) -> list[dict]:
         """
         Extract text from PDF or image.

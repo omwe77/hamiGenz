@@ -80,7 +80,7 @@ console.log("Starting CSP configuration automated test suite...");
         NEXT_PUBLIC_API_BASE_URL: "http://api.hamigenz.gov.np",
       });
     },
-    (err: any) => {
+    (err: unknown) => {
       return err instanceof Error && err.message.includes("Production API URL must use 'https:' protocol");
     },
     "Production must reject non-HTTPS (http://) API URL"
@@ -103,7 +103,7 @@ console.log("Starting CSP configuration automated test suite...");
           NEXT_PUBLIC_API_BASE_URL: badUrl,
         });
       },
-      (err: any) => {
+      (err: unknown) => {
         return err instanceof Error && err.message.includes("Invalid");
       },
       `Should throw clear configuration error for malformed API URL: ${badUrl}`

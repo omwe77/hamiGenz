@@ -34,7 +34,9 @@ from config import load_environment
 load_environment()
 
 import uuid
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
+from starlette.datastructures import UploadFile, FormData, Headers
+from starlette.formparsers import MultiPartParser, parse_options_header, MultiPartException
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -297,6 +299,156 @@ app = FastAPI(
 )
 
 # Concurrency control: limit simultaneous heavy document processing tasks (Task 2.1.1)
+# ─── Upload ingress limits ────────────────────────────────────────
+_UPLOAD_FILE_LIMIT = 52_428_800   # 50 MiB — per-file ceiling
+_UPLOAD_BODY_LIMIT = 54_525_952   # 52 MiB — raw request body (file + 2 MiB multipart framing)
+
+
+class _BodyTooLargeError(Exception):
+    pass
+
+
+async def _send_413(send) -> None:
+    body = b'{"detail":"Request body exceeds 52\xc2\xa0MiB limit."}'
+    await send({
+        "type": "http.response.start",
+        "status": 413,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+async def _send_400(send, detail: str = "Invalid request framing.") -> None:
+    body = f'{{"detail":"{detail}"}}'.encode("utf-8")
+    await send({
+        "type": "http.response.start",
+        "status": 400,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+class MaxBodySizeMiddleware:
+    """ASGI raw-body limiter for /upload — rejects oversized bodies before multipart parsing.
+
+    Two-stage enforcement:
+    1. Fast reject via Content-Length header (O(1), no body read). Rejects malformed
+       or conflicting duplicate Content-Length headers with HTTP 400 (RFC 9110 / 9112).
+    2. Streaming byte-counter for chunked or understated Content-Length requests.
+
+    ponytail: path-scoped to /upload only. Other routes remain unlimited at the app layer;
+    rely on uvicorn's --limit-concurrency for overall connection pressure.
+    """
+
+    def __init__(self, app_inner, max_bytes: int = _UPLOAD_BODY_LIMIT):
+        self.app = app_inner
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") != "/upload":
+            return await self.app(scope, receive, send)
+
+        # Stage 1: Content-Length validation & fast-reject (RFC 9110 / 9112)
+        content_length: int | None = None
+        for key, val in scope.get("headers", []):
+            if key.lower() == b"content-length":
+                try:
+                    parsed = int(val)
+                    if parsed < 0:
+                        return await _send_400(send, "Invalid Content-Length header: negative value.")
+                except (ValueError, TypeError):
+                    return await _send_400(send, "Invalid Content-Length header: non-integer value.")
+                if content_length is None:
+                    content_length = parsed
+                elif content_length != parsed:
+                    return await _send_400(send, "Conflicting duplicate Content-Length headers.")
+        if content_length is not None and content_length > self.max_bytes:
+            return await _send_413(send)
+
+        # Stage 2: Streaming byte-counter for chunked / understated bodies
+        total = 0
+
+        async def bounded_receive():
+            nonlocal total
+            message = await receive()
+            if message["type"] == "http.request":
+                total += len(message.get("body", b""))
+                if total > self.max_bytes:
+                    raise _BodyTooLargeError()
+            return message
+
+        try:
+            return await self.app(scope, bounded_receive, send)
+        except _BodyTooLargeError:
+            return await _send_413(send)
+
+
+class SafeMultiPartParser(MultiPartParser):
+    """Constrained multipart parser with guaranteed cleanup of spool files on cancellation/error.
+
+    Starlette's MultiPartParser.parse() catches only MultiPartException. If cancelled
+    by client disconnect or task cancellation, SpooledTemporaryFile instances in
+    _files_to_close_on_error are not closed until GC runs. This subclass guarantees
+    closing and unlinking all temporary spool files if parsing does not complete normally.
+    """
+
+    async def parse(self) -> FormData:
+        success = False
+        try:
+            res = await super().parse()
+            success = True
+            return res
+        finally:
+            if not success:
+                for f in list(self._files_to_close_on_error):
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
+                if hasattr(self, "_current_part") and self._current_part.file is not None:
+                    try:
+                        await self._current_part.file.close()
+                    except Exception:
+                        pass
+
+
+def get_upload_admission_semaphore() -> asyncio.BoundedSemaphore:
+    """Return per-process bounded semaphore limiting concurrent multipart ingestion streams.
+
+    Default: 4 concurrent uploads. Configure via HAMIGENZ_MAX_CONCURRENT_UPLOADS.
+    ponytail: asyncio.BoundedSemaphore is single-process only. Multi-worker deployments multiply
+    this limit by worker count. Use external coordination (Redis) if that matters.
+    """
+    if not hasattr(app.state, "_upload_admission_sem") or app.state._upload_admission_sem is None:
+        try:
+            max_concurrent = int(os.environ.get("HAMIGENZ_MAX_CONCURRENT_UPLOADS", 4))
+        except (ValueError, TypeError):
+            max_concurrent = 4
+        app.state._upload_admission_sem = asyncio.BoundedSemaphore(max(1, min(16, max_concurrent)))
+    return app.state._upload_admission_sem
+
+
+def get_staged_backlog_semaphore() -> asyncio.BoundedSemaphore:
+    """Return per-process bounded semaphore limiting staged files awaiting processing.
+
+    Default: 4 staged documents in queue. Configure via HAMIGENZ_MAX_STAGED_BACKLOG.
+    Prevents disk exhaustion from accumulated staged files while processing workers are occupied.
+    """
+    if not hasattr(app.state, "_staged_backlog_sem") or app.state._staged_backlog_sem is None:
+        try:
+            max_backlog = int(os.environ.get("HAMIGENZ_MAX_STAGED_BACKLOG", 4))
+        except (ValueError, TypeError):
+            max_backlog = 4
+        app.state._staged_backlog_sem = asyncio.BoundedSemaphore(max(1, min(32, max_backlog)))
+    return app.state._staged_backlog_sem
+
+
 def get_processing_semaphore() -> asyncio.Semaphore:
     """Return the shared asyncio.Semaphore limiting concurrent heavy document processing tasks."""
     if not hasattr(app.state, "processing_semaphore") or app.state.processing_semaphore is None:
@@ -338,6 +490,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Session-Token", "Retry-After"],
 )
+# Raw-body size limiter must wrap CORS so it fires before multipart parsing.
+# Starlette add_middleware stacks outermost-last, so this runs first.
+app.add_middleware(MaxBodySizeMiddleware)
 
 
 @app.middleware("http")
@@ -608,53 +763,25 @@ async def health():
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
     request: Request,
-    file: UploadFile = File(...),
     reindex_doc_id: str = Query("", description="Existing doc_id to re-embed with the current embedding model (reindex mode)"),
     _rl: None = Depends(rate_limit("upload")),
 ):
     """
     Upload a document (PDF, PNG, JPG, TIFF) for analysis.
     The document is processed, chunked, embedded, and indexed under caller's session.
+
+    Rate limit and ingress admission execute before multipart parsing.
+    Raw body is capped by MaxBodySizeMiddleware (52 MiB) before this handler runs.
     """
     session_id = getattr(request.state, "session_id", "__anonymous__")
 
-    # Read file
-    file_bytes = await file.read()
-    if len(file_bytes) < 100:
-        raise HTTPException(400, "File too small")
-
-    if len(file_bytes) > 50 * 1024 * 1024:  # 50 MB limit
-        raise HTTPException(400, "File too large (max 50 MB)")
-
-    filename = file.filename or "unknown"
-    ext = Path(filename).suffix.lower()
-
-    if ext not in (".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"):
-        raise HTTPException(400, f"Unsupported file type: {ext}. Use PDF or image (PNG/JPG/TIFF).")
-
-    # ── Content-based validation (never trust declared type) ──────────
-    _MAGIC = {
-        ".pdf": b"%PDF-",
-        ".png": b"\x89PNG\r\n\x1a\n",
-        ".jpg": b"\xff\xd8\xff",
-        ".jpeg": b"\xff\xd8\xff",
-        ".tif": b"II*\x00",  # little-endian TIFF (big-endian handled below)
-    }
-    head = file_bytes[:16]
-    expected = _MAGIC.get(ext)
-    tiff_be = ext in (".tif", ".tiff") and head.startswith(b"MM\x00*")
-    if expected and not (head.startswith(expected) or tiff_be):
-        raise HTTPException(400, "File content does not match its type. Upload rejected.")
-
-    # ── Per-document reindex serialization (Task 2.1.2 / Task 2.1.2-E2) ──
-    # Acquire lock BEFORE writing any staging file to prevent concurrent requests
-    # from overwriting or unlinking each other's staged uploads.
-    # ponytail: in-process asyncio.Lock only — upgrade to DB advisory lock if multi-worker needed
+    # ── Per-document reindex validation and serialization (Task 2.1.2 / Task 4.3.10.2-R2) ──
+    # Check format and ownership BEFORE consuming admission permits or disk.
     _reindex_lock: "asyncio.Lock | None" = None
     if reindex_doc_id:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", reindex_doc_id):
             raise HTTPException(400, "Invalid document id")
-        # Enforce that caller owns reindex_doc_id
+        # Enforce that caller owns reindex_doc_id (404 if missing or unowned)
         verify_document_owner(app, reindex_doc_id, session_id)
 
         _locks = get_reindex_locks()
@@ -662,53 +789,49 @@ async def upload_document(
             _locks[reindex_doc_id] = asyncio.Lock()
         _reindex_lock = _locks[reindex_doc_id]
         if _reindex_lock.locked():
-            # Another reindex already in progress for this doc — reject immediately
-            # without writing or unlinking any file!
             raise HTTPException(
                 409, "A reindex operation is already in progress for this document."
             )
         await _reindex_lock.acquire()
 
-    # Save upload file
-    processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+    # ── Ingress admission gate (before multipart parsing) ─────────────
+    adm_sem = get_upload_admission_semaphore()
     try:
-        if reindex_doc_id:
-            cur_gen = app.state.metadata.get_reindex_generation(reindex_doc_id)
-            new_gen = cur_gen + 1
-            _stage_ext = re.sub(
-                r"[^a-z0-9]", "", Path(filename).suffix.lower()
-            )[:5]
-            _stage_name = (
-                f"{reindex_doc_id}_g{new_gen}.{_stage_ext}"
-                if _stage_ext
-                else f"{reindex_doc_id}_g{new_gen}"
-            )
-            staging_upload_path = UPLOAD_DIR / _stage_name
-            staging_upload_path.write_bytes(file_bytes)
-            filepath = str(staging_upload_path)
-            doc_id = reindex_doc_id
-            staged_faiss = VECTORS_DIR / f"{doc_id}_g{new_gen}.faiss"
-            staged_meta = VECTORS_DIR / f"{doc_id}_g{new_gen}_meta.json"
-        else:
-            filepath, doc_id = processor.save_upload(file_bytes, filename)
-            cur_gen = None
-            new_gen = None
-            staging_upload_path = None
-            staged_faiss = None
-            staged_meta = None
-    except Exception as e:
+        await asyncio.wait_for(adm_sem.acquire(), timeout=0.1)
+    except asyncio.TimeoutError:
         if _reindex_lock is not None and _reindex_lock.locked():
             _reindex_lock.release()
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(400, "Invalid upload") from e
+        raise HTTPException(
+            status_code=503,
+            detail="Too many concurrent uploads. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        )
+    except BaseException:
+        if _reindex_lock is not None and _reindex_lock.locked():
+            _reindex_lock.release()
+        raise
+
+    adm_released = False
+    backlog_acquired = False
+    upload_file: UploadFile | None = None
+    staging_path: Path | None = None
+    filepath: str | None = None
+    doc_id: str | None = None
+    cur_gen: int | None = None
+    new_gen: int | None = None
+    staged_faiss: Path | None = None
+    staged_meta: Path | None = None
+    sem_acquired = False
+    supervisor_started = False
+    form: "FormData | None" = None
 
     def _cleanup_staging_artifacts():
         """Remove only this attempt's staging upload and vector artifacts (Task 2.1.2)."""
-        try:
-            Path(filepath).unlink(missing_ok=True)
-        except OSError:
-            pass
+        if filepath:
+            try:
+                Path(filepath).unlink(missing_ok=True)
+            except OSError:
+                pass
         if reindex_doc_id:
             if staged_faiss is not None:
                 try:
@@ -721,177 +844,342 @@ async def upload_document(
                 except OSError:
                     pass
 
-    # Process
-    if not hasattr(app.state, "pipeline"):
-        if _reindex_lock is not None and _reindex_lock.locked():
-            _reindex_lock.release()
-        _cleanup_staging_artifacts()
-        raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
-    pipeline = app.state.pipeline
-    sem = get_processing_semaphore()
-
-    # Track supervisor launch so lock release ownership transfers cleanly
-    supervisor_started = False
-
-    # Queue acquisition: separate queue timeout before worker starts
-    queue_timeout_sec = float(os.environ.get("HAMIGENZ_QUEUE_TIMEOUT_SECONDS", 15.0))
     try:
-        async with asyncio.timeout(queue_timeout_sec):
-            await sem.acquire()
-    except TimeoutError:
-        _cleanup_staging_artifacts()
-        if _reindex_lock is not None and _reindex_lock.locked():
-            _reindex_lock.release()
-        raise HTTPException(503, "Server busy processing documents. Please try again shortly.")
-    except Exception:
-        _cleanup_staging_artifacts()
-        if _reindex_lock is not None and _reindex_lock.locked():
-            _reindex_lock.release()
-        raise
-
-    # Worker execution: supervisor-owned terminal cleanup (Task 2.1.1-R3)
-    proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
-    deadline = time.monotonic() + proc_timeout_sec
-    MAX_PAGES = 200
-    thread_done = threading.Event()
-
-    def _sync_worker():
-        try:
-            if reindex_doc_id and new_gen is not None:
-                # Staged reindex: uses generation-specific paths, atomic commit (Task 2.1.2)
-                return pipeline.process_document_staged(
-                    filepath=str(filepath),
-                    doc_id=doc_id,
-                    filename=filename,
-                    session_id=session_id,
-                    new_gen=new_gen,
-                    faiss_path=staged_faiss,
-                    meta_json_path=staged_meta,
-                    deadline=deadline,
-                    expected_gen=cur_gen,
-                )
-            return pipeline.process_document(
-                str(filepath),
-                doc_id,
-                filename,
-                session_id=session_id,
-                deadline=deadline,
+        # ── Restrict Content-Type (Requirement 2) ──────────────────────
+        content_type_header = request.headers.get("content-type", "")
+        content_type, _ = parse_options_header(content_type_header)
+        if content_type != b"multipart/form-data":
+            ct_str = content_type.decode("latin-1", "replace") if isinstance(content_type, bytes) else str(content_type)
+            raise HTTPException(
+                status_code=415,
+                detail=f"Unsupported media type: '{ct_str}'. Upload endpoint requires multipart/form-data.",
             )
-        finally:
-            thread_done.set()
 
-    async def _supervised_worker():
-        worker_outcome = "error"
-        worker_payload = None
+        # ── Safe multipart parsing with spool-cleanup guarantee (Requirement 1) ──
+        parser = SafeMultiPartParser(
+            request.headers,
+            request.stream(),
+            max_files=1,
+            max_fields=10,
+        )
+        form = None
         try:
-            worker_payload = await asyncio.to_thread(_sync_worker)
-            worker_outcome = "ok"
-        except ProcessingTimeoutError as exc:
-            worker_outcome = "timeout"
-            worker_payload = exc
+            form = await parser.parse()
+        except (_BodyTooLargeError, HTTPException):
+            raise
+        except MultiPartException as mpe:
+            raise HTTPException(400, f"Malformed multipart form data: {mpe.message}") from mpe
         except Exception as exc:
-            print(f"[hamigenz] Document processing failed for {doc_id}: {exc}")
-            import traceback
-            traceback.print_exc()
-            worker_outcome = "error"
-            worker_payload = exc
-        finally:
-            # 1. Guarantee the synchronous worker thread has completely stopped
-            if not thread_done.is_set():
-                await asyncio.to_thread(thread_done.wait)
+            print(f"[hamigenz] Malformed multipart form data: {exc}")
+            raise HTTPException(400, "Malformed multipart form data.") from exc
 
-            # 2. Supervisor-owned terminal cleanup: runs reliably regardless of caller state
+        # Guaranteed close of ALL FormData entries — including unexpected or duplicate file fields —
+        # regardless of which validation path exits. upload_file.close() alone only covers the
+        # single field we extract; form.close() covers every UploadFile in the form.
+        # ponytail: form is closed via the outer try/finally below.
+
+        raw_file = form.get("file")
+        if not isinstance(raw_file, UploadFile):
+            raise HTTPException(400, "Missing required 'file' upload field.")
+        upload_file = raw_file
+
+        filename = upload_file.filename or "unknown"
+        ext = Path(filename).suffix.lower()
+
+        if ext not in (".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"):
+            raise HTTPException(400, f"Unsupported file type: {ext}. Use PDF or image (PNG/JPG/TIFF).")
+
+        # ── Bounded staging copy in 64 KiB chunks ─────────────────────
+        _MAGIC = {
+            ".pdf": b"%PDF-",
+            ".png": b"\x89PNG\r\n\x1a\n",
+            ".jpg": b"\xff\xd8\xff",
+            ".jpeg": b"\xff\xd8\xff",
+            ".tif": b"II*\x00",
+        }
+        _CHUNK = 65536  # 64 KiB
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        staging_path = UPLOAD_DIR / f".tmp_{uuid.uuid4().hex}"
+        total_file_bytes = 0
+        try:
+            with open(staging_path, "wb") as out_f:
+                # First chunk: magic-byte validation
+                first_chunk = await upload_file.read(_CHUNK)
+                if len(first_chunk) < 100:
+                    raise HTTPException(400, "File too small.")
+                head = first_chunk[:16]
+                expected = _MAGIC.get(ext)
+                tiff_be = ext in (".tif", ".tiff") and head.startswith(b"MM\x00*")
+                if expected and not (head.startswith(expected) or tiff_be):
+                    raise HTTPException(400, "File content does not match its type. Upload rejected.")
+                out_f.write(first_chunk)
+                total_file_bytes += len(first_chunk)
+                # Remaining chunks
+                while True:
+                    chunk = await upload_file.read(_CHUNK)
+                    if not chunk:
+                        break
+                    total_file_bytes += len(chunk)
+                    if total_file_bytes > _UPLOAD_FILE_LIMIT:
+                        raise HTTPException(413, "Uploaded file exceeds 50 MiB limit.")
+                    out_f.write(chunk)
+        except Exception as exc:
+            if staging_path is not None:
+                try:
+                    staging_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                staging_path = None
+            if isinstance(exc, HTTPException):
+                raise
+            print(f"[hamigenz] Failed to save upload: {exc}")
+            raise HTTPException(500, "Failed to save uploaded document.") from exc
+        except BaseException:
+            if staging_path is not None:
+                try:
+                    staging_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                staging_path = None
+            raise
+
+        # Multipart upload stream completely consumed; close ALL FormData resources promptly.
+        # form.close() closes every UploadFile in the form — including unexpected or duplicate
+        # file fields that form.get("file") would not reach.
+        await form.close()
+        form = None
+        upload_file = None  # Owned by form; already closed above
+
+        # ── Bound Staged Processing Backlog (Requirement 3) ────────────
+        backlog_sem = get_staged_backlog_semaphore()
+        try:
+            await asyncio.wait_for(backlog_sem.acquire(), timeout=0.1)
+            backlog_acquired = True
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail="Processing queue backlog is full. Please retry shortly.",
+                headers={"Retry-After": "5"},
+            )
+
+        # Move staged temp file to its final or generation-specific path
+        processor = DocumentProcessor(upload_dir=str(UPLOAD_DIR))
+        if reindex_doc_id:
+            cur_gen = app.state.metadata.get_reindex_generation(reindex_doc_id)
+            new_gen = cur_gen + 1
+            _stage_ext = re.sub(
+                r"[^a-z0-9]", "", Path(filename).suffix.lower()
+            )[:5]
+            _stage_name = (
+                f"{reindex_doc_id}_g{new_gen}.{_stage_ext}"
+                if _stage_ext
+                else f"{reindex_doc_id}_g{new_gen}"
+            )
+            staging_upload_path = UPLOAD_DIR / _stage_name
+            staging_path.replace(staging_upload_path)
+            staging_path = None  # Transferred to filepath
+            filepath = str(staging_upload_path)
+            doc_id = reindex_doc_id
+            staged_faiss = VECTORS_DIR / f"{doc_id}_g{new_gen}.faiss"
+            staged_meta = VECTORS_DIR / f"{doc_id}_g{new_gen}_meta.json"
+        else:
+            filepath, doc_id = processor.save_upload_from_path(staging_path, filename)
+            staging_path = None  # Transferred to filepath
+
+        # Ingress phase complete! Release admission permit immediately so next upload can stream
+        adm_sem.release()
+        adm_released = True
+
+        # ── Handoff to Processing Queue ────────────────────────────────
+        if not hasattr(app.state, "pipeline"):
+            _cleanup_staging_artifacts()
+            raise HTTPException(503, "Backend not ready - run with lifespan (e.g. uvicorn main:app)")
+        pipeline = app.state.pipeline
+        sem = get_processing_semaphore()
+
+        queue_timeout_sec = float(os.environ.get("HAMIGENZ_QUEUE_TIMEOUT_SECONDS", 15.0))
+        try:
+            async with asyncio.timeout(queue_timeout_sec):
+                await sem.acquire()
+                sem_acquired = True
+        except TimeoutError:
+            _cleanup_staging_artifacts()
+            raise HTTPException(503, "Server busy processing documents. Please try again shortly.")
+        except Exception:
+            _cleanup_staging_artifacts()
+            raise
+
+        # Document transitions from staged backlog to active processing slot
+        if backlog_acquired:
+            backlog_sem.release()
+            backlog_acquired = False
+
+        # Worker execution: supervisor-owned terminal cleanup (Task 2.1.1-R3)
+        proc_timeout_sec = float(os.environ.get("HAMIGENZ_PROCESSING_TIMEOUT_SECONDS", 120.0))
+        deadline = time.monotonic() + proc_timeout_sec
+        MAX_PAGES = 200
+        thread_done = threading.Event()
+
+        def _sync_worker():
             try:
-                if worker_outcome in ("timeout", "error"):
-                    _cleanup_staging_artifacts()
-                elif worker_outcome == "ok" and isinstance(worker_payload, dict):
-                    if worker_payload.get("status") == "error":
-                        _cleanup_staging_artifacts()
-                    elif worker_payload.get("pages", 0) > MAX_PAGES:
-                        # For new document: purge; for reindex: process_document_staged rejected before commit
-                        if not reindex_doc_id:
-                            try:
-                                app.state.vector_store.remove_document(doc_id)
-                            except Exception:
-                                pass
-                            try:
-                                app.state.metadata.delete_document(doc_id, session_id=session_id)
-                            except Exception:
-                                pass
-                        _cleanup_staging_artifacts()
-                    # If valid, successful, and within limits, keep document representations and file
-            except Exception as cleanup_exc:
-                print(f"[hamigenz] Terminal cleanup error for {doc_id}: {cleanup_exc}")
+                if reindex_doc_id and new_gen is not None:
+                    return pipeline.process_document_staged(
+                        filepath=str(filepath),
+                        doc_id=doc_id,
+                        filename=filename,
+                        session_id=session_id,
+                        new_gen=new_gen,
+                        faiss_path=staged_faiss,
+                        meta_json_path=staged_meta,
+                        deadline=deadline,
+                        expected_gen=cur_gen,
+                    )
+                return pipeline.process_document(
+                    str(filepath),
+                    doc_id,
+                    filename,
+                    session_id=session_id,
+                    deadline=deadline,
+                )
             finally:
-                # 3. Release permit strictly after worker has stopped and terminal cleanup has finished
-                sem.release()
-                # 4. Supervisor owns releasing the reindex lock upon worker completion (Task 2.1.2-E2)
-                if _reindex_lock is not None and _reindex_lock.locked():
-                    _reindex_lock.release()
+                thread_done.set()
 
-        return worker_outcome, worker_payload
+        async def _supervised_worker():
+            worker_outcome = "error"
+            worker_payload = None
+            try:
+                worker_payload = await asyncio.to_thread(_sync_worker)
+                worker_outcome = "ok"
+            except ProcessingTimeoutError as exc:
+                worker_outcome = "timeout"
+                worker_payload = exc
+            except Exception as exc:
+                print(f"[hamigenz] Document processing failed for {doc_id}: {exc}")
+                import traceback
+                traceback.print_exc()
+                worker_outcome = "error"
+                worker_payload = exc
+            finally:
+                # 1. Guarantee the synchronous worker thread has completely stopped
+                if not thread_done.is_set():
+                    await asyncio.to_thread(thread_done.wait)
 
-    # Transfer lock ownership to supervisor task before launching
-    supervisor_started = True
-    active_tasks = get_active_supervisor_tasks()
-    supervisor_task = asyncio.create_task(_supervised_worker())
-    active_tasks.add(supervisor_task)
-    supervisor_task.add_done_callback(active_tasks.discard)
+                # 2. Supervisor-owned terminal cleanup: runs reliably regardless of caller state
+                try:
+                    if worker_outcome in ("timeout", "error"):
+                        _cleanup_staging_artifacts()
+                    elif worker_outcome == "ok" and isinstance(worker_payload, dict):
+                        if worker_payload.get("status") == "error":
+                            _cleanup_staging_artifacts()
+                        elif worker_payload.get("pages", 0) > MAX_PAGES:
+                            if not reindex_doc_id:
+                                try:
+                                    app.state.vector_store.remove_document(doc_id)
+                                except Exception:
+                                    pass
+                                try:
+                                    app.state.metadata.delete_document(doc_id, session_id=session_id)
+                                except Exception:
+                                    pass
+                            _cleanup_staging_artifacts()
+                except Exception as cleanup_exc:
+                    print(f"[hamigenz] Terminal cleanup error for {doc_id}: {cleanup_exc}")
+                finally:
+                    # 3. Release processing permit strictly after worker has stopped and cleanup is done
+                    sem.release()
+                    # (Note: adm_sem was already released right after staging!)
+                    # 4. Supervisor owns releasing the reindex lock upon worker completion (Task 2.1.2-E2)
+                    if _reindex_lock is not None and _reindex_lock.locked():
+                        _reindex_lock.release()
 
-    try:
-        outcome, payload = await asyncio.shield(supervisor_task)
-    except asyncio.CancelledError:
-        # Request coroutine cancelled; supervisor_task continues in background to terminal state
-        # DO NOT release _reindex_lock here — supervisor owns it until background worker exits
-        raise
+            return worker_outcome, worker_payload
+
+        # Transfer lock ownership to supervisor task before launching
+        supervisor_started = True
+        active_tasks = get_active_supervisor_tasks()
+        supervisor_task = asyncio.create_task(_supervised_worker())
+        active_tasks.add(supervisor_task)
+        supervisor_task.add_done_callback(active_tasks.discard)
+
+        try:
+            outcome, payload = await asyncio.shield(supervisor_task)
+        except asyncio.CancelledError:
+            # Request coroutine cancelled; supervisor_task continues in background to terminal state
+            raise
+
+        if outcome == "timeout":
+            _cleanup_staging_artifacts()
+            raise HTTPException(503, "Document processing timed out. Please try again shortly.") from payload
+        elif outcome == "error":
+            _cleanup_staging_artifacts()
+            raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.") from payload
+
+        result = payload
+        if result["status"] == "error":
+            _cleanup_staging_artifacts()
+            raise HTTPException(400, result.get("message", "Processing failed"))
+
+        if result["pages"] > MAX_PAGES:
+            if not reindex_doc_id:
+                try:
+                    app.state.vector_store.remove_document(doc_id)
+                except Exception:
+                    pass
+                try:
+                    app.state.metadata.delete_document(doc_id, session_id=session_id)
+                except Exception:
+                    pass
+            _cleanup_staging_artifacts()
+            raise HTTPException(400, f"Document has too many pages (max {MAX_PAGES}).")
+
+        # ── Reindex post-commit: update _doc_indices ──
+        if reindex_doc_id and new_gen is not None:
+            new_faiss = VECTORS_DIR / f"{doc_id}_g{new_gen}.faiss"
+            if new_faiss.exists():
+                app.state.vector_store._doc_indices[doc_id] = str(new_faiss)
+
+        return UploadResponse(
+            doc_id=doc_id,
+            filename=filename,
+            pages=result["pages"],
+            chunks=result["chunks"],
+            language_hint=result["language_hint"],
+            message=f"Document processed successfully. {result['chunks']} chunks indexed.",
+        )
+
     finally:
-        # Safety net: only release if supervisor never launched
-        if not supervisor_started and _reindex_lock is not None and _reindex_lock.locked():
-            _reindex_lock.release()
-
-    if outcome == "timeout":
-        # Idempotent cleanup in case supervisor already unlinked
-        _cleanup_staging_artifacts()
-        raise HTTPException(503, "Document processing timed out. Please try again shortly.") from payload
-    elif outcome == "error":
-        _cleanup_staging_artifacts()
-        raise HTTPException(400, "Could not process this document. The file may be corrupted or malformed.") from payload
-
-    result = payload
-    if result["status"] == "error":
-        _cleanup_staging_artifacts()
-        raise HTTPException(400, result.get("message", "Processing failed"))
-
-    # ── Resource limits on processed documents ────────────────────────
-    if result["pages"] > MAX_PAGES:
-        if not reindex_doc_id:
+        # Guaranteed cleanup for ingress admission permit
+        if not adm_released:
+            adm_sem.release()
+            adm_released = True
+        # Guaranteed cleanup for staged backlog permit if still queued
+        if backlog_acquired:
+            backlog_sem.release()
+            backlog_acquired = False
+        # Guaranteed cleanup for multipart FormData — form.close() closes every UploadFile
+        # it contains, including unexpected or duplicate file fields beyond the one we extracted.
+        if form is not None:
             try:
-                app.state.vector_store.remove_document(doc_id)
+                await form.close()
             except Exception:
                 pass
+            form = None
+            upload_file = None  # Owned by form; already closed above
+        # Guaranteed cleanup for partial staging file
+        if staging_path is not None:
             try:
-                app.state.metadata.delete_document(doc_id, session_id=session_id)
-            except Exception:
+                staging_path.unlink(missing_ok=True)
+            except OSError:
                 pass
-        _cleanup_staging_artifacts()
-        raise HTTPException(400, f"Document has too many pages (max {MAX_PAGES}).")
-
-    # ── Reindex post-commit: update _doc_indices and remove old generation files ──
-    # swap_document was executed inside process_document_staged right after commit_reindex.
-    # Sync here as an idempotent safeguard.
-    if reindex_doc_id and new_gen is not None:
-        new_faiss = VECTORS_DIR / f"{doc_id}_g{new_gen}.faiss"
-        if new_faiss.exists():
-            app.state.vector_store._doc_indices[doc_id] = str(new_faiss)
-
-    return UploadResponse(
-        doc_id=doc_id,
-        filename=filename,
-        pages=result["pages"],
-        chunks=result["chunks"],
-        language_hint=result["language_hint"],
-        message=f"Document processed successfully. {result['chunks']} chunks indexed.",
-    )
+            staging_path = None
+        # Guaranteed cleanup for staged files, processing permit, and lock if supervisor never took ownership
+        if not supervisor_started:
+            _cleanup_staging_artifacts()
+            if sem_acquired:
+                sem.release()
+                sem_acquired = False
+            if _reindex_lock is not None and _reindex_lock.locked():
+                _reindex_lock.release()
 
 
 
@@ -1591,8 +1879,8 @@ async def fill_image(doc_id: str, page_num: int, req: FillImageRequest,
     except HTTPException:
         raise
     except Exception as e:
-        print(f"fill_image failed for doc {doc_id}: {e}")
-        raise HTTPException(500, f"Fill preview failed: {e}")
+        print(f"[hamigenz] fill_image failed for doc {doc_id}: {e}")
+        raise HTTPException(500, "Could not generate form fill preview.") from e
 
 
 @app.post("/documents/{doc_id}/form-fields")
@@ -1603,7 +1891,8 @@ async def set_form_fields(doc_id: str, req: dict, request: Request, _rl: None = 
     try:
         values = [v for v in (req.get("values") or req.get("fields") or [])]
     except Exception as e:
-        raise HTTPException(400, f"Invalid form fields: {e}") from e
+        print(f"[hamigenz] Invalid form fields for doc {doc_id}: {e}")
+        raise HTTPException(400, "Invalid form fields payload.") from e
 
     app.state.metadata.set_form_fields(doc_id, values, session_id=session_id)
     return {"doc_id": doc_id, "count": len(values), "saved": True}
