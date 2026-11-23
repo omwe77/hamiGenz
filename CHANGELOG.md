@@ -32,6 +32,40 @@ enderPreviewCanvas() now returns Promise<string> and awaits
 
 
 ## Unreleased (main)
+
+## [0.1.0] - 2026-11-22
+### Summary
+First milestone release of hamiGenZ, a Nepal-focused document understanding platform built around Open Knowledge Format (OKF v0.2), local document processing, multilingual retrieval, and Devanagari OCR.
+
+### M1 — Security & Ingress Hardening
+- **Bounded upload request handling**: Enforced streaming raw body size bounds (52 MiB) and multipart file field limits (50 MiB) to prevent memory exhaustion from oversized uploads.
+- **Upload admission control**: Implemented semaphore-based concurrency control (max 4 concurrent uploads) returning clean 503 Service Unavailable when saturated.
+- **Upload validation & error handling**: Preserved 413 Payload Too Large on oversized payloads, ensured automatic parent directory creation before file staging, and neutralized unsafe paths.
+- **ASGI & AnyIO test reliability**: Replaced nested `asyncio.run` calls in ASGI transport tests with `anyio.run` across Starlette/FastAPI endpoints, resolving Windows threadpool event loop conflicts.
+- **Pytest root collection fix**: Added root `pytest.ini` with `testpaths = tests` to prevent directory-level collection collisions.
+- **Non-root Docker runtime**: Hardened container to run as dedicated unprivileged user `hamigenz` (UID/GID 10001) with proper path ownership across `/app` and `/home/hamigenz`.
+
+### M2 — OCR & Document Pipeline Reliability
+- **Dynamic Tesseract discovery & Nepali fallback**: Implemented automatic system binary discovery (`diagnose_tesseract()`) across Windows/Linux paths, Devanagari preference scoring, and an automated fallback cascade (Tesseract → EasyOCR → TrOCR).
+- **Offline model loading safeguards**: Configured EasyOCR with explicit `download_enabled=False` and HuggingFace TrOCR with `local_files_only=True` to guarantee strictly offline execution with zero unexpected network downloads.
+- **Unicode NFC normalization**: Added standard Unicode NFC normalization (`unicodedata.normalize("NFC", ...)`) across extracted text and OCR outputs for consistent Devanagari representations.
+- **Document processing bounds & safety**: Enforced context-managed PDF and PIL image lifetimes to eliminate file handle leaks, added protection against zero-byte/corrupt/password-protected files, bounds enforcement on page rendering (`max_pages=200`), and out-of-bounds page index safety.
+- **Generation-aware FAISS cleanup**: Enhanced `VectorStore.remove_document` to discover and purge all generation-specific index and metadata artifacts (`{doc_id}_g*.faiss`, `{doc_id}_g*_meta.json`) alongside flat legacy files, preventing disk leaks during staged re-indexing.
+- **Source registry URL validation**: Hardened registry domain lookup (`find_by_domain`) against custom port suffixes and trailing FQDN root dots; hardened `classify_url` to reject embedded userinfo credentials (`user:pass@host`).
+- **Expanded CI coverage**: Expanded GitHub Actions workflow to run backend tests on Python 3.11, frontend tests on Node 24, and Docker container validation. Added isolated upload directory fixtures.
+
+### Validation
+- **Combined regression suite**: 580 passed, 1 skipped across the complete test matrix.
+- **Post-merge trunk CI**: GitHub Actions run `45009228196` succeeded across Backend CI, Frontend CI, and Docker Validation.
+- **Local acceptance verification**: Full 8-step local workflow validated with synthetic bilingual documents, Devanagari OCR, Ollama Qwen3:8b inference, and multi-generation cleanup.
+
+### Important Limitations
+- **Local-first beta**: Designed for local self-hosted operation, not a public multi-tenant cloud service.
+- **Local generative Q&A requirements**: Live Q&A and form assistance require a locally running Ollama instance (`qwen3:8b`) with at least 8 GB RAM/VRAM. The system degrades gracefully with a clean 503 response when Ollama is unavailable.
+- **Nepali OCR scope**: Verified against synthetic and reference Devanagari fixtures; broad OCR accuracy across heavily degraded, torn, or low-contrast physical paper scans has not yet been established.
+- **Railway volume permissions**: Persistent-volume file permissions on Railway deployments remain unverified.
+- **Vercel deployment disclosure**: The public deployment at `hami-genz.vercel.app` is a client-side frontend demo with illustrative fixtures and does not host live private document processing.
+
 ### Documentation & Release Polish (2026-10-25)
 - **Root README.md**: Complete rewrite with recruiter-ready architecture, live Vercel demo link, clear client-side demo mode disclosure, OKF v0.2 vs conventional RAG comparison table, Mermaid architecture diagram, technology stack breakdown, verified multi-platform setup commands, and benchmark results.
 - **frontend/README.md**: Replaced generic template with Next.js 16/React 19 architecture guide, environment variables, demo mode operations, and testing commands.

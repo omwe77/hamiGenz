@@ -117,8 +117,6 @@ All M1 quality gates, test suite migrations, security hardening, and CI baseline
 
 ---
 
-### Next Milestone 2 Tasks
-
 #### [M2-TASK-03] Vector Store / Generation-Safe Reindexing Lock & Cleanups
 - **Status:** Complete (Verified)
 - **Date:** 2026-11-18
@@ -149,21 +147,65 @@ All M1 quality gates, test suite migrations, security hardening, and CI baseline
 
 ---
 
-### Milestone 2 Summary & PR Readiness
+### Milestone 2 Summary & PR Submission
 
-All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final QA hardenings are complete and verified:
-1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, binary discovery, Devanagari preference scoring, and offline safe loading.
-   - **Offline Enforcement:** EasyOCR initialized with explicit `download_enabled=False` to prevent unexpected network requests during runtime; models must be pre-cached (`python -c "import easyocr; easyocr.Reader(['en', 'ne'])"`). TrOCR configured with `local_files_only=True`.
-   - **Performance & Cascade Strategy:** Hardened `best_ocr_text` to execute EasyOCR only when Tesseract extracts insufficient Devanagari (< 10 chars) or when handwriting is explicitly preferred, eliminating redundant PyTorch CPU latency when Tesseract succeeds. Enabled TrOCR fallback when primary engines produce no text. Added tests confirming threshold skipping, fallback execution, and handwriting behavior.
-   - **Real OCR Quality Test:** Pre-rendered reference fixture image (`tests/ocr_tests/nep.png`) with verified Devanagari glyphs; updated `test_nepali_ocr_produces_devanagari` to assert the exact transcription (`"नेपाल सरकार"`) with NFC normalization and verify 0.0 Character Error Rate (CER).
-2. `[M2-TASK-02]`: DocumentProcessor resilience, context-managed file cleanup, corruption/zero-byte handling, bounded max pages, out-of-bounds rendering safety, and Unicode NFC normalization.
-3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation artifact purging on document deletion (`{doc_id}_g*.faiss` and `{doc_id}_g*_meta.json` plus legacy flat files), and lock safety.
-4. `[M2-TASK-04]`: Source registry domain validation (`find_by_domain` handling ports and trailing root dots) and credential injection defense (`classify_url` safely rejecting userinfo `user:pass@host`).
+All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final QA hardenings were implemented and verified:
+1. `[M2-TASK-01]`: Nepali OCR Engine Reliability, dynamic binary discovery, Devanagari preference scoring, offline safe loading (`download_enabled=False`, `local_files_only=True`), OCR cascade fallback, and reference Devanagari CER test fixture.
+2. `[M2-TASK-02]`: DocumentProcessor extraction resilience, context-managed PDF/PIL lifecycle, zero-byte/corrupt/password protection, bounds enforcement (`max_pages=200`), out-of-bounds page rendering safety, and Unicode NFC normalization.
+3. `[M2-TASK-03]`: Vector store generation-safe reindexing, multi-generation FAISS and metadata artifact cleanup on document deletion, and lock safety.
+4. `[M2-TASK-04]`: Official source registry domain validation (`find_by_domain` port and root-dot handling) and URL credential defense (`classify_url` rejecting userinfo injection).
 5. **CI Trigger, Test Isolation & Full Regression:**
-   - Expanded `.github/workflows/ci.yml` `pull_request` branch trigger to support stacked branches (`main`, `dev`, `chore/**`, `feat/**`, `fix/**`).
-   - Expanded regression matrix to include `tests/test_document_processor.py`, `tests/test_ocr_engines.py`, and `tests/test_upload_ingress.py`.
-   - Added hermetic `isolated_upload_dir` fixtures to `test_upload_ingress.py` and `test_reindex_safety.py`.
-   - **OCR Test Suite:** `pytest tests/test_ocr_engines.py -v` -> **39 passed, 0 skipped, 0 failed** in 6.12s.
-   - **Full Codebase Regression:** `pytest -q` -> **579 passed, 1 skipped, 10 warnings** across 580 collected tests in 296.84s (Python 3.12.10, Windows 11).
+   - Expanded `.github/workflows/ci.yml` `pull_request` triggers to support stacked branches.
+   - Expanded regression matrix for document processor, OCR engines, and upload ingress.
+   - Hermetic test fixtures isolating upload directories.
+   - Full test suite: 580 passed, 1 skipped across 581 tests.
 
-Branch `feat/m2-ocr-reliability` is submitted as stacked PR #4 targeting `fix/security-test-suite-anyio`. Awaiting explicit owner approval.
+---
+
+#### [M2-TASK-05] PR Retargeting, CI Gate & Trunk Merge
+- **Status:** Complete (Merged into `main`)
+- **Date:** 2026-11-22
+- **PR:** https://github.com/omwe77/hamiGenz/pull/4
+- **Branch:** `feat/m2-ocr-reliability`
+- **Initial Target:** `fix/security-test-suite-anyio` (stacked)
+- **Retargeted Target:** `main` (after M1 merge)
+- **Synchronization Commit:** `c97e9cb` (`chore(merge): sync main into feat/m2-ocr-reliability`)
+- **Final Head SHA:** `4b65b3f66d3a76c7794cfcbfc63b5ffb2963d458`
+- **PR CI Run (`44989745711`):**
+  - Backend CI (Python 3.11): ✅ SUCCESS
+  - Frontend CI (Node 24): ✅ SUCCESS
+  - Docker Validation: ✅ SUCCESS
+- **Main Merge Commit:** `832341754d7d240e58c1b83d0d8cd030ad190496`
+- **Post-Merge CI Run on Main (`45009228196`):**
+  - Backend CI (Python 3.11): ✅ SUCCESS (2m13s)
+  - Frontend CI (Node 24): ✅ SUCCESS (1m30s)
+  - Docker Validation: ✅ SUCCESS (1m08s)
+- **Ancestry Verification:**
+  - Both M1 (`68d79e3ec24c6403369611a10ea797808e92bac9`) and M2 (`4b65b3f66d3a76c7794cfcbfc63b5ffb2963d458`) are confirmed direct ancestors of `origin/main` at `8323417`.
+- **Local Acceptance Verification:**
+  - Complete 8-step local workflow validated: synthetic bilingual document upload, text extraction, OCR fallback, vector indexing, Ollama Qwen3:8b Q&A with grounded citations, and generation-aware document deletion.
+
+---
+
+### Milestone 2 Status: COMPLETE (Merged into `main` at `8323417`)
+
+All M2 quality gates, OCR and document processor reliability improvements, test matrices, and CI baselines are established, passing, and merged into `main`.
+
+---
+
+## Release Publication: v0.1.0 (Local-First Beta)
+
+- **Release Version:** `v0.1.0`
+- **Release Tag:** `v0.1.0`
+- **Release Commit:** `832341754d7d240e58c1b83d0d8cd030ad190496`
+- **Publication Date:** 2026-11-22
+- **GitHub Release URL:** https://github.com/omwe77/hamiGenz/releases/tag/v0.1.0
+- **Summary of Included Milestones:**
+  - **M1 (Security & Ingress Hardening):** Bounded upload request size controls (52 MiB raw, 50 MiB file field), admission control (max 4 concurrent), AnyIO test reliability, non-root Docker runtime (UID/GID 10001).
+  - **M2 (OCR & Pipeline Reliability):** Dynamic Tesseract discovery and Nepali fallback cascade, offline EasyOCR/TrOCR model loading safeguards, Unicode NFC normalization, DocumentProcessor resource/bounds safety, generation-aware FAISS cleanup, source registry URL hardening, expanded CI.
+- **Operational Boundaries & Limitations:**
+  - Local-first beta designed for local self-hosted execution; not a public multi-tenant hosted service.
+  - Generative Q&A requires a locally running Ollama instance (`qwen3:8b`) with at least 8 GB RAM/VRAM; degrades gracefully to 503 when absent.
+  - Nepali OCR verified on synthetic/reference fixtures; broad accuracy on real-world degraded scans remains unproven.
+  - Railway persistent-volume permissions remain unverified; cloud deployment is deferred.
+  - Public deployment at `hami-genz.vercel.app` is a client-side portfolio demonstration only.
