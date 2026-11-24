@@ -55,7 +55,7 @@ First milestone release of hamiGenZ, a Nepal-focused document understanding plat
 ### Validation
 - **Combined regression suite**: 580 passed, 1 skipped across the complete test matrix.
 - **Post-merge trunk CI**: GitHub Actions run `45009228196` succeeded across Backend CI, Frontend CI, and Docker Validation.
-- **Local acceptance verification**: Full 8-step local workflow validated with synthetic bilingual documents, Devanagari OCR, Ollama Qwen3:8b inference, and multi-generation cleanup.
+- **Agent-reported local validation**: An 8-step component lifecycle was exercised via a local scratch script covering synthetic bilingual document creation, PyMuPDF extraction, reference Devanagari OCR fixture evaluation, embedding, vector indexing, citation retrieval, negative boundaries, and generation artifact deletion. Note: live Ollama generation was not executed (the test verified graceful 503 degradation with Ollama offline), the scratch script was not retained in git, and this workflow represents agent-reported validation rather than independent product acceptance.
 
 ### Important Limitations
 - **Local-first beta**: Designed for local self-hosted operation, not a public multi-tenant cloud service.

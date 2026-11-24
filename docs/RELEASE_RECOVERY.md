@@ -182,8 +182,9 @@ All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final 
   - Docker Validation: ✅ SUCCESS (1m08s)
 - **Ancestry Verification:**
   - Both M1 (`68d79e3ec24c6403369611a10ea797808e92bac9`) and M2 (`4b65b3f66d3a76c7794cfcbfc63b5ffb2963d458`) are confirmed direct ancestors of `origin/main` at `8323417`.
-- **Local Acceptance Verification:**
-  - Complete 8-step local workflow validated: synthetic bilingual document upload, text extraction, OCR fallback, vector indexing, Ollama Qwen3:8b Q&A with grounded citations, and generation-aware document deletion.
+- **Agent-Reported Local Validation (Uncommitted Scratch Script):**
+  - An 8-step component-level workflow was exercised via an ephemeral local script (`acceptance_workflow_demo.py`, not committed to git): synthetic bilingual document creation, PyMuPDF text extraction, reference Devanagari OCR fixture evaluation (`tests/ocr_tests/nep.png`), vector indexing, grounded citation retrieval, negative input rejection, and artifact deletion.
+  - *Audit qualification:* The run verified offline LLM error handling (`LLMUnavailableError` / 503) because Ollama was offline on `localhost:11434`; live generative Qwen3:8b inference was not executed. Because the script and test artifacts were not committed to the repository, this constitutes agent-reported local validation rather than an independently verifiable acceptance test.
 
 ---
 
