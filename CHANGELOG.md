@@ -53,8 +53,8 @@ First milestone release of hamiGenZ, a Nepal-focused document understanding plat
 - **Expanded CI coverage**: Expanded GitHub Actions workflow to run backend tests on Python 3.11, frontend tests on Node 24, and Docker container validation. Added isolated upload directory fixtures.
 
 ### Validation
-- **Combined regression suite**: 580 passed, 1 skipped across the complete test matrix.
-- **Post-merge trunk CI**: GitHub Actions run `45009228196` succeeded across Backend CI, Frontend CI, and Docker Validation.
+- **Agent-reported local full-suite result**: 580 passed, 1 skipped, 15 warnings across 581 tests in 422.90s, executed locally via `pytest -q --tb=short` on Python 3.12.10 (Windows 11) on the merged M1+M2 tree (1 intentional skip: `tests/test_pipeline.py:211`).
+- **Post-merge trunk CI**: GitHub Actions run `45009228196` succeeded across all three targeted jobs on `main`: Backend CI (Python 3.11 targeted matrix), Frontend CI (Node 24), and Docker Validation (Root Context with offline model cache).
 - **Agent-reported local validation**: An 8-step component lifecycle was exercised via a local scratch script covering synthetic bilingual document creation, PyMuPDF extraction, reference Devanagari OCR fixture evaluation, embedding, vector indexing, citation retrieval, negative boundaries, and generation artifact deletion. Note: live Ollama generation was not executed (the test verified graceful 503 degradation with Ollama offline), the scratch script was not retained in git, and this workflow represents agent-reported validation rather than independent product acceptance.
 
 ### Important Limitations

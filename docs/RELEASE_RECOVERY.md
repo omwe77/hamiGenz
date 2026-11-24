@@ -158,7 +158,7 @@ All planned Milestone 2 tasks (`[M2-TASK-01]` through `[M2-TASK-04]`) and final 
    - Expanded `.github/workflows/ci.yml` `pull_request` triggers to support stacked branches.
    - Expanded regression matrix for document processor, OCR engines, and upload ingress.
    - Hermetic test fixtures isolating upload directories.
-   - Full test suite: 580 passed, 1 skipped across 581 tests.
+   - **Agent-Reported Local Full Suite Verification**: Executed locally via `pytest -q --tb=short` on Python 3.12.10 (Windows 11) on the merged tree: **580 passed, 1 skipped, 15 warnings** across 581 collected tests in 422.90s (1 intentional skip: `tests/test_pipeline.py:211`). Note: GitHub CI executes a targeted matrix, documented separately under CI checks below.
 
 ---
 
