@@ -31,8 +31,6 @@ enderPreviewCanvas() now returns Promise<string> and awaits
 - **README.md**: Removed stale hard-coded test count from quick-start snippet.
 
 
-## Unreleased (main)
-
 ## [0.1.0] - 2026-11-22
 ### Summary
 First milestone release of hamiGenZ, a Nepal-focused document understanding platform built around Open Knowledge Format (OKF v0.2), local document processing, multilingual retrieval, and Devanagari OCR.
@@ -66,6 +64,12 @@ First milestone release of hamiGenZ, a Nepal-focused document understanding plat
 - **Railway volume permissions**: Persistent-volume file permissions on Railway deployments remain unverified.
 - **Vercel deployment disclosure**: The public deployment at `hami-genz.vercel.app` is a client-side frontend demo with illustrative fixtures and does not host live private document processing.
 
+
+## Unreleased
+_Reserved for future changes._
+
+
+## Historical Changes (2026-10-25)
 ### Documentation & Release Polish (2026-10-25)
 - **Root README.md**: Complete rewrite with recruiter-ready architecture, live Vercel demo link, clear client-side demo mode disclosure, OKF v0.2 vs conventional RAG comparison table, Mermaid architecture diagram, technology stack breakdown, verified multi-platform setup commands, and benchmark results.
 - **frontend/README.md**: Replaced generic template with Next.js 16/React 19 architecture guide, environment variables, demo mode operations, and testing commands.
