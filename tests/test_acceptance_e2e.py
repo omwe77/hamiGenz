@@ -36,8 +36,10 @@ from llm_service import LLMUnavailableError, OllamaService
 from tests.evaluation.generate_ocr_corpus import get_font
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def client():
+    # Function-scoped so conftest.py's autouse mock_offline_embeddings patches
+    # main.EmbeddingService before TestClient triggers FastAPI lifespan startup.
     with TestClient(main.app) as c:
         yield c
 
