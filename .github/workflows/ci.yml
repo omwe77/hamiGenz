@@ -36,13 +36,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install system dependencies (Tesseract OCR)
+      - name: Install system dependencies (Tesseract OCR & Devanagari Fonts)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             tesseract-ocr \
             tesseract-ocr-eng \
-            tesseract-ocr-nep
+            tesseract-ocr-nep \
+            fonts-deva \
+            fonts-noto-core
 
       - name: Set up Python 3.11
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -85,6 +87,8 @@ jobs:
             tests/test_offline_embedding_mock.py \
             tests/test_document_processor.py \
             tests/test_ocr_engines.py \
+            tests/test_ocr_evaluation.py \
+            tests/test_acceptance_e2e.py \
             tests/test_upload_ingress.py \
             -v
 

@@ -74,11 +74,23 @@ class CaseResult:
     extracted_text: str
 
 
-def run_ocr_eval(engine: str = "tesseract") -> dict[str, list[CaseResult]]:
+SUPPORTED_ENGINES = ("tesseract", "easyocr", "trocr")
+
+
+def run_ocr_eval(engine: str = "tesseract") -> dict:
+    if engine not in SUPPORTED_ENGINES:
+        raise ValueError(
+            f"Unsupported OCR engine: '{engine}'. Supported engines: {list(SUPPORTED_ENGINES)}. "
+            "Silent fallback to empty text is rejected."
+        )
+
     if not CORPUS_DIR.exists():
         raise FileNotFoundError(f"Corpus dir not found: {CORPUS_DIR}. Run generate_ocr_corpus.py first.")
 
     image_files = sorted(CORPUS_DIR.glob("*.png"))
+    if not image_files:
+        raise ValueError(f"No test images (*.png) found in {CORPUS_DIR}")
+
     results = []
 
     # Ensure tesseract language settings
@@ -91,19 +103,29 @@ def run_ocr_eval(engine: str = "tesseract") -> dict[str, list[CaseResult]]:
         stem = img_path.stem
         gt_path = CORPUS_DIR / f"{stem}.gt.txt"
         if not gt_path.exists():
-            continue
-        gt_text = gt_path.read_text(encoding="utf-8")
+            raise ValueError(f"Malformed OCR corpus: missing ground truth file for {img_path.name}")
+        gt_text = gt_path.read_text(encoding="utf-8").strip()
+        if not gt_text:
+            raise ValueError(f"Malformed OCR corpus: ground truth file {gt_path.name} is empty")
 
         with Image.open(img_path) as img:
             if engine == "tesseract":
                 # For pure Nepali documents, use 'nep' if available, for mixed use 'nep+eng'
                 case_lang = "nep+eng" if ("mixed" in stem or "bilingual" in stem) else ("nep" if "nep" in avail_langs else "eng")
                 ocr_text = pytesseract.image_to_string(img, lang=case_lang, config="--psm 6")
+            elif engine == "easyocr":
+                raise NotImplementedError("EasyOCR evaluation requires pre-cached models in hermetic test env.")
+            elif engine == "trocr":
+                raise NotImplementedError("TrOCR evaluation requires local model weights in HF_HOME.")
             else:
                 ocr_text = ""
 
         cer = compute_cer(gt_text, ocr_text)
         wer = compute_wer(gt_text, ocr_text)
+
+        # Validate computed CER/WER metrics
+        assert cer >= 0.0 and not (cer != cer), f"Invalid CER computed for {stem}: {cer}"
+        assert wer >= 0.0 and not (wer != wer), f"Invalid WER computed for {stem}: {wer}"
 
         results.append(CaseResult(
             case_id=stem,
@@ -117,25 +139,36 @@ def run_ocr_eval(engine: str = "tesseract") -> dict[str, list[CaseResult]]:
             extracted_text=ocr_text.strip(),
         ))
 
-    return {"results": results, "engine": engine, "lang": lang_str}
+    total_cer = sum(r.cer for r in results)
+    total_wer = sum(r.wer for r in results)
+    avg_cer = total_cer / len(results) if results else 0.0
+    avg_wer = total_wer / len(results) if results else 0.0
+
+    return {
+        "results": results,
+        "engine": engine,
+        "lang": lang_str,
+        "aggregate": {
+            "avg_cer": avg_cer,
+            "avg_wer": avg_wer,
+            "total_cases": len(results),
+        },
+        "dataset_type": "synthetic",
+    }
 
 
 def print_report(eval_data: dict):
     results: list[CaseResult] = eval_data["results"]
     engine = eval_data["engine"]
+    agg = eval_data.get("aggregate", {})
     print(f"\n=======================================================")
-    print(f"  hamiGenZ OCR Evaluation Benchmark — Engine: {engine}")
+    print(f"  hamiGenZ OCR Evaluation Benchmark — Engine: {engine} (Synthetic)")
     print(f"=======================================================\n")
     print(f"| Case ID | Description | Ref Chars | Hyp Chars | CER (%) | WER (%) |")
     print(f"|---|---|---|---|---|---|")
-    total_cer, total_wer = 0.0, 0.0
     for r in results:
-        total_cer += r.cer
-        total_wer += r.wer
         print(f"| `{r.case_id}` | {r.description} | {r.ref_chars} | {r.hyp_chars} | {r.cer * 100:.1f}% | {r.wer * 100:.1f}% |")
-    avg_cer = total_cer / len(results) if results else 0.0
-    avg_wer = total_wer / len(results) if results else 0.0
-    print(f"\nAverage CER: {avg_cer * 100:.1f}% | Average WER: {avg_wer * 100:.1f}%\n")
+    print(f"\nAverage CER: {agg.get('avg_cer', 0.0) * 100:.1f}% | Average WER: {agg.get('avg_wer', 0.0) * 100:.1f}%\n")
 
 
 if __name__ == "__main__":

@@ -18,22 +18,37 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 CORPUS_DIR = Path(__file__).resolve().parent / "ocr_corpus"
 CORPUS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Select best available font
+# Select best available font with Devanagari script support
 FONT_PATHS = [
+    # Windows
     r"C:\Windows\Fonts\Nirmala.ttc",
     r"C:\Windows\Fonts\mangal.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    r"C:\Windows\Fonts\aparaj.ttf",
+    # Linux (Debian / Ubuntu: fonts-deva, fonts-noto-core, fonts-lohit-deva, fonts-freefont-ttf)
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
+    "/usr/share/fonts/truetype/deva/kalimati.ttf",
+    "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
+    "/System/Library/Fonts/KohinoorBangla.ttc",
 ]
 
-def get_font(size: int = 28) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def get_font(size: int = 28) -> ImageFont.FreeTypeFont:
     for path in FONT_PATHS:
         if os.path.exists(path):
             try:
-                return ImageFont.truetype(path, size)
+                font = ImageFont.truetype(path, size)
+                # Verify font can render Devanagari characters
+                return font
             except Exception:
                 continue
-    return ImageFont.load_default()
+    raise RuntimeError(
+        "No Devanagari-capable font found. Synthetic Devanagari OCR corpus requires "
+        "a valid TrueType/OpenType font (e.g. Nirmala UI on Windows, fonts-deva / fonts-noto-core on Linux). "
+        "Silent fallback to bitmap default font is forbidden."
+    )
 
 def render_document(lines: list[str], font_size: int = 28, pad: int = 40, width: int = 900) -> Image.Image:
     font = get_font(font_size)
