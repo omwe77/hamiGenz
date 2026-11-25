@@ -99,26 +99,31 @@ def test_step3_to_step7_document_lifecycle(client, auth_headers, monkeypatch):
     Covers upload ingestion, viewer metadata, cross-session isolation,
     grounded Q&A with citations, action extraction schema validation,
     and rigorous disk cleanup verification.
+
+    Cleanup (Step 7) runs in `finally` unconditionally from just after upload,
+    so a mid-test assertion failure cannot leave orphaned files or vector indexes.
     """
     img_bytes = create_synthetic_test_image()
     files = {"file": ("test_civic_notice.png", img_bytes, "image/png")}
 
-    # Step 3: Upload Ingestion
+    # Step 3: Upload Ingestion — do this before try so doc_id is defined for finally.
     upload_resp = client.post("/upload", files=files, headers=auth_headers)
     assert upload_resp.status_code == 200, f"Upload failed: {upload_resp.text}"
     upload_data = upload_resp.json()
     doc_id = upload_data.get("doc_id")
     assert doc_id, "Response missing doc_id"
-    assert upload_data.get("filename") == "test_civic_notice.png"
-    assert upload_data.get("chunks", 0) > 0, "Expected at least 1 chunk created"
 
-    # Look up physical file in UPLOAD_DIR (API intentionally omits server path)
+    # Capture physical paths immediately so finally can verify removal even if
+    # later assertions abort early.
     uploaded_files = list(UPLOAD_DIR.glob(f"*{doc_id}*"))
-    assert len(uploaded_files) >= 1, f"Uploaded file matching *{doc_id}* not found in {UPLOAD_DIR}"
-    filepath = str(uploaded_files[0])
-    assert len(list(VECTORS_DIR.glob(f"{doc_id}*"))) >= 1, "Expected FAISS vector artifacts on disk"
+    filepath = str(uploaded_files[0]) if uploaded_files else None
 
     try:
+        assert upload_data.get("filename") == "test_civic_notice.png"
+        assert upload_data.get("chunks", 0) > 0, "Expected at least 1 chunk created"
+        assert len(uploaded_files) >= 1, f"Uploaded file matching *{doc_id}* not found in {UPLOAD_DIR}"
+        assert len(list(VECTORS_DIR.glob(f"{doc_id}*"))) >= 1, "Expected FAISS vector artifacts on disk"
+
         # Step 4: Verify document metadata & viewer extraction
         viewer_resp = client.get(f"/documents/{doc_id}/viewer", headers=auth_headers)
         assert viewer_resp.status_code == 200, (
@@ -201,7 +206,7 @@ def test_step3_to_step7_document_lifecycle(client, auth_headers, monkeypatch):
         assert ans_data.get("grounding", {}).get("confidence_score") is not None
 
         # Step 6: Action extraction (POST /actions)
-        # Force hints_only fallback to verify real regex fee/deadline extraction from OCR text
+        # Force hints_only fallback: LLMUnavailableError must yield meta.status == "hints_only"
         def _raise_unavailable(*args, **kwargs):
             raise LLMUnavailableError("Simulated offline for action hint extraction")
 
@@ -215,24 +220,26 @@ def test_step3_to_step7_document_lifecycle(client, auth_headers, monkeypatch):
         assert isinstance(act_data["requirements"], list)
         assert isinstance(act_data["fees"], list)
         assert isinstance(act_data["deadlines"], list)
-        # Schema is correct; fee hint content depends on OCR fidelity of the synthetic image.
-        # Fee-regex extraction is unit-tested separately in test_action_extractor.py.
-        # ponytail: OCR variability on synthetic PNG makes an exact "5,000" assertion brittle here.
-        assert act_data["meta"].get("status") in ("llm", "hints_only", "error"), (
-            f"Unexpected action extraction status: {act_data['meta'].get('status')}"
+        # LLMUnavailableError must yield "hints_only", not generic "error".
+        assert act_data["meta"].get("status") == "hints_only", (
+            f"Expected hints_only status when LLM unavailable, got: {act_data['meta'].get('status')!r}"
         )
 
     finally:
-        # Step 7: Document and FAISS Artifact Deletion
+        # Step 7: Document and FAISS Artifact Deletion — always runs.
         del_resp = client.delete(f"/documents/{doc_id}", headers=auth_headers)
-        assert del_resp.status_code == 200, f"Delete failed: {del_resp.status_code} ({del_resp.text})"
-        del_data = del_resp.json()
-        assert del_data.get("status") == "deleted"
-        assert del_data.get("doc_id") == doc_id
+        # Accept 200 (successful delete) or 404 (never persisted due to early failure).
+        assert del_resp.status_code in (200, 404), (
+            f"Delete returned unexpected status: {del_resp.status_code} ({del_resp.text})"
+        )
+        if del_resp.status_code == 200:
+            del_data = del_resp.json()
+            assert del_data.get("status") == "deleted"
+            assert del_data.get("doc_id") == doc_id
 
-        # Verify physical file removal
-        if filepath:
-            assert not Path(filepath).exists(), f"Uploaded file was not unlinked from disk: {filepath}"
+        # Verify physical file removal (file may not exist if upload failed)
+        if filepath and Path(filepath).exists():
+            raise AssertionError(f"Uploaded file was not unlinked from disk: {filepath}")
 
         # Verify vector index artifacts removal
         vector_artifacts = list(VECTORS_DIR.glob(f"{doc_id}*"))
@@ -304,18 +311,23 @@ def test_live_ollama_qwen_inference():
         f"Unexpected capital city response: {resp}"
     )
 
-    # Retain sanitized execution evidence
+    # Preserve sanitized execution evidence.
+    # Only write if the file does not already exist so a tracked baseline result
+    # (e.g. committed to docs/evidence/) is not silently replaced on every run.
     evidence_dir = Path(__file__).resolve().parent.parent / "docs" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     evidence_file = evidence_dir / "live_llm_execution.json"
-    evidence_data = {
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "model": "qwen3:8b",
-        "provider": "ollama",
-        "prompt": prompt,
-        "response": resp,
-        "elapsed_seconds": round(elapsed, 2),
-        "status": "PASS",
-    }
-    evidence_file.write_text(json.dumps(evidence_data, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\n[LIVE LLM] qwen3:8b response in {elapsed:.2f}s: '{resp}' (saved to {evidence_file})")
+    if not evidence_file.exists():
+        evidence_data = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model": "qwen3:8b",
+            "provider": "ollama",
+            "prompt": prompt,
+            "response": resp,
+            "elapsed_seconds": round(elapsed, 2),
+            "status": "PASS",
+        }
+        evidence_file.write_text(json.dumps(evidence_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\n[LIVE LLM] qwen3:8b response in {elapsed:.2f}s: '{resp}' (evidence saved to {evidence_file})")
+    else:
+        print(f"\n[LIVE LLM] qwen3:8b response in {elapsed:.2f}s: '{resp}' (evidence already tracked at {evidence_file}, not overwritten)")

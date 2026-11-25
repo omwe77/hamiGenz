@@ -22,9 +22,15 @@ def test_ocr_corpus_files_exist_and_paired():
 
 
 def test_ocr_unsupported_engine_rejected():
-    """Unsupported OCR engine must be explicitly rejected, not return empty text."""
-    with pytest.raises(ValueError, match="Unsupported OCR engine"):
+    """Unknown engine names must raise ValueError. Planned-but-unimplemented
+    engines (easyocr, trocr) raise NotImplementedError, not silently return empty text."""
+    from tests.evaluation.eval_ocr import IMPLEMENTED_ENGINES, PLANNED_ENGINES
+    with pytest.raises(ValueError, match="Unknown OCR engine"):
         run_ocr_eval(engine="non_existent_engine")
+    # Planned engines are explicitly rejected with a clear not-implemented signal.
+    for engine in PLANNED_ENGINES:
+        with pytest.raises(NotImplementedError, match="not yet implemented"):
+            run_ocr_eval(engine=engine)
 
 
 def test_ocr_benchmark_run():

@@ -24,29 +24,50 @@ FONT_PATHS = [
     r"C:\Windows\Fonts\Nirmala.ttc",
     r"C:\Windows\Fonts\mangal.ttf",
     r"C:\Windows\Fonts\aparaj.ttf",
-    # Linux (Debian / Ubuntu: fonts-deva, fonts-noto-core, fonts-lohit-deva, fonts-freefont-ttf)
+    # Linux (Debian / Ubuntu: fonts-deva, fonts-noto-core, fonts-lohit-deva)
     "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
     "/usr/share/fonts/truetype/deva/kalimati.ttf",
     "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
     # macOS
     "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
-    "/System/Library/Fonts/KohinoorBangla.ttc",
 ]
+# Deliberately excluded: DejaVuSans.ttf (Latin only), FreeSerif.ttf (incomplete
+# Devanagari), KohinoorBangla.ttc (Bengali script, not Devanagari).
+
+_DEVA_PROBE = "नेपाल"  # Probe string for coverage verification
+
 
 def get_font(size: int = 28) -> ImageFont.FreeTypeFont:
+    """Return a TrueType font capable of rendering Devanagari glyphs.
+
+    Verification: render the probe string and check that the bitmap differs
+    from a blank image — a font with no Devanagari glyphs renders only empty
+    boxes, which collapse to near-uniform white.
+
+    Raises RuntimeError when no suitable font is found; never falls back to
+    PIL's bitmap default font.
+    """
+    probe_w, probe_h = 200, 60
+    blank = Image.new("RGB", (probe_w, probe_h), "white")
+    blank_pixels = set(blank.getdata())
+
     for path in FONT_PATHS:
-        if os.path.exists(path):
-            try:
-                font = ImageFont.truetype(path, size)
-                # Verify font can render Devanagari characters
-                return font
-            except Exception:
-                continue
+        if not os.path.exists(path):
+            continue
+        try:
+            font = ImageFont.truetype(path, size)
+            # Verify actual glyph coverage: render probe and compare to blank.
+            probe_img = Image.new("RGB", (probe_w, probe_h), "white")
+            ImageDraw.Draw(probe_img).text((5, 5), _DEVA_PROBE, fill=(0, 0, 0), font=font)
+            if set(probe_img.getdata()) != blank_pixels:
+                return font  # Non-blank → Devanagari glyphs rendered
+        except Exception:
+            continue
     raise RuntimeError(
-        "No Devanagari-capable font found. Synthetic Devanagari OCR corpus requires "
-        "a valid TrueType/OpenType font (e.g. Nirmala UI on Windows, fonts-deva / fonts-noto-core on Linux). "
+        "No Devanagari-capable font found (coverage check: rendered probe string "
+        "must produce a non-blank bitmap). Install one of: Nirmala UI (Windows), "
+        "fonts-noto-core or fonts-deva (Linux). "
         "Silent fallback to bitmap default font is forbidden."
     )
 

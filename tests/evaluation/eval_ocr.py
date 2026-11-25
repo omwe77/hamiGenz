@@ -74,14 +74,28 @@ class CaseResult:
     extracted_text: str
 
 
-SUPPORTED_ENGINES = ("tesseract", "easyocr", "trocr")
+# Engines with working evaluation paths in this benchmark.
+IMPLEMENTED_ENGINES = ("tesseract",)
+# Engines recognised by name but whose evaluation requires external model weights
+# not available in a hermetic CI environment. Calling run_ocr_eval() with any of
+# these will raise NotImplementedError with a clear message.
+PLANNED_ENGINES = ("easyocr", "trocr")
+# Union: used only for error messages.
+_ALL_KNOWN_ENGINES = IMPLEMENTED_ENGINES + PLANNED_ENGINES
 
 
 def run_ocr_eval(engine: str = "tesseract") -> dict:
-    if engine not in SUPPORTED_ENGINES:
+    if engine in PLANNED_ENGINES:
+        raise NotImplementedError(
+            f"OCR engine '{engine}' is recognised but not yet implemented in this benchmark. "
+            f"It requires external model weights unavailable in hermetic CI. "
+            f"Implemented engines: {list(IMPLEMENTED_ENGINES)}."
+        )
+    if engine not in IMPLEMENTED_ENGINES:
         raise ValueError(
-            f"Unsupported OCR engine: '{engine}'. Supported engines: {list(SUPPORTED_ENGINES)}. "
-            "Silent fallback to empty text is rejected."
+            f"Unknown OCR engine: '{engine}'. "
+            f"Implemented: {list(IMPLEMENTED_ENGINES)}. "
+            f"Planned (not implemented): {list(PLANNED_ENGINES)}."
         )
 
     if not CORPUS_DIR.exists():
@@ -113,12 +127,9 @@ def run_ocr_eval(engine: str = "tesseract") -> dict:
                 # For pure Nepali documents, use 'nep' if available, for mixed use 'nep+eng'
                 case_lang = "nep+eng" if ("mixed" in stem or "bilingual" in stem) else ("nep" if "nep" in avail_langs else "eng")
                 ocr_text = pytesseract.image_to_string(img, lang=case_lang, config="--psm 6")
-            elif engine == "easyocr":
-                raise NotImplementedError("EasyOCR evaluation requires pre-cached models in hermetic test env.")
-            elif engine == "trocr":
-                raise NotImplementedError("TrOCR evaluation requires local model weights in HF_HOME.")
             else:
-                ocr_text = ""
+                # Guard: should be unreachable after the engine check at function entry.
+                raise RuntimeError(f"Unexpected engine reached OCR loop: {engine!r}")
 
         cer = compute_cer(gt_text, ocr_text)
         wer = compute_wer(gt_text, ocr_text)
