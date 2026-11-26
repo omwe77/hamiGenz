@@ -20,11 +20,12 @@ BASE_URL="http://localhost:${PORT}"
 # Stable >=32-char secret across container stop/recreate so signed session tokens remain valid.
 SESSION_SECRET="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
 HDR_FILE="$(mktemp /tmp/persist_hdr_XXXXXX.txt)"
+TMPFILE=""
 SESSION_TOKEN=""
 
 cleanup() {
   echo "--- Cleaning up ---"
-  rm -f "${HDR_FILE}"
+  rm -f "${HDR_FILE}" "${TMPFILE}"
   docker rm -f "${CONTAINER}" 2>/dev/null || true
   docker volume rm -f "${VOLUME}" 2>/dev/null || true
 }
@@ -76,7 +77,7 @@ UPLOAD_RESP=$(curl -sf -D "${HDR_FILE}" -X POST "${BASE_URL}/upload" \
   -F "file=@${TMPFILE};filename=persist_test.pdf;type=application/pdf")
 rm -f "${TMPFILE}"
 
-SESSION_TOKEN=$(grep -i '^x-session-token:' "${HDR_FILE}" | awk '{print $2}' | tr -d '\r\n')
+SESSION_TOKEN=$(grep -i '^x-session-token:' "${HDR_FILE}" | awk '{print $2}' | tr -d '\r\n' || true)
 [ -z "${SESSION_TOKEN}" ] && { echo "ERROR: upload response did not issue X-Session-Token"; exit 1; }
 
 echo "Upload response: ${UPLOAD_RESP}"

@@ -80,8 +80,6 @@ IMPLEMENTED_ENGINES = ("tesseract",)
 # not available in a hermetic CI environment. Calling run_ocr_eval() with any of
 # these will raise NotImplementedError with a clear message.
 PLANNED_ENGINES = ("easyocr", "trocr")
-# Union: used only for error messages.
-_ALL_KNOWN_ENGINES = IMPLEMENTED_ENGINES + PLANNED_ENGINES
 
 
 def run_ocr_eval(engine: str = "tesseract") -> dict:

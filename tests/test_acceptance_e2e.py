@@ -18,9 +18,7 @@ import json
 import os
 import sys
 import time
-import unicodedata
 from pathlib import Path
-from unittest.mock import MagicMock
 import pytest
 from starlette.testclient import TestClient
 

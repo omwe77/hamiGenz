@@ -89,46 +89,46 @@ def _font_covers_codepoints(font_path: str, codepoints: tuple[int, ...]) -> bool
     """Verify via SFNT cmap table that every codepoint maps to a non-zero glyph."""
     try:
         data = Path(font_path).read_bytes()
-    except OSError:
-        return False
-    if len(data) < 12:
-        return False
-
-    tag = data[:4]
-    if tag == b"ttcf":
-        num_fonts = struct.unpack_from(">I", data, 8)[0]
-        if num_fonts < 1 or len(data) < 16:
+        if len(data) < 12:
             return False
-        font_off = struct.unpack_from(">I", data, 12)[0]
-    elif tag in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
-        font_off = 0
-    else:
-        return False
 
-    num_tables = struct.unpack_from(">H", data, font_off + 4)[0]
-    cmap_off = None
-    for i in range(num_tables):
-        rec_off = font_off + 12 + 16 * i
-        t_tag, _, t_off, _ = struct.unpack_from(">4sIII", data, rec_off)
-        if t_tag == b"cmap":
-            cmap_off = t_off
-            break
-    if cmap_off is None:
-        return False
+        tag = data[:4]
+        if tag == b"ttcf":
+            num_fonts = struct.unpack_from(">I", data, 8)[0]
+            if num_fonts < 1 or len(data) < 16:
+                return False
+            font_off = struct.unpack_from(">I", data, 12)[0]
+        elif tag in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
+            font_off = 0
+        else:
+            return False
 
-    num_subtables = struct.unpack_from(">H", data, cmap_off + 2)[0]
-    for i in range(num_subtables):
-        plat_id, enc_id, rel_off = struct.unpack_from(">HHI", data, cmap_off + 4 + 8 * i)
-        # Prefer Unicode (platform 0) or Windows Unicode BMP/full (platform 3, enc 1/10)
-        if not (plat_id == 0 or (plat_id == 3 and enc_id in (1, 10))):
-            continue
-        sub_off = cmap_off + rel_off
-        fmt = struct.unpack_from(">H", data, sub_off)[0]
-        if fmt == 4 and all(_cmap_lookup_format4(data, sub_off, cp) > 0 for cp in codepoints):
-            return True
-        if fmt == 12 and all(_cmap_lookup_format12(data, sub_off, cp) > 0 for cp in codepoints):
-            return True
-    return False
+        num_tables = struct.unpack_from(">H", data, font_off + 4)[0]
+        cmap_off = None
+        for i in range(num_tables):
+            rec_off = font_off + 12 + 16 * i
+            t_tag, _, t_off, _ = struct.unpack_from(">4sIII", data, rec_off)
+            if t_tag == b"cmap":
+                cmap_off = t_off
+                break
+        if cmap_off is None:
+            return False
+
+        num_subtables = struct.unpack_from(">H", data, cmap_off + 2)[0]
+        for i in range(num_subtables):
+            plat_id, enc_id, rel_off = struct.unpack_from(">HHI", data, cmap_off + 4 + 8 * i)
+            # Prefer Unicode (platform 0) or Windows Unicode BMP/full (platform 3, enc 1/10)
+            if not (plat_id == 0 or (plat_id == 3 and enc_id in (1, 10))):
+                continue
+            sub_off = cmap_off + rel_off
+            fmt = struct.unpack_from(">H", data, sub_off)[0]
+            if fmt == 4 and all(_cmap_lookup_format4(data, sub_off, cp) > 0 for cp in codepoints):
+                return True
+            if fmt == 12 and all(_cmap_lookup_format12(data, sub_off, cp) > 0 for cp in codepoints):
+                return True
+        return False
+    except (OSError, struct.error, IndexError):
+        return False
 
 
 def get_font(size: int = 28) -> ImageFont.FreeTypeFont:
