@@ -84,3 +84,26 @@ def test_ocr_benchmark_regression_thresholds():
     # Overall aggregate CER ceiling
     avg_cer = report["aggregate"]["avg_cer"]
     assert avg_cer <= 0.25, f"Aggregate CER regressed: {avg_cer:.3f} > 0.25"
+
+
+def test_devanagari_font_coverage_check():
+    """Verify SFNT cmap + non-.notdef rendering validation for Devanagari fonts."""
+    from tests.evaluation.generate_ocr_corpus import (
+        _DEVA_PROBE_CODEPOINTS,
+        _font_covers_codepoints,
+        get_font,
+    )
+
+    font = get_font(28)
+    assert font is not None
+    assert _font_covers_codepoints(font.path, _DEVA_PROBE_CODEPOINTS)
+
+    # Latin-only system fonts must be rejected by cmap coverage even if present
+    for latin_font in (
+        r"C:\Windows\Fonts\arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        if Path(latin_font).exists():
+            assert not _font_covers_codepoints(latin_font, _DEVA_PROBE_CODEPOINTS), (
+                f"Latin-only font {latin_font} must not pass Devanagari cmap check"
+            )

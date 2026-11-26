@@ -150,7 +150,7 @@ VIEWER_AFTER=$(curl -s -o /dev/null -w "%{http_code}" \
   "${BASE_URL}/documents/${DOC_ID}/viewer")
 [ "${VIEWER_AFTER}" = "404" ] \
   && echo "PASS: viewer returns 404 after delete" \
-  || echo "WARNING: viewer returned ${VIEWER_AFTER} after delete (may be cached)"
+  || { echo "FAIL: viewer returned ${VIEWER_AFTER} after delete (expected 404)"; exit 1; }
 
 echo ""
 echo "======================================================="

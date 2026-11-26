@@ -6,11 +6,19 @@ Generates 5 canonical test images with ground-truth text for OCR benchmark evalu
 3. 03_lowres_blur: Reduced resolution with slight Gaussian blur.
 4. 04_rotated_skew: Document page with a 2-degree skew angle.
 5. 05_mixed_bilingual: Mixed Nepali Devanagari, English alphanumeric, dates, fees.
+
+Cross-OS reproducibility note:
+  Windows selects Nirmala.ttc while Linux selects NotoSansDevanagari-Regular.ttf
+  (or kalimati.ttf / Lohit-Devanagari.ttf). Because these are distinct typefaces
+  with different glyph metrics, re-running this generator across OSes will not
+  produce bit-for-bit identical PNG bytes. The benchmark (eval_ocr.py) evaluates
+  the committed PNGs under tests/evaluation/ocr_corpus/ for deterministic CI results.
 """
 from __future__ import annotations
 
 import os
 import random
+import struct
 import unicodedata
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -36,14 +44,102 @@ FONT_PATHS = [
 # Devanagari), KohinoorBangla.ttc (Bengali script, not Devanagari).
 
 _DEVA_PROBE = "नेपाल"  # Probe string for coverage verification
+_DEVA_PROBE_CODEPOINTS = tuple(dict.fromkeys(ord(ch) for ch in _DEVA_PROBE))
+
+
+def _cmap_lookup_format4(data: bytes, sub_off: int, cp: int) -> int:
+    if cp > 0xFFFF:
+        return 0
+    seg_count_x2 = struct.unpack_from(">H", data, sub_off + 6)[0]
+    seg_count = seg_count_x2 // 2
+    end_off = sub_off + 14
+    start_off = end_off + seg_count_x2 + 2
+    delta_off = start_off + seg_count_x2
+    range_off = delta_off + seg_count_x2
+    for i in range(seg_count):
+        end_code = struct.unpack_from(">H", data, end_off + 2 * i)[0]
+        if cp > end_code:
+            continue
+        start_code = struct.unpack_from(">H", data, start_off + 2 * i)[0]
+        if cp < start_code:
+            return 0
+        id_delta = struct.unpack_from(">h", data, delta_off + 2 * i)[0]
+        id_range_off = struct.unpack_from(">H", data, range_off + 2 * i)[0]
+        if id_range_off == 0:
+            return (cp + id_delta) & 0xFFFF
+        glyph_idx_off = range_off + 2 * i + id_range_off + 2 * (cp - start_code)
+        gid = struct.unpack_from(">H", data, glyph_idx_off)[0]
+        return 0 if gid == 0 else (gid + id_delta) & 0xFFFF
+    return 0
+
+
+def _cmap_lookup_format12(data: bytes, sub_off: int, cp: int) -> int:
+    num_groups = struct.unpack_from(">I", data, sub_off + 12)[0]
+    groups_off = sub_off + 16
+    for i in range(num_groups):
+        start_c, end_c, start_gid = struct.unpack_from(">III", data, groups_off + 12 * i)
+        if start_c <= cp <= end_c:
+            return start_gid + (cp - start_c)
+        if cp < start_c:
+            break
+    return 0
+
+
+def _font_covers_codepoints(font_path: str, codepoints: tuple[int, ...]) -> bool:
+    """Verify via SFNT cmap table that every codepoint maps to a non-zero glyph."""
+    try:
+        data = Path(font_path).read_bytes()
+    except OSError:
+        return False
+    if len(data) < 12:
+        return False
+
+    tag = data[:4]
+    if tag == b"ttcf":
+        num_fonts = struct.unpack_from(">I", data, 8)[0]
+        if num_fonts < 1 or len(data) < 16:
+            return False
+        font_off = struct.unpack_from(">I", data, 12)[0]
+    elif tag in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
+        font_off = 0
+    else:
+        return False
+
+    num_tables = struct.unpack_from(">H", data, font_off + 4)[0]
+    cmap_off = None
+    for i in range(num_tables):
+        rec_off = font_off + 12 + 16 * i
+        t_tag, _, t_off, _ = struct.unpack_from(">4sIII", data, rec_off)
+        if t_tag == b"cmap":
+            cmap_off = t_off
+            break
+    if cmap_off is None:
+        return False
+
+    num_subtables = struct.unpack_from(">H", data, cmap_off + 2)[0]
+    for i in range(num_subtables):
+        plat_id, enc_id, rel_off = struct.unpack_from(">HHI", data, cmap_off + 4 + 8 * i)
+        # Prefer Unicode (platform 0) or Windows Unicode BMP/full (platform 3, enc 1/10)
+        if not (plat_id == 0 or (plat_id == 3 and enc_id in (1, 10))):
+            continue
+        sub_off = cmap_off + rel_off
+        fmt = struct.unpack_from(">H", data, sub_off)[0]
+        if fmt == 4 and all(_cmap_lookup_format4(data, sub_off, cp) > 0 for cp in codepoints):
+            return True
+        if fmt == 12 and all(_cmap_lookup_format12(data, sub_off, cp) > 0 for cp in codepoints):
+            return True
+    return False
 
 
 def get_font(size: int = 28) -> ImageFont.FreeTypeFont:
     """Return a TrueType font capable of rendering Devanagari glyphs.
 
-    Verification: render the probe string and check that the bitmap differs
-    from a blank image — a font with no Devanagari glyphs renders only empty
-    boxes, which collapse to near-uniform white.
+    Verification:
+      1. Inspect the font's SFNT cmap table to confirm all Devanagari probe
+         codepoints map to non-zero glyph IDs (rejects Latin-only fonts whose
+         .notdef tofu boxes would otherwise render non-blank pixels).
+      2. Render the probe string with Pillow and confirm both a non-blank
+         bitmap and non-.notdef glyph masks.
 
     Raises RuntimeError when no suitable font is found; never falls back to
     PIL's bitmap default font.
@@ -55,18 +151,26 @@ def get_font(size: int = 28) -> ImageFont.FreeTypeFont:
     for path in FONT_PATHS:
         if not os.path.exists(path):
             continue
+        if not _font_covers_codepoints(path, _DEVA_PROBE_CODEPOINTS):
+            continue
         try:
             font = ImageFont.truetype(path, size)
-            # Verify actual glyph coverage: render probe and compare to blank.
+            # Rendering check: non-blank bitmap and not identical to .notdef mask
+            notdef_mask = bytes(font.getmask("\uffff"))
+            if any(
+                not bytes(font.getmask(chr(cp))) or bytes(font.getmask(chr(cp))) == notdef_mask
+                for cp in _DEVA_PROBE_CODEPOINTS
+            ):
+                continue
             probe_img = Image.new("RGB", (probe_w, probe_h), "white")
             ImageDraw.Draw(probe_img).text((5, 5), _DEVA_PROBE, fill=(0, 0, 0), font=font)
             if set(probe_img.getdata()) != blank_pixels:
-                return font  # Non-blank → Devanagari glyphs rendered
+                return font
         except Exception:
             continue
     raise RuntimeError(
-        "No Devanagari-capable font found (coverage check: rendered probe string "
-        "must produce a non-blank bitmap). Install one of: Nirmala UI (Windows), "
+        "No Devanagari-capable font found (must pass both SFNT cmap coverage and "
+        "non-.notdef rendering checks). Install one of: Nirmala UI (Windows), "
         "fonts-noto-core or fonts-deva (Linux). "
         "Silent fallback to bitmap default font is forbidden."
     )
