@@ -454,7 +454,9 @@ async def lifespan(app: FastAPI):
 
     # Check LLM connectivity
     if LLM_PROVIDER == "gemini":
-        print(f"[hamigenz] Gemini provider active, model: {GEMINI_MODEL}")
+        print(f"[hamigenz] Gemini provider active (synthetic testing only), model: {GEMINI_MODEL}")
+    elif LLM_PROVIDER == "groq":
+        print(f"[hamigenz] Groq provider active (ZDR verified), model: {GROQ_MODEL}")
     else:
         try:
             models_resp = app.state.ollama._verify()
@@ -479,7 +481,7 @@ async def lifespan(app: FastAPI):
                 DOCUMENT_RETENTION_INTERVAL_SECONDS,
             )
         )
-    active_llm_model = GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_MODEL
+    active_llm_model = getattr(app.state.llm, "model", OLLAMA_MODEL)
     print(f"[hamigenz] Ready. Provider: {LLM_PROVIDER}, Embedder: {EMBED_MODEL}, LLM: {active_llm_model}")
     try:
         yield
@@ -770,6 +772,21 @@ async def session_and_csrf_middleware(request: Request, call_next):
         path="/",
     )
     return response
+
+
+@app.exception_handler(LLMRateLimitError)
+async def llm_rate_limit_handler(request: Request, exc: LLMRateLimitError):
+    retry_after = exc.retry_after or 60
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(retry_after)},
+        content={
+            "detail": str(exc),
+            "verification_status": "rate_limited",
+            "retry_after": retry_after,
+            "fallback_excerpts": [],
+        },
+    )
 
 
 @app.exception_handler(LLMUnavailableError)
@@ -1537,17 +1554,22 @@ async def ask_question(req: AskRequest, request: Request, _rl: None = Depends(ra
     llm = app.state.ollama
     evaluator_llm = getattr(app.state, "evaluator_llm", llm)
 
-    # Safe session-scoped cache lookup (invalidated on doc deletion, reindex generation, model, or prompt change)
+    # Safe session-scoped cache lookup (invalidated on doc deletion, reindex generation, session docs change, model, or prompt change)
     _cache_key = None
     if session_id and hasattr(app.state, "metadata"):
-        _doc_gen = (
-            app.state.metadata.get_reindex_generation(req.doc_id)
-            if req.doc_id
-            else 0
-        )
+        if req.doc_id:
+            _doc_scope = req.doc_id
+            _doc_gen = app.state.metadata.get_reindex_generation(req.doc_id)
+        else:
+            _session_docs = app.state.metadata.list_documents(session_id=session_id)
+            _doc_scope = ",".join(
+                f"{d['doc_id']}:{d.get('reindex_generation', 0)}"
+                for d in sorted(_session_docs, key=lambda x: x["doc_id"])
+            )
+            _doc_gen = len(_session_docs)
         _cache_key = build_ask_cache_key(
             session_id=session_id,
-            doc_id=req.doc_id,
+            doc_id=_doc_scope,
             doc_generation=_doc_gen,
             llm_provider=type(llm).__name__,
             llm_model=getattr(llm, "model", ""),

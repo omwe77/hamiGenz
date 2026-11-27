@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent / "backend"
+_BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
@@ -287,3 +287,14 @@ class TestGeneral429NoFabricatedFallback:
         finally:
             backend_main.app.state.ollama = orig_ollama
             backend_main.app.state.okf = orig_okf
+
+    def test_global_rate_limit_handler_returns_429_not_503(self):
+        from starlette.requests import Request
+        req = Request({"type": "http", "method": "POST", "path": "/explain", "headers": []})
+        resp = asyncio.run(backend_main.llm_rate_limit_handler(req, LLMRateLimitError("429", retry_after=19)))
+        assert resp.status_code == 429
+        assert resp.headers.get("Retry-After") == "19"
+        import json
+        body = json.loads(resp.body.decode("utf-8"))
+        assert body["verification_status"] == "rate_limited"
+        assert body["fallback_excerpts"] == []
