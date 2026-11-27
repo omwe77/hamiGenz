@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-11-25T14:50:42Z",
+  "model": "qwen3:8b",
+  "provider": "ollama",
+  "prompt": "नेपालको राजधानी शहर कुन हो? एक शब्दमा उत्तर दिनुहोस्।",
+  "response": "काठमाडौं",
+  "elapsed_seconds": 12.85,
+  "status": "PASS"
+}
