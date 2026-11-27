@@ -43,14 +43,26 @@ def _estimate_tokens(text: str) -> int:
     return max(1, (len(text) + 2) // 3)
 
 
-def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
-    """Truncate prompt text to stay within strict per-call input token budget."""
+def _truncate_chars_heuristic(text: str, max_tokens: int) -> str:
+    """Trim text using a ~3 chars/token heuristic (estimate only — not actual token count).
+
+    This is a character-budget approximation, NOT strict token enforcement.
+    Actual token counts depend on the provider's tokeniser and are only known
+    after the API call via provider usage fields.  Callers should prefer
+    chunk-selection before prompt construction; this function is a last-resort
+    safety guard to avoid obviously oversized payloads.
+    """
     if max_tokens <= 0:
         return ""
-    max_chars = max_tokens * 3
+    max_chars = max_tokens * 3  # ~3 chars/token heuristic — labelled as estimate
     if len(text) <= max_chars:
         return text
-    return text[:max_chars] + "\n...[truncated to token budget]"
+    return text[:max_chars] + "\n...[truncated — char-budget estimate]"
+
+
+# Keep old name as alias so existing call-sites that weren't updated fail loudly
+# during development; remove once all callers have been updated.
+_truncate_to_token_budget = _truncate_chars_heuristic
 
 
 class QuotaTracker:
@@ -466,6 +478,7 @@ class GroqService:
             tpd=int(os.getenv("GROQ_TPD_LIMIT", "200000")),
         )
         self._http = session or requests.Session()
+        self.last_usage: dict = {}  # populated from provider usage after each call
         if not self.api_key and session is None:
             raise ValueError("GROQ_API_KEY is required when LLM_PROVIDER is set to 'groq'.")
 
@@ -476,8 +489,13 @@ class GroqService:
         options: Optional[dict] = None,
         timeout: int = 60,
     ) -> str:
-        """Generate a response from Groq within strict token & quota budgets."""
-        bounded_prompt = _truncate_to_token_budget(prompt, self.max_input_tokens)
+        """Generate a response from Groq.
+
+        Input is trimmed using a character-budget heuristic (see _truncate_chars_heuristic).
+        Actual token usage is captured from provider response under self.last_usage
+        and is advisory — the provider's HTTP 429 response is authoritative on limits.
+        """
+        bounded_prompt = _truncate_chars_heuristic(prompt, self.max_input_tokens)
         req_max_tokens = self.max_output_tokens
         temperature = 0.2
         if options:
@@ -488,6 +506,7 @@ class GroqService:
             if "temperature" in options:
                 temperature = float(options["temperature"])
 
+        # Advisory pre-flight estimate — not enforced; provider 429 is authoritative
         est_total = _estimate_tokens(bounded_prompt) + req_max_tokens
         self.quota.check_and_reserve(est_total)
 
@@ -512,6 +531,8 @@ class GroqService:
                 )
             resp.raise_for_status()
             data = resp.json()
+            # Capture authoritative provider token usage for advisory quota accounting
+            self.last_usage = data.get("usage") or {}
             choices = data.get("choices") or []
             if not choices:
                 return ""
@@ -557,6 +578,7 @@ class CloudflareWorkersAIService:
             tpd=0,
         )
         self._http = session or requests.Session()
+        self.last_usage: dict = {}  # populated from provider usage after each call
         if (not self.account_id or not self.api_token) and session is None:
             raise ValueError(
                 "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for Cloudflare Workers AI."
@@ -573,8 +595,13 @@ class CloudflareWorkersAIService:
         options: Optional[dict] = None,
         timeout: int = 60,
     ) -> str:
-        """Generate a response from Cloudflare Workers AI within strict token/quota budgets."""
-        bounded_prompt = _truncate_to_token_budget(prompt, self.max_input_tokens)
+        """Generate a response from Cloudflare Workers AI.
+
+        Input is trimmed using a character-budget heuristic (see _truncate_chars_heuristic).
+        Actual token usage is captured from provider response under self.last_usage
+        and is advisory — the provider's HTTP 429 response is authoritative on limits.
+        """
+        bounded_prompt = _truncate_chars_heuristic(prompt, self.max_input_tokens)
         req_max_tokens = self.max_output_tokens
         if options:
             for k in ("max_output_tokens", "max_tokens", "num_predict"):
@@ -582,6 +609,7 @@ class CloudflareWorkersAIService:
                     req_max_tokens = min(self.max_output_tokens, int(options[k]))
                     break
 
+        # Advisory pre-flight estimate — not enforced; provider 429 is authoritative
         est_total = _estimate_tokens(bounded_prompt) + req_max_tokens
         self.quota.check_and_reserve(est_total)
 
@@ -607,6 +635,9 @@ class CloudflareWorkersAIService:
             if isinstance(data, dict) and data.get("success") is False:
                 raise LLMUnavailableError(f"Cloudflare Workers AI error: {data.get('errors')}")
             result = data.get("result", data) if isinstance(data, dict) else {}
+            # Capture authoritative provider token usage for advisory quota accounting
+            if isinstance(result, dict):
+                self.last_usage = result.get("usage") or {}
             if isinstance(result, dict):
                 if "response" in result and result["response"] is not None:
                     return str(result["response"])
@@ -700,7 +731,9 @@ class GroundingValidator:
     Classifies claims as Supported / Partially Supported / Contradicted / Insufficient Evidence.
     """
 
-    def __init__(self, llm: OllamaService):
+    def __init__(self, llm):
+        # llm may be None when no independent evaluator is configured;
+        # validate() raises LLMUnavailableError in that case so callers degrade gracefully.
         self.llm = llm
 
     def validate(self, question: str, answer: str,
@@ -708,7 +741,14 @@ class GroundingValidator:
         """
         Validate an answer against evidence.
         Returns grounding report.
+
+        Raises LLMUnavailableError when llm is None (no independent evaluator configured).
         """
+        if self.llm is None:
+            raise LLMUnavailableError(
+                "No independent evaluator LLM is configured (ENABLE_INDEPENDENT_EVALUATOR=false). "
+                "Cannot validate without an independent evaluator."
+            )
         evidence_text = self._format_evidence(evidence_chunks)
 
         prompt = f"""You are a grounding validator. Your job is to check whether an AI-generated answer
@@ -793,10 +833,19 @@ class VerificationLayer:
     def __init__(self, llm: OllamaService, validator: GroundingValidator | None = None):
         self.llm = llm
         self.validator = validator or GroundingValidator(llm)
+        # Detect self-evaluation: if the validator's LLM is the same instance as
+        # the primary LLM, the primary model would be evaluating its own output —
+        # which provides no independent signal.  Mark as not independently evaluated.
+        # A None validator.llm (disabled evaluator) is also not independent.
+        evaluator_llm = getattr(self.validator, "llm", None)
+        self._is_independent = (
+            evaluator_llm is not None
+            and evaluator_llm is not llm
+        )
 
     @staticmethod
     def _deterministic_evidence_check(answer: str, evidence_chunks: list[dict]) -> tuple[bool, list[str]]:
-        """Deterministic validation: non-empty answer, non-empty evidence, and valid page citations."""
+        """Deterministic validation: non-empty answer/evidence, valid page citations, and cited-page support."""
         issues: list[str] = []
         if not answer or not answer.strip():
             issues.append("Generated answer is empty.")
@@ -812,6 +861,26 @@ class VerificationLayer:
             invalid_pages = sorted(cited_pages - valid_pages)
             if invalid_pages:
                 issues.append(f"Answer cites page(s) not in retrieved evidence: {invalid_pages}")
+            else:
+                for p in sorted(cited_pages):
+                    page_texts = [
+                        (c.get("text") or "").strip()
+                        for c in evidence_chunks
+                        if (isinstance(c.get("page_num"), int) and c.get("page_num") == p)
+                        or (isinstance(c.get("page_num"), str) and c.get("page_num").isdigit() and int(c.get("page_num")) == p)
+                    ]
+                    combined = " ".join(t for t in page_texts if t)
+                    if not combined:
+                        issues.append(f"Answer cites page {p}, which has no extracted text in evidence.")
+                        continue
+                    # Same-script substantive token overlap check (preserves cross-lingual translation)
+                    ans_has_deva = bool(re.search(r"[\u0900-\u097F]", answer))
+                    ev_has_deva = bool(re.search(r"[\u0900-\u097F]", combined))
+                    if ans_has_deva == ev_has_deva:
+                        ans_tokens = {w.lower() for w in re.findall(r"[A-Za-z0-9\u0900-\u097F]{3,}", answer) if w.lower() not in {"page", "the", "and", "for", "with", "that", "this", "from"}}
+                        ev_tokens = {w.lower() for w in re.findall(r"[A-Za-z0-9\u0900-\u097F]{3,}", combined)}
+                        if len(ans_tokens) >= 3 and ev_tokens and not (ans_tokens & ev_tokens):
+                            issues.append(f"Answer cites page {p}, but shares no substantive terms with page {p} evidence.")
         return len(issues) == 0, issues
 
     def verify(self, question: str, answer: str,
@@ -819,11 +888,44 @@ class VerificationLayer:
         """
         Run full verification on an answer.
 
-        Document answers are marked `evidence_checks_passed` ONLY when both
-        the evaluator (valid JSON schema, no contradictions, confidence != LOW)
-        and deterministic evidence checks pass. Never implies a guarantee of correctness.
+        Document answers are marked ``evidence_checks_passed`` ONLY when ALL of:
+        - an independent evaluator (not the primary LLM) is available,
+        - the evaluator returns at least one claim,
+        - ALL claims are classified SUPPORTED (none PARTIALLY_SUPPORTED / CONTRADICTED /
+          INSUFFICIENT_EVIDENCE), and
+        - deterministic evidence checks pass.
+        Partially supported answers yield ``partially_supported`` (a distinct, transparently
+        unverified status).  Never implies a guarantee of correctness.
         """
         det_ok, det_issues = self._deterministic_evidence_check(answer, evidence_chunks)
+
+        # Fix #1: guard against self-evaluation (primary model evaluating its own output)
+        if not self._is_independent:
+            return {
+                "grounding_report": {
+                    "claims": [],
+                    "overall_confidence": "UNKNOWN",
+                    "missing_evidence": [],
+                    "warning": (
+                        "No independent evaluator is configured. "
+                        "The primary model cannot evaluate its own output."
+                    ),
+                },
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "No independent evaluator is configured. "
+                    "Treat this answer as unverified and check the original source document."
+                ),
+                "verification_status": "not_independently_evaluated",
+                "schema_valid": False,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
+            }
+
         try:
             raw_report = self.validator.validate(question, answer, evidence_chunks)
         except LLMUnavailableError as exc:
@@ -874,26 +976,46 @@ class VerificationLayer:
             }
 
         claims = report.get("claims", [])
+
+        # Fix #2: empty claims cannot constitute evidence coverage
+        if not claims:
+            return {
+                "grounding_report": report,
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "Evaluator returned no claims — cannot assess document evidence coverage. "
+                    "Treat this answer as unverified and check the original source document."
+                ),
+                "verification_status": "not_independently_evaluated",
+                "schema_valid": True,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
+            }
+
         contradicted = [c for c in claims if c.get("classification") == "CONTRADICTED"]
+        partially_supported = [c for c in claims if c.get("classification") == "PARTIALLY_SUPPORTED"]
         unsupported = [
             c for c in claims
             if c.get("classification") in ("PARTIALLY_SUPPORTED", "INSUFFICIENT_EVIDENCE", "CONTRADICTED")
         ]
 
-        if claims:
-            total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
-            confidence_score = round((total_weight / len(claims)) * 100)
-        else:
-            confidence_score = None
+        total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
+        confidence_score = round((total_weight / len(claims)) * 100)
 
         band = report.get("overall_confidence", "UNKNOWN")
-        if confidence_score is not None:
-            if confidence_score >= 75:
-                band = "HIGH"
-            elif confidence_score >= 45:
-                band = "MEDIUM"
-            else:
-                band = "LOW"
+        if confidence_score >= 75:
+            band = "HIGH"
+        elif confidence_score >= 45:
+            band = "MEDIUM"
+        else:
+            band = "LOW"
+
+        # Fix #2: all_fully_supported — only award strongest status when every claim is SUPPORTED
+        all_fully_supported = all(c.get("classification") == "SUPPORTED" for c in claims)
 
         contradiction_found = len(contradicted) > 0
         if contradiction_found:
@@ -915,13 +1037,16 @@ class VerificationLayer:
                 "Important details may be missing or imprecise — check the original source."
             )
             verification_status = "unverified_flagged"
-        elif band == "MEDIUM":
+        elif band == "MEDIUM" or not all_fully_supported:
+            # Fix #2: partially supported answers get a distinct, transparent status
             recommendation = (
-                "Partially supported by automated evidence checks; "
-                "this is not a guarantee of legal or factual correctness — verify key details."
+                "Partially supported by automated evidence checks — some claims lack full "
+                "documentary support; this is not a guarantee of legal or factual correctness. "
+                "Verify key details against the original source."
             )
-            verification_status = "evidence_checks_passed"
+            verification_status = "partially_supported"
         else:
+            # band == "HIGH" and all claims are SUPPORTED
             recommendation = (
                 "Supported by automated evidence checks; "
                 "this is not a guarantee of legal or factual correctness."

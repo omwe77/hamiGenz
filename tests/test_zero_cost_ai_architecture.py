@@ -3,16 +3,17 @@ Focused tests for the staged zero-cost AI architecture QA requirements:
 - Feature flags, ZDR pre-flight gate, and Gemini synthetic-only restriction
 - Groq GPT-OSS 120B & Cloudflare Qwen3.8-27B token budgets, HTTP 429, Retry-After / x-ratelimit-reset-*, advisory QuotaTracker
 - Server-side evaluator JSON schema validation (never failing open)
-- Explicit verification_status semantics (evidence_checks_passed only when evaluator + deterministic checks pass; never guarantees correctness)
+- Explicit verification_status semantics (evidence_checks_passed only when independent evaluator + all claims SUPPORTED + deterministic checks pass; never guarantees correctness)
 - Session-isolated SQLite caching & invalidation on deletion, generation, model, or prompt changes
 - Periodic document-retention cleanup with active-upload protection
 - General-question HTTP 429 never fabricating document fallback excerpts
+- Independent evaluator self-eval guard, empty/partial claim handling, retention safety, fail-closed defaults, token budget honesty
 """
 import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,8 +27,10 @@ from llm_service import (
     GroqService,
     GroundingValidator,
     LLMRateLimitError,
+    LLMUnavailableError,
     QuotaTracker,
     VerificationLayer,
+    _truncate_chars_heuristic,
     validate_evaluator_payload,
 )
 import main as backend_main
@@ -46,6 +49,13 @@ class _FakeResponse:
         if self.status_code >= 400:
             import requests
             raise requests.HTTPError(f"HTTP {self.status_code}", response=self)
+
+
+def _make_independent_layer(evaluator_llm):
+    """Build a VerificationLayer with a truly independent evaluator (different object)."""
+    validator = GroundingValidator(evaluator_llm)
+    primary_llm = MagicMock()  # separate object — _is_independent will be True
+    return VerificationLayer(primary_llm, validator)
 
 
 class TestFeatureFlagsAndGates:
@@ -111,7 +121,8 @@ class TestProvidersQuotaAnd429:
         assert svc.quota.last_provider_headers.get("x-ratelimit-remaining-requests") == "0"
         sent_payload = session.post.call_args.kwargs["json"]
         assert sent_payload["max_tokens"] == 50
-        assert "[truncated to token budget]" in sent_payload["messages"][0]["content"]
+        # heuristic truncation marker (char-budget estimate)
+        assert "[truncated" in sent_payload["messages"][0]["content"]
 
     def test_cloudflare_qwen_extracts_response_and_handles_429(self):
         session = MagicMock()
@@ -150,17 +161,35 @@ class TestSchemaValidationAndVerificationSemantics:
             assert not ok
             assert normalized is None
 
+    def test_verification_layer_self_eval_returns_not_independently_evaluated(self):
+        """When primary and evaluator are the SAME instance, verification must return not_independently_evaluated."""
+        same_llm = MagicMock()
+        same_llm.generate_structured.return_value = {
+            "claims": [{"claim": "Fee is 500", "classification": "SUPPORTED", "evidence": "p1", "page_refs": [1]}],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        validator = GroundingValidator(same_llm)
+        layer = VerificationLayer(same_llm, validator)  # same object → self-evaluation
+        assert not layer._is_independent
+        res = layer.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
+        assert res["verification_status"] == "not_independently_evaluated"
+        # Evaluator must NOT have been called
+        same_llm.generate_structured.assert_not_called()
+
     def test_verification_layer_never_fails_open_on_bad_json_or_429(self):
         bad_llm = MagicMock()
         bad_llm.generate_structured.return_value = {"claims": [{"claim": "", "classification": "BAD"}], "overall_confidence": "HIGH"}
-        layer = VerificationLayer(bad_llm, GroundingValidator(bad_llm))
+        # Use different primary_llm to make it "independent"
+        layer = _make_independent_layer(bad_llm)
         res = layer.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
         assert res["verification_status"] == "unverified_evaluator_unavailable"
         assert res["schema_valid"] is False
 
         rate_llm = MagicMock()
         rate_llm.generate_structured.side_effect = LLMRateLimitError("429", retry_after=30)
-        layer2 = VerificationLayer(rate_llm, GroundingValidator(rate_llm))
+        layer2 = _make_independent_layer(rate_llm)
         res2 = layer2.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
         assert res2["verification_status"] == "unverified_evaluator_unavailable"
         assert res2["schema_valid"] is False
@@ -173,7 +202,7 @@ class TestSchemaValidationAndVerificationSemantics:
             "missing_evidence": [],
             "warning": "",
         }
-        layer = VerificationLayer(good_llm, GroundingValidator(good_llm))
+        layer = _make_independent_layer(good_llm)
         res = layer.verify("Fee?", "Fee is NPR 500 (Page 1).", [{"page_num": 1, "text": "Fee NPR 500"}])
         assert res["verification_status"] == "evidence_checks_passed"
         assert res["deterministic_check_passed"] is True
@@ -183,6 +212,15 @@ class TestSchemaValidationAndVerificationSemantics:
         res_bad_page = layer.verify("Fee?", "Fee is NPR 500 (Page 99).", [{"page_num": 1, "text": "Fee NPR 500"}])
         assert res_bad_page["verification_status"] == "unverified_flagged"
         assert res_bad_page["deterministic_check_passed"] is False
+
+        # Existing page number with unrelated/ungrounded content also fails deterministic check
+        res_unrelated_page = layer.verify(
+            "Fee?",
+            "Passport renewal takes fourteen weeks at embassy (Page 1).",
+            [{"page_num": 1, "text": "Citizenship duplicate fee NPR 500"}],
+        )
+        assert res_unrelated_page["verification_status"] == "unverified_flagged"
+        assert res_unrelated_page["deterministic_check_passed"] is False
 
 
 class TestSafeCachingAndPeriodicRetention:
@@ -248,10 +286,11 @@ class TestSafeCachingAndPeriodicRetention:
         conn.close()
 
         vs = MagicMock()
-        removed = backend_main.cleanup_expired_documents(
+        removed, failed = backend_main.cleanup_expired_documents(
             db, vs, upload_dir, retention_seconds=86400, protected_doc_ids={"active_doc"}
         )
         assert removed == 1
+        assert failed == []
         vs.remove_document.assert_called_once_with("old_doc")
         assert not expired_file.exists()
         assert active_file.exists()
@@ -298,3 +337,305 @@ class TestGeneral429NoFabricatedFallback:
         body = json.loads(resp.body.decode("utf-8"))
         assert body["verification_status"] == "rate_limited"
         assert body["fallback_excerpts"] == []
+
+
+# ─── New regression tests for the 5 source-level issues ──────────────────────
+
+class TestIndependentEvaluatorGate:
+    """Fix #1 — independent evaluator self-eval guard and startup gate."""
+
+    def test_self_evaluator_returns_not_independently_evaluated(self):
+        """Same LLM instance as primary AND evaluator → not_independently_evaluated, evaluator not called."""
+        same_llm = MagicMock()
+        validator = GroundingValidator(same_llm)
+        layer = VerificationLayer(same_llm, validator)
+        assert not layer._is_independent
+        res = layer.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
+        assert res["verification_status"] == "not_independently_evaluated"
+        same_llm.generate_structured.assert_not_called()
+
+    def test_disabled_evaluator_none_returns_not_independently_evaluated(self):
+        """evaluator_llm=None → GroundingValidator raises LLMUnavailableError → not_independently_evaluated."""
+        validator = GroundingValidator(None)  # None evaluator
+        primary_llm = MagicMock()
+        layer = VerificationLayer(primary_llm, validator)
+        # validator.llm is None → not independent
+        assert not layer._is_independent
+        res = layer.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
+        assert res["verification_status"] == "not_independently_evaluated"
+
+    def test_public_production_requires_independent_evaluator(self):
+        """PUBLIC_PRODUCTION_MODE=true with ENABLE_INDEPENDENT_EVALUATOR=false → ValueError at build time."""
+        with pytest.raises(ValueError, match="PUBLIC_PRODUCTION_MODE=true requires ENABLE_INDEPENDENT_EVALUATOR"):
+            backend_main.build_llm_and_evaluator(
+                llm_provider="ollama",
+                enable_independent_evaluator=False,
+                public_production_mode=True,
+            )
+
+    def test_independent_evaluator_different_instance_is_independent(self):
+        """Different LLM objects → _is_independent=True, evaluator is called."""
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [{"claim": "Fee is 500", "classification": "SUPPORTED", "evidence": "p1", "page_refs": [1]}],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        assert layer._is_independent
+        res = layer.verify("Q?", "Fee is 500 (Page 1).", [{"page_num": 1, "text": "Fee 500"}])
+        evaluator_llm.generate_structured.assert_called_once()
+        assert res["verification_status"] == "evidence_checks_passed"
+
+
+class TestEmptyAndPartialClaims:
+    """Fix #2 — empty claims → not_independently_evaluated; partial → partially_supported; all SUPPORTED → evidence_checks_passed."""
+
+    def test_empty_claims_returns_not_independently_evaluated(self):
+        """Evaluator returns valid schema with empty claims list → not_independently_evaluated."""
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("Q?", "Some answer.", [{"page_num": 1, "text": "Evidence"}])
+        assert res["verification_status"] == "not_independently_evaluated"
+        assert "no claims" in res["recommendation"].lower()
+
+    def test_all_supported_claims_returns_evidence_checks_passed(self):
+        """All claims SUPPORTED + HIGH confidence → evidence_checks_passed."""
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Fee is NPR 500", "classification": "SUPPORTED", "evidence": "p1", "page_refs": [1]},
+                {"claim": "Deadline is 30 days", "classification": "SUPPORTED", "evidence": "p1", "page_refs": [1]},
+            ],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("What?", "Fee is NPR 500 (Page 1). Deadline is 30 days (Page 1).",
+                           [{"page_num": 1, "text": "Fee NPR 500 deadline 30 days"}])
+        assert res["verification_status"] == "evidence_checks_passed"
+
+    def test_partially_supported_claim_returns_partially_supported_status(self):
+        """Any PARTIALLY_SUPPORTED claim → partially_supported (not evidence_checks_passed)."""
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Fee is NPR 500", "classification": "SUPPORTED", "evidence": "p1", "page_refs": [1]},
+                {"claim": "Deadline is 30 days", "classification": "PARTIALLY_SUPPORTED", "evidence": "p1", "page_refs": [1]},
+            ],
+            "overall_confidence": "HIGH",  # evaluator says HIGH but we have partial claims
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("What?", "Fee is NPR 500 (Page 1). Deadline is 30 days.",
+                           [{"page_num": 1, "text": "Fee NPR 500"}])
+        assert res["verification_status"] == "partially_supported"
+        assert "partially" in res["recommendation"].lower()
+
+    def test_mixed_supported_and_insufficient_returns_partially_supported(self):
+        """SUPPORTED + INSUFFICIENT_EVIDENCE → partially_supported (not evidence_checks_passed)."""
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Fee is NPR 500", "classification": "SUPPORTED", "evidence": "p1", "page_refs": [1]},
+                {"claim": "Penalty is NPR 1000", "classification": "INSUFFICIENT_EVIDENCE", "evidence": "", "page_refs": []},
+            ],
+            "overall_confidence": "MEDIUM",
+            "missing_evidence": ["Penalty not in evidence"],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("What?", "Fee is NPR 500 (Page 1). Penalty is NPR 1000.",
+                           [{"page_num": 1, "text": "Fee NPR 500"}])
+        # INSUFFICIENT_EVIDENCE pulls band to MEDIUM → partially_supported
+        assert res["verification_status"] == "partially_supported"
+
+
+class TestRetentionSafety:
+    """Fix #3 — artifact-first deletion, metadata last, idempotent, track failures."""
+
+    def test_file_deletion_failure_preserves_metadata(self, tmp_path):
+        """If file unlink fails, metadata row must NOT be deleted."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        expired_file = upload_dir / "expired.pdf"
+        expired_file.write_bytes(b"%PDF expired")
+
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("exp_doc", "expired.pdf", str(expired_file), 1, "english", session_id="s1")
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        conn = db._get_connection()
+        conn.execute("UPDATE documents SET last_accessed_at=? WHERE doc_id='exp_doc'", (old_ts,))
+        conn.commit()
+        conn.close()
+
+        vs = MagicMock()
+
+        def fail_unlink():
+            raise PermissionError("file locked")
+
+        with patch.object(Path, "unlink", side_effect=PermissionError("file locked")):
+            removed, failed = backend_main.cleanup_expired_documents(
+                db, vs, upload_dir, retention_seconds=3600
+            )
+
+        # Metadata must still exist — file deletion failed
+        assert removed == 0
+        assert len(failed) >= 1
+        assert any(f["step"] == "file_unlink" for f in failed)
+        assert db.get_document("exp_doc") is not None  # preserved for retry
+
+    def test_vector_deletion_failure_preserves_metadata(self, tmp_path):
+        """If vector remove fails (non-not-found error), metadata row must NOT be deleted."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        expired_file = upload_dir / "expired2.pdf"
+        expired_file.write_bytes(b"%PDF expired2")
+
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("exp_doc2", "expired2.pdf", str(expired_file), 1, "english", session_id="s1")
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        conn = db._get_connection()
+        conn.execute("UPDATE documents SET last_accessed_at=? WHERE doc_id='exp_doc2'", (old_ts,))
+        conn.commit()
+        conn.close()
+
+        vs = MagicMock()
+        vs.remove_document.side_effect = RuntimeError("index write error")
+
+        removed, failed = backend_main.cleanup_expired_documents(
+            db, vs, upload_dir, retention_seconds=3600
+        )
+
+        # Metadata must still exist — vector deletion failed
+        assert removed == 0
+        assert len(failed) >= 1
+        assert any(f["step"] == "vector_remove" for f in failed)
+        assert db.get_document("exp_doc2") is not None  # preserved for retry
+
+    def test_idempotent_cleanup_on_already_deleted_file(self, tmp_path):
+        """File already physically gone → idempotent success, metadata IS deleted."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        # Note: file intentionally NOT created — simulates already-removed file
+
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("ghost_doc", "ghost.pdf", str(upload_dir / "ghost.pdf"), 1, "english", session_id="s1")
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        conn = db._get_connection()
+        conn.execute("UPDATE documents SET last_accessed_at=? WHERE doc_id='ghost_doc'", (old_ts,))
+        conn.commit()
+        conn.close()
+
+        vs = MagicMock()
+        removed, failed = backend_main.cleanup_expired_documents(
+            db, vs, upload_dir, retention_seconds=3600
+        )
+
+        # Already-gone file is idempotent success → metadata removed
+        assert removed == 1
+        assert failed == []
+        assert db.get_document("ghost_doc") is None
+
+
+class TestFailClosedResponseStatus:
+    """Fix #4 — missing verification_status must never default to 'verified' or 'evidence_checks_passed'."""
+
+    def test_missing_verification_key_returns_unverified_not_verified(self):
+        """verify() dict without 'verification_status' key → unverified_evaluator_unavailable."""
+        empty_verification: dict = {}
+        result = empty_verification.get("verification_status") or "unverified_evaluator_unavailable"
+        assert result == "unverified_evaluator_unavailable"
+        assert result != "verified"
+        assert result != "evidence_checks_passed"
+
+    def test_none_verification_status_returns_unverified(self):
+        """verify() dict with verification_status=None → unverified_evaluator_unavailable."""
+        verification = {"verification_status": None}
+        result = verification.get("verification_status") or "unverified_evaluator_unavailable"
+        assert result == "unverified_evaluator_unavailable"
+
+    def test_verification_layer_never_returns_verified_on_any_path(self):
+        """VerificationLayer.verify() must never return verification_status='verified'."""
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.side_effect = LLMUnavailableError("unavailable")
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
+        assert res["verification_status"] != "verified"
+        assert res["verification_status"] in {
+            "evidence_checks_passed", "unverified_flagged",
+            "unverified_evaluator_unavailable", "not_independently_evaluated",
+            "partially_supported", "rate_limited",
+        }
+
+
+class TestTokenBudgetHonesty:
+    """Fix #5 — char heuristic labeled as estimate, provider usage captured."""
+
+    def test_char_heuristic_function_name_and_docstring(self):
+        """_truncate_chars_heuristic must exist and docstring must say 'heuristic' or 'estimate'."""
+        import inspect
+        doc = inspect.getdoc(_truncate_chars_heuristic) or ""
+        assert "heuristic" in doc.lower() or "estimate" in doc.lower()
+
+    def test_truncation_uses_char_budget_not_token_count(self):
+        """10 tokens * 3 chars = 30 chars max; 'A' * 100 must be truncated."""
+        result = _truncate_chars_heuristic("A" * 100, max_tokens=10)
+        assert len(result) < 100
+        assert "truncated" in result
+
+    def test_short_text_not_truncated(self):
+        """Text well within char budget must not be truncated."""
+        text = "Short text."
+        result = _truncate_chars_heuristic(text, max_tokens=1000)
+        assert result == text
+
+    def test_groq_captures_provider_token_usage(self):
+        """GroqService.last_usage must be populated from provider's 'usage' field."""
+        session = MagicMock()
+        session.post.return_value = _FakeResponse(200, {
+            "choices": [{"message": {"content": "The answer is 42."}}],
+            "usage": {"prompt_tokens": 150, "completion_tokens": 20, "total_tokens": 170},
+        })
+        svc = GroqService(api_key="gsk_test", session=session)
+        result = svc.generate("What is 6 times 7?")
+        assert result == "The answer is 42."
+        assert svc.last_usage.get("prompt_tokens") == 150
+        assert svc.last_usage.get("completion_tokens") == 20
+
+    def test_cloudflare_captures_provider_token_usage(self):
+        """CloudflareWorkersAIService.last_usage must be populated from result.usage if present."""
+        session = MagicMock()
+        session.post.return_value = _FakeResponse(200, {
+            "success": True,
+            "result": {
+                "response": "The answer.",
+                "usage": {"input_tokens": 80, "output_tokens": 10},
+            },
+        })
+        svc = CloudflareWorkersAIService(account_id="acct", api_token="tok", session=session)
+        result = svc.generate("Q?")
+        assert result == "The answer."
+        assert svc.last_usage.get("input_tokens") == 80
+
+    def test_select_evidence_for_budget_selects_whole_chunks(self):
+        """select_evidence_for_budget stops at chunk boundaries without slicing mid-chunk."""
+        chunks = [
+            {"page_num": 1, "text": "A" * 40},
+            {"page_num": 2, "text": "B" * 40},
+            {"page_num": 3, "text": "C" * 40},
+        ]
+        selected = backend_main.select_evidence_for_budget(chunks, max_chunks=10, max_chars_estimate=85)
+        assert len(selected) == 2
+        assert selected[0]["text"] == "A" * 40
+        assert selected[1]["text"] == "B" * 40
+

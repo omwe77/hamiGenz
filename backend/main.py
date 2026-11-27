@@ -204,41 +204,71 @@ def cleanup_expired_documents(
     upload_dir: Path,
     retention_seconds: int = DOCUMENT_RETENTION_SECONDS,
     protected_doc_ids: Optional[set[str]] = None,
-) -> int:
+) -> tuple[int, list[dict]]:
     """Delete documents, vectors, uploaded files, and cached answers older than retention_seconds.
 
     Skips any doc_id in protected_doc_ids (active uploads or in-progress reindexes).
+
+    Deletion order: file → vector → SQLite metadata (last).
+    If file or vector deletion fails, the metadata row is preserved so the next
+    cleanup run can retry.  This prevents orphaned physical artifacts.
+    Returns (removed_count, failed_list) where failed_list entries contain
+    {'doc_id', 'step', 'error'} for observability and retry.
     """
     from datetime import datetime, timezone, timedelta
     if retention_seconds <= 0:
-        return 0
+        return 0, []
     protected = protected_doc_ids or set()
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=retention_seconds)).isoformat()
     expired = metadata.list_expired_documents(cutoff_iso)
     removed = 0
+    failed: list[dict] = []
     resolved_upload_dir = upload_dir.resolve()
     for doc in expired:
         doc_id = doc["doc_id"]
         if doc_id in protected:
             continue
         filepath = doc.get("filepath")
-        try:
-            vector_store.remove_document(doc_id)
-        except Exception as exc:
-            print(f"[hamigenz] retention: vector cleanup failed for {doc_id}: {exc}")
-        metadata.delete_document(doc_id, session_id=None)
+        file_ok = True
+        vec_ok = True
+
+        # Step 1: physical file (idempotent — already-gone is success)
         if filepath:
             try:
                 stored_path = Path(filepath).resolve()
                 if stored_path.is_relative_to(resolved_upload_dir) and stored_path.exists():
                     stored_path.unlink()
+                # file already gone → idempotent success
             except Exception as exc:
+                file_ok = False
+                failed.append({"doc_id": doc_id, "step": "file_unlink", "error": str(exc)})
                 print(f"[hamigenz] retention: file unlink failed for {doc_id}: {exc}")
-        removed += 1
+
+        # Step 2: vector store (idempotent — missing index is not an error)
+        try:
+            vector_store.remove_document(doc_id)
+        except Exception as exc:
+            # Treat "not found" as idempotent success; anything else is a real failure
+            err_str = str(exc).lower()
+            if "not found" not in err_str and "no such" not in err_str:
+                vec_ok = False
+                failed.append({"doc_id": doc_id, "step": "vector_remove", "error": str(exc)})
+                print(f"[hamigenz] retention: vector cleanup failed for {doc_id}: {exc}")
+
+        # Step 3: SQLite metadata — ONLY after both physical artifacts are gone
+        if file_ok and vec_ok:
+            metadata.delete_document(doc_id, session_id=None)
+            removed += 1
+        else:
+            # Preserve metadata row; next periodic run will retry (idempotent by design)
+            print(f"[hamigenz] retention: deferred cleanup for {doc_id} due to artifact errors")
+
     metadata.purge_expired_cache()
     if removed:
         print(f"[hamigenz] retention cleanup removed {removed} expired document(s)")
-    return removed
+    if failed:
+        print(f"[hamigenz] retention cleanup deferred {len(failed)} artifact deletion(s): {failed}")
+    return removed, failed
 
 
 async def _retention_cleanup_loop(
@@ -324,7 +354,16 @@ def build_llm_and_evaluator(
         )
 
     if not use_indep:
-        return primary_llm, primary_llm
+        # Fix #1: public production mode requires independent evaluation for citizen safety
+        if pub_prod:
+            raise ValueError(
+                "PUBLIC_PRODUCTION_MODE=true requires ENABLE_INDEPENDENT_EVALUATOR=true. "
+                "In public production mode the primary model must not evaluate its own output. "
+                "Set ENABLE_INDEPENDENT_EVALUATOR=true and configure a separate evaluator provider."
+            )
+        # Return None as evaluator so VerificationLayer can detect the absence and
+        # immediately return not_independently_evaluated without self-evaluation.
+        return primary_llm, None
 
     if eval_prov == "cloudflare":
         if not zdr_ok:
@@ -353,6 +392,28 @@ def build_llm_and_evaluator(
         )
 
     return primary_llm, evaluator_llm
+
+
+def select_evidence_for_budget(
+    chunks: list,
+    max_chunks: int = 10,
+    max_chars_estimate: int = 6000,
+) -> list:
+    """Select whole evidence chunks within a character-budget estimate before prompt construction.
+
+    Uses a character-budget heuristic (~2,000 tokens est. at ~3 chars/token) so
+    chunks are included/excluded at chunk boundaries instead of truncating mid-evidence.
+    """
+    selected = []
+    total_chars = 0
+    for chunk in chunks[:max_chunks]:
+        text = chunk.get("text", "") if isinstance(chunk, dict) else getattr(chunk, "text", "")
+        chunk_len = len(str(text or ""))
+        if selected and (total_chars + chunk_len > max_chars_estimate):
+            break
+        selected.append(chunk)
+        total_chars += chunk_len
+    return selected
 
 
 # ─── Lifespan ────────────────────────────────────────────────────
@@ -1548,8 +1609,9 @@ async def ask_question(req: AskRequest, request: Request, _rl: None = Depends(ra
 
     # Generate raw answer using LLM. Evidence is untrusted data — sanitize
     # and wrap it so document content cannot override instructions.
-    # Pass up to 10 evidence items (OKF context is a single combined item).
-    context = evidence_block(evidence[:10])
+    # Select whole evidence chunks within character-budget estimate before prompt construction.
+    selected_evidence = select_evidence_for_budget(evidence, max_chunks=10)
+    context = evidence_block(selected_evidence)
 
     llm = app.state.ollama
     evaluator_llm = getattr(app.state, "evaluator_llm", llm)
@@ -1743,7 +1805,7 @@ Respond with the answer directly.
     # Override grounding_note with OKF-aware version when curated knowledge was used
     if grounding_note:
         formatted["grounding_note"] = grounding_note
-    formatted["verification_status"] = verification.get("verification_status", "verified")
+    formatted["verification_status"] = verification.get("verification_status") or "unverified_evaluator_unavailable"
 
     resp_obj = AskResponse(**formatted)
     if _cache_key and session_id and hasattr(app.state, "metadata"):
@@ -1797,8 +1859,9 @@ async def explain_text(req: ExplainRequest, request: Request, _rl: None = Depend
         evidence = pipeline.query(req.doc_id, req.text, allowed_doc_ids=[req.doc_id], top_k=5)
 
         if evidence:
-            # Document-grounded explanation — evidence is untrusted data
-            context = evidence_block(evidence[:5])
+            # Document-grounded explanation — select whole chunks within char-budget estimate
+            selected_evidence = select_evidence_for_budget(evidence, max_chunks=5)
+            context = evidence_block(selected_evidence)
 
             if req.question:
                 full_question = f"{req.question} (Context: {req.text})"
@@ -1885,7 +1948,7 @@ Respond with the answer directly in {response_lang}."""
                 provenance="document",
                 language_used=response_lang,
                 processing_time_ms=elapsed,
-                verification_status=verification.get("verification_status", "evidence_checks_passed"),
+                verification_status=verification.get("verification_status") or "unverified_evaluator_unavailable",
             )
         else:
             # Document not found or no evidence — fall through to general_ai
@@ -2474,7 +2537,7 @@ Respond with the answer directly.
                     "about Nepal documents."
                 )
                 formatted["provenance"] = "okf_knowledge"
-                formatted["verification_status"] = verification.get("verification_status", "verified")
+                formatted["verification_status"] = verification.get("verification_status") or "unverified_evaluator_unavailable"
                 formatted["official_sources"] = []
                 formatted["evidence_pages"] = []
                 # Add concept citations

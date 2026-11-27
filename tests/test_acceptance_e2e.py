@@ -164,28 +164,31 @@ def test_step3_to_step7_document_lifecycle(client, auth_headers, monkeypatch):
         assert b_del_resp.status_code == 404, "Session B must not delete Session A's document"
 
         # Step 5: Deterministic Question Answering (POST /ask)
-        # Mock LLM to verify deterministic pipeline, citation grounding, and verification layer
+        # Mock primary LLM + independent evaluator to verify deterministic pipeline,
+        # citation grounding, and verification layer without self-evaluation.
         deterministic_answer = (
             "According to the document (Page 1), the standard passport fee is NPR 5,000 for 34 pages."
         )
         monkeypatch.setattr(main.app.state.llm, "generate", lambda prompt: deterministic_answer)
-        monkeypatch.setattr(
-            main.app.state.llm,
-            "generate_structured",
-            lambda prompt: {
-                "overall_confidence": "HIGH",
-                "claims": [
-                    {
-                        "claim": "The standard passport fee is NPR 5,000 for 34 pages.",
-                        "classification": "SUPPORTED",
-                        "evidence": "Document text states Standard Fee: NPR 5,000.",
-                        "page_refs": [1],
-                    }
-                ],
-                "missing_evidence": [],
-                "warning": "",
-            },
-        )
+
+        class _MockIndependentEvaluator:
+            def generate_structured(self, prompt: str) -> dict:
+                return {
+                    "overall_confidence": "HIGH",
+                    "claims": [
+                        {
+                            "claim": "The standard passport fee is NPR 5,000 for 34 pages.",
+                            "classification": "SUPPORTED",
+                            "evidence": "Document text states Standard Fee: NPR 5,000.",
+                            "page_refs": [1],
+                        }
+                    ],
+                    "missing_evidence": [],
+                    "warning": "",
+                }
+
+        monkeypatch.setattr(main.app.state.validator, "llm", _MockIndependentEvaluator())
+        monkeypatch.setattr(main.app.state.verification, "_is_independent", True)
 
         ask_payload = {
             "question": "What is the passport fee?",
