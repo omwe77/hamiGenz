@@ -26,7 +26,8 @@ Any new evaluation corpus created in M4 (starting with Phase 4A `tests/evaluatio
 | Rule | Requirement | Enforcement |
 |---|---|---|
 | **Zero PII / Real Citizen Data** | Real personal citizenship cards, passports, NID cards, tax receipts with real names/IDs, or user uploads must **never** be committed. | Manual + automated inspection before commit; `UPLOAD_DIR` and `VECTORS_DIR` remain `.gitignore`d. |
-| **Permissive Provenance Only** | Only `CC0-1.0`, `Public Domain` Nepal Government public notices/gazettes, blank official form templates, or synthetically degraded/redacted public templates may be included. | Every corpus directory must include a `MANIFEST.json` recording `filename`, `source_url` (or `synthetic_from_public_template`), `license`, `collected_date`, and `pii_cleared: true`. |
+| **Permissive Provenance Only** | Only `CC0-1.0`, `Public Domain` Nepal Government public notices/gazettes, blank official form templates, or synthetically degraded/redacted public templates may be included. | Every corpus directory must include a `MANIFEST.json` recording `filename`, `source_url` (or `synthetic_from_public_template`), `license`, `collected_date`, `quality_stratum`, and `pii_cleared: true`. |
+| **Verified Ground-Truth Review** | `.gt.txt` transcriptions must be human-verified against the source image (checking Devanagari matras, conjuncts, and numerals) — never auto-populated from unreviewed OCR output. | `MANIFEST.json` records `gt_verified: true` and `gt_review_notes` for every sample before benchmark acceptance. |
 | **Clear Synthetic vs. Real Labeling** | `eval_ocr.py` must continue tagging `dataset_type` explicitly (`"synthetic"` vs. `"real_public_notice"`), never conflating synthetic benchmarks with real-world scan accuracy. | Enforced in `eval_ocr.py` output schema and `tests/test_ocr_evaluation.py`. |
 
 ---
@@ -38,7 +39,7 @@ hamiGenZ targets local-first self-hosting (<= 8 GB RAM/VRAM alongside Ollama `qw
 | Candidate | License | Footprint / Resource Impact | M4 Decision |
 |---|---|---|---|
 | **`Pillow` + `pytesseract` (existing)** | HPND / Apache 2.0 | `0 MB` incremental (already installed) | **Default baseline** (`Phase 4A` first target). |
-| **`opencv-python-headless`** | Apache 2.0 | ~35–50 MB wheel, no X11/GUI deps, CPU-only | **Evaluate in Phase 4A** only for deterministic deskew/binarization/denoise if Pillow-only preprocessing leaves a gap. |
+| **`opencv-python-headless`** | MIT (wheel packaging) / Apache 2.0 (OpenCV >= 4.5 core) + bundled third-party codecs/BLAS (BSD/MIT/IJG/zlib; no `opencv-contrib` non-free modules) | ~35–50 MB wheel, no X11/GUI deps, CPU-only | **Optional comparison in Phase 4A** only if Pillow-only preprocessing leaves a gap; verify bundled wheel `LICENSES` notices before any adoption. |
 | **`rank_bm25`** | Apache 2.0 | < 1 MB pure Python, negligible RAM | **Optional in Phase 4B** for exact-token lexical matching (Nepali numerals, form codes) alongside FAISS `document` retrieval. |
 | **`PaddleOCR` (`PP-OCRv5` Devanagari mobile)** | Apache 2.0 (code & weights) | ~150–400+ MB runtime + model weights, C++ inference overhead | **Gated / Deferred:** Evaluate offline in a branch spike only if Phase 4A Tesseract + preprocessing fails to hit targets. |
 | **`Surya OCR`** | Apache 2.0 code / **Modified AI Pubs OpenRAIL-M weights** | Heavy PyTorch/transformer weights; weight license restricts > \$5M entities | **Rejected for default bundle** due to weight license & footprint. |
@@ -55,19 +56,21 @@ hamiGenZ targets local-first self-hosting (<= 8 GB RAM/VRAM alongside Ollama `qw
 
 #### Scope
 1. **Curate & Lock Real-World Public Corpus (`tests/evaluation/real_ocr_corpus/`):**
-   - Collect 25–50 paired image/ground-truth samples (`.png`/`.jpg` + `.gt.txt`) from public-domain Nepal government notices, blank public forms, and realistic scan degradations (skew, stamps, low-DPI photocopies, uneven lighting), with `MANIFEST.json` provenance.
+   - Collect 25–50 paired image/ground-truth samples (`.png`/`.jpg` + `.gt.txt`) from public-domain Nepal government notices, blank public forms, and realistic scan degradations, organized across **scan-quality strata** (`clean_digital_scan`, `moderate_noise_skew`, `degraded_low_dpi_stamp`).
+   - Every sample requires `MANIFEST.json` provenance and **verified ground-truth review** (`gt_verified: true`) confirming Devanagari matras, conjuncts, and numerals against the source image.
 2. **Reproducible Benchmark Harness (`tests/evaluation/eval_ocr.py`):**
    - Run all comparisons on the **identical locked corpus**, identical Unicode NFC normalization (`unicodedata.normalize("NFC", ...)`), and identical CER/WER metric definitions.
-   - Record per-case and aggregate CER, WER, median latency (ms/page), peak RSS memory, and engine/preprocessing configuration.
-3. **Lightweight Preprocessing Pipeline (`backend/document_processor.py` / `backend/ocr_engines.py`):**
+   - Report **stratified metrics per scan-quality tier** alongside overall aggregate: CER, WER, median latency (ms/page), and peak RSS memory (MB) per engine/preprocessing configuration.
+3. **Opt-In Lightweight Preprocessing Pipeline (`backend/document_processor.py` / `backend/ocr_engines.py`):**
    - Benchmark raw `tesseract` (`nep+eng`) baseline first.
-   - Implement and benchmark lightweight preprocessing (300-DPI normalization for low-res inputs, grayscale + adaptive binarization/Otsu thresholding, border cleanup, deskew) behind `HAMIGENZ_OCR_PREPROCESS` (`1` default when proven, `0` instant fallback).
-   - **Decision Gate:** Only if Tesseract + lightweight preprocessing cannot reach the target CER/WER on the locked corpus will a separate spike evaluate `PaddleOCR` (`devanagari_PP-OCRv5_mobile_rec`) against the dependency/resource budget.
+   - Implement lightweight preprocessing (300-DPI normalization for low-res inputs, grayscale + adaptive binarization/Otsu thresholding, border cleanup, deskew) behind **`HAMIGENZ_OCR_PREPROCESS=0` (strictly opt-in by default)** until benchmark acceptance is signed off.
+   - **Guardrail:** Do **not** add `PaddleOCR`, change the default OCR engine (`tesseract`), or enable preprocessing by default without separate approval after Phase 4A results are reviewed.
 
 #### Measurable Success Criteria (4A)
-- Locked corpus contains >= 25 paired samples with 100% `MANIFEST.json` license and PII clearance.
-- **>= 20% relative CER reduction** vs. raw `tesseract` baseline on the real-world corpus (target **<= 15.0% avg CER** and **<= 25.0% avg WER** on clean/moderate real public notices).
-- **Zero regression** on the existing synthetic OCR benchmark (`tests/test_ocr_evaluation.py` thresholds) and **0 new heavyweight ML dependencies** added to `backend/requirements.txt` unless explicitly approved after benchmark evidence.
+- Locked corpus contains >= 25 paired samples across all scan-quality strata with 100% `MANIFEST.json` license, PII clearance, and `gt_verified: true`.
+- Stratified report published covering CER, WER, median latency (ms/page), and peak RSS memory (MB) for raw Tesseract baseline vs. opt-in preprocessing variants.
+- **>= 20% relative CER reduction** vs. raw `tesseract` baseline on the real-world corpus (target **<= 15.0% avg CER** and **<= 25.0% avg WER** on clean/moderate real public notices), with no catastrophic regression in any stratum.
+- **Zero regression** on the existing synthetic OCR benchmark (`tests/test_ocr_evaluation.py` thresholds) and **0 new heavyweight ML dependencies** added to `backend/requirements.txt`.
 - Offline CI runtime remains < 5 min for `Backend CI`.
 
 #### Test Strategy (4A)
