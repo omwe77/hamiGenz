@@ -98,25 +98,33 @@ def test_step3_to_step7_document_lifecycle(client, auth_headers, monkeypatch):
     grounded Q&A with citations, action extraction schema validation,
     and rigorous disk cleanup verification.
 
-    Cleanup (Step 7) runs in `finally` unconditionally from just after upload,
-    so a mid-test assertion failure cannot leave orphaned files or vector indexes.
+    Cleanup (Step 7) runs in `finally` unconditionally from before upload,
+    so a mid-test assertion failure cannot leave orphaned files or vector
+    indexes. `doc_id` is initialised to `None` before the try block; the
+    finally guard skips cleanup only when upload never issued a usable doc_id.
+    If the test body already failed, cleanup errors are recorded without
+    hiding the original test failure.
     """
     img_bytes = create_synthetic_test_image()
     files = {"file": ("test_civic_notice.png", img_bytes, "image/png")}
 
-    # Step 3: Upload Ingestion — do this before try so doc_id is defined for finally.
-    upload_resp = client.post("/upload", files=files, headers=auth_headers)
-    assert upload_resp.status_code == 200, f"Upload failed: {upload_resp.text}"
-    upload_data = upload_resp.json()
-    doc_id = upload_data.get("doc_id")
-    assert doc_id, "Response missing doc_id"
-
-    # Capture physical paths immediately so finally can verify removal even if
-    # later assertions abort early.
-    uploaded_files = list(UPLOAD_DIR.glob(f"*{doc_id}*"))
-    filepath = str(uploaded_files[0]) if uploaded_files else None
+    # Initialise before try so finally can always reference doc_id.
+    doc_id: str | None = None
+    filepath: str | None = None
 
     try:
+        # Step 3: Upload Ingestion — inside try so cleanup always runs.
+        upload_resp = client.post("/upload", files=files, headers=auth_headers)
+        assert upload_resp.status_code == 200, f"Upload failed: {upload_resp.text}"
+        upload_data = upload_resp.json()
+        doc_id = upload_data.get("doc_id")
+        assert doc_id, "Response missing doc_id"
+
+        # Capture physical paths immediately so finally can verify removal even if
+        # later assertions abort early.
+        uploaded_files = list(UPLOAD_DIR.glob(f"*{doc_id}*"))
+        filepath = str(uploaded_files[0]) if uploaded_files else None
+
         assert upload_data.get("filename") == "test_civic_notice.png"
         assert upload_data.get("chunks", 0) > 0, "Expected at least 1 chunk created"
         assert len(uploaded_files) >= 1, f"Uploaded file matching *{doc_id}* not found in {UPLOAD_DIR}"
@@ -224,37 +232,46 @@ def test_step3_to_step7_document_lifecycle(client, auth_headers, monkeypatch):
         )
 
     finally:
-        # Step 7: Document and FAISS Artifact Deletion — always runs.
-        del_resp = client.delete(f"/documents/{doc_id}", headers=auth_headers)
-        # Accept 200 (successful delete) or 404 (never persisted due to early failure).
-        assert del_resp.status_code in (200, 404), (
-            f"Delete returned unexpected status: {del_resp.status_code} ({del_resp.text})"
-        )
-        if del_resp.status_code == 200:
-            del_data = del_resp.json()
-            assert del_data.get("status") == "deleted"
-            assert del_data.get("doc_id") == doc_id
+        # Step 7: Document and FAISS Artifact Deletion — always runs when doc_id was obtained.
+        # Guard on doc_id so a failed upload (no id issued) doesn't attempt a None-keyed delete.
+        # If the try block already raised, do not let a cleanup error mask the original failure.
+        has_primary_failure = sys.exc_info()[0] is not None
+        if doc_id is not None:
+            try:
+                del_resp = client.delete(f"/documents/{doc_id}", headers=auth_headers)
+                # Accept 200 (successful delete) or 404 (never persisted due to early failure).
+                assert del_resp.status_code in (200, 404), (
+                    f"Delete returned unexpected status: {del_resp.status_code} ({del_resp.text})"
+                )
+                if del_resp.status_code == 200:
+                    del_data = del_resp.json()
+                    assert del_data.get("status") == "deleted"
+                    assert del_data.get("doc_id") == doc_id
 
-        # Verify physical file removal (file may not exist if upload failed)
-        if filepath and Path(filepath).exists():
-            raise AssertionError(f"Uploaded file was not unlinked from disk: {filepath}")
+                # Verify physical file removal (file may not exist if upload failed)
+                if filepath and Path(filepath).exists():
+                    raise AssertionError(f"Uploaded file was not unlinked from disk: {filepath}")
 
-        # Verify vector index artifacts removal
-        vector_artifacts = list(VECTORS_DIR.glob(f"{doc_id}*"))
-        assert len(vector_artifacts) == 0, f"Vector artifacts still present after deletion: {vector_artifacts}"
+                # Verify vector index artifacts removal
+                vector_artifacts = list(VECTORS_DIR.glob(f"{doc_id}*"))
+                assert len(vector_artifacts) == 0, f"Vector artifacts still present after deletion: {vector_artifacts}"
 
-        # Verify metadata removal from API
-        after_viewer_resp = client.get(f"/documents/{doc_id}/viewer", headers=auth_headers)
-        assert after_viewer_resp.status_code == 404, "Document viewer should return 404 after deletion"
+                # Verify metadata removal from API
+                after_viewer_resp = client.get(f"/documents/{doc_id}/viewer", headers=auth_headers)
+                assert after_viewer_resp.status_code == 404, "Document viewer should return 404 after deletion"
 
-        after_list_resp = client.get("/documents", headers=auth_headers)
-        assert not any(d.get("doc_id") == doc_id for d in after_list_resp.json()), (
-            "Document still listed in /documents after deletion"
-        )
+                after_list_resp = client.get("/documents", headers=auth_headers)
+                assert not any(d.get("doc_id") == doc_id for d in after_list_resp.json()), (
+                    "Document still listed in /documents after deletion"
+                )
 
-        # Idempotent/duplicate deletion should return 404
-        second_del_resp = client.delete(f"/documents/{doc_id}", headers=auth_headers)
-        assert second_del_resp.status_code == 404, "Subsequent deletion should return 404"
+                # Idempotent/duplicate deletion should return 404
+                second_del_resp = client.delete(f"/documents/{doc_id}", headers=auth_headers)
+                assert second_del_resp.status_code == 404, "Subsequent deletion should return 404"
+            except Exception as cleanup_exc:
+                if not has_primary_failure:
+                    raise
+                print(f"\n[E2E CLEANUP WARNING] Cleanup failed after primary test error: {cleanup_exc}")
 
 
 def test_offline_graceful_503_when_llm_unavailable(client, auth_headers, monkeypatch):
