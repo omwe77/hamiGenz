@@ -102,7 +102,9 @@ ZDR_VERIFIED = os.getenv("ZDR_VERIFIED", "false").strip().lower() in ("1", "true
 GEMINI_SYNTHETIC_TESTING_ONLY = os.getenv("GEMINI_SYNTHETIC_TESTING_ONLY", "false").strip().lower() in ("1", "true", "yes")
 PUBLIC_PRODUCTION_MODE = os.getenv("PUBLIC_PRODUCTION_MODE", "false").strip().lower() in ("1", "true", "yes")
 DOCUMENT_RETENTION_SECONDS = int(os.getenv("DOCUMENT_RETENTION_SECONDS", "86400"))
+DOCUMENT_RETENTION_INTERVAL_SECONDS = int(os.getenv("DOCUMENT_RETENTION_INTERVAL_SECONDS", "300"))
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "86400"))
+PROMPT_VERSION = f"v2:{__import__('hashlib').sha256(SYSTEM_PREAMBLE.encode('utf-8')).hexdigest()[:12]}"
 # Multilingual embedding model — chosen via tests/evaluation retrieval
 # benchmark (PR-014): all-MiniLM-L6-v2 scored Hit@1 0.22 / MRR 0.41 overall
 # and 0.0 Hit@1 on English→Nepali cross-lingual queries; this model scores
@@ -180,22 +182,45 @@ def _run_reindex_scavenger(
     vector_store._save_registry()
 
 
+def get_active_uploads() -> set[str]:
+    """Track doc_ids currently being uploaded/processed so retention cleanup never deletes them."""
+    if not hasattr(app.state, "_active_uploads") or app.state._active_uploads is None:
+        app.state._active_uploads = set()
+    return app.state._active_uploads
+
+
+def get_protected_doc_ids() -> set[str]:
+    """Return all doc_ids currently protected by active uploads or reindex locks."""
+    protected = set(get_active_uploads())
+    for doc_id, lock in get_reindex_locks().items():
+        if lock.locked():
+            protected.add(doc_id)
+    return protected
+
+
 def cleanup_expired_documents(
     metadata,
     vector_store,
     upload_dir: Path,
     retention_seconds: int = DOCUMENT_RETENTION_SECONDS,
+    protected_doc_ids: Optional[set[str]] = None,
 ) -> int:
-    """Delete documents, vectors, uploaded files, and cached answers older than retention_seconds."""
+    """Delete documents, vectors, uploaded files, and cached answers older than retention_seconds.
+
+    Skips any doc_id in protected_doc_ids (active uploads or in-progress reindexes).
+    """
     from datetime import datetime, timezone, timedelta
     if retention_seconds <= 0:
         return 0
+    protected = protected_doc_ids or set()
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=retention_seconds)).isoformat()
     expired = metadata.list_expired_documents(cutoff_iso)
     removed = 0
     resolved_upload_dir = upload_dir.resolve()
     for doc in expired:
         doc_id = doc["doc_id"]
+        if doc_id in protected:
+            continue
         filepath = doc.get("filepath")
         try:
             vector_store.remove_document(doc_id)
@@ -214,6 +239,28 @@ def cleanup_expired_documents(
     if removed:
         print(f"[hamigenz] retention cleanup removed {removed} expired document(s)")
     return removed
+
+
+async def _retention_cleanup_loop(
+    metadata,
+    vector_store,
+    upload_dir: Path,
+    retention_seconds: int,
+    interval_seconds: int,
+) -> None:
+    """Periodic background loop for document retention cleanup."""
+    while True:
+        await asyncio.sleep(max(1, interval_seconds))
+        try:
+            cleanup_expired_documents(
+                metadata,
+                vector_store,
+                upload_dir,
+                retention_seconds=retention_seconds,
+                protected_doc_ids=get_protected_doc_ids(),
+            )
+        except Exception as exc:
+            print(f"[hamigenz] periodic retention cleanup error: {exc}")
 
 
 def build_llm_and_evaluator(
@@ -417,12 +464,32 @@ async def lifespan(app: FastAPI):
 
     get_processing_semaphore()
     get_reindex_locks()
+    get_active_uploads()
     _run_reindex_scavenger(
         app.state.metadata, app.state.vector_store, UPLOAD_DIR, VECTORS_DIR
     )
+    retention_task = None
+    if DOCUMENT_RETENTION_SECONDS > 0 and DOCUMENT_RETENTION_INTERVAL_SECONDS > 0:
+        retention_task = asyncio.create_task(
+            _retention_cleanup_loop(
+                app.state.metadata,
+                app.state.vector_store,
+                UPLOAD_DIR,
+                DOCUMENT_RETENTION_SECONDS,
+                DOCUMENT_RETENTION_INTERVAL_SECONDS,
+            )
+        )
     active_llm_model = GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_MODEL
     print(f"[hamigenz] Ready. Provider: {LLM_PROVIDER}, Embedder: {EMBED_MODEL}, LLM: {active_llm_model}")
-    yield
+    try:
+        yield
+    finally:
+        if retention_task is not None:
+            retention_task.cancel()
+            try:
+                await retention_task
+            except asyncio.CancelledError:
+                pass
     print("[hamigenz] Shutting down...")
 
 
@@ -768,6 +835,37 @@ class ExplainResponse(BaseModel):
     provenance: str  # document, general_ai, mixed
     language_used: str
     processing_time_ms: Optional[int] = None
+    verification_status: Optional[str] = None
+
+
+def build_ask_cache_key(
+    *,
+    session_id: str,
+    doc_id: Optional[str],
+    doc_generation: int,
+    llm_provider: str,
+    llm_model: str,
+    evaluator_provider: str,
+    evaluator_model: str,
+    prompt_version: str,
+    response_lang: str,
+    question: str,
+) -> str:
+    """Build a session-, document-, model-, and prompt-scoped cache key."""
+    import hashlib as _hashlib
+    raw = "|".join([
+        session_id,
+        doc_id or "",
+        str(doc_generation),
+        llm_provider,
+        llm_model,
+        evaluator_provider,
+        evaluator_model,
+        prompt_version,
+        response_lang,
+        question.strip().lower(),
+    ])
+    return _hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class ActionItem(BaseModel):
@@ -1123,6 +1221,8 @@ async def upload_document(
             filepath, doc_id = processor.save_upload_from_path(staging_path, filename)
             staging_path = None  # Transferred to filepath
 
+        get_active_uploads().add(doc_id)
+
         # Ingress phase complete! Release admission permit immediately so next upload can stream
         adm_sem.release()
         adm_released = True
@@ -1225,7 +1325,8 @@ async def upload_document(
                     # 3. Release processing permit strictly after worker has stopped and cleanup is done
                     sem.release()
                     # (Note: adm_sem was already released right after staging!)
-                    # 4. Supervisor owns releasing the reindex lock upon worker completion (Task 2.1.2-E2)
+                    # 4. Supervisor owns releasing the reindex lock & active upload guard upon completion
+                    get_active_uploads().discard(doc_id)
                     if _reindex_lock is not None and _reindex_lock.locked():
                         _reindex_lock.release()
 
@@ -1311,6 +1412,8 @@ async def upload_document(
             staging_path = None
         # Guaranteed cleanup for staged files, processing permit, and lock if supervisor never took ownership
         if not supervisor_started:
+            if doc_id is not None:
+                get_active_uploads().discard(doc_id)
             _cleanup_staging_artifacts()
             if sem_acquired:
                 sem.release()
@@ -1423,6 +1526,7 @@ async def ask_question(req: AskRequest, request: Request, _rl: None = Depends(ra
             evidence_pages=[],
             language_used=response_lang,
             processing_time_ms=int((time.time() - start) * 1000),
+            verification_status="not_applicable",
         )
 
     # Generate raw answer using LLM. Evidence is untrusted data — sanitize
@@ -1431,20 +1535,28 @@ async def ask_question(req: AskRequest, request: Request, _rl: None = Depends(ra
     context = evidence_block(evidence[:10])
 
     llm = app.state.ollama
+    evaluator_llm = getattr(app.state, "evaluator_llm", llm)
 
-    # Safe session-scoped cache lookup
-    import hashlib as _hashlib
+    # Safe session-scoped cache lookup (invalidated on doc deletion, reindex generation, model, or prompt change)
     _cache_key = None
     if session_id and hasattr(app.state, "metadata"):
-        _raw_ck = "|".join([
-            session_id,
-            req.doc_id or "",
-            type(llm).__name__,
-            getattr(llm, "model", ""),
-            response_lang,
-            req.question.strip().lower(),
-        ])
-        _cache_key = _hashlib.sha256(_raw_ck.encode("utf-8")).hexdigest()
+        _doc_gen = (
+            app.state.metadata.get_reindex_generation(req.doc_id)
+            if req.doc_id
+            else 0
+        )
+        _cache_key = build_ask_cache_key(
+            session_id=session_id,
+            doc_id=req.doc_id,
+            doc_generation=_doc_gen,
+            llm_provider=type(llm).__name__,
+            llm_model=getattr(llm, "model", ""),
+            evaluator_provider=type(evaluator_llm).__name__,
+            evaluator_model=getattr(evaluator_llm, "model", ""),
+            prompt_version=PROMPT_VERSION,
+            response_lang=response_lang,
+            question=req.question,
+        )
         cached_payload = app.state.metadata.get_cached_answer(_cache_key)
         if cached_payload:
             cached_payload["processing_time_ms"] = int((time.time() - start) * 1000)
@@ -1528,6 +1640,7 @@ Respond with the answer directly.
                 "excerpt": (e.get("text") or "")[:300],
             }
             for e in evidence[:3]
+            if e.get("source_type", "document") not in ("okf", "official")
         ]
         return JSONResponse(
             status_code=429,
@@ -1750,6 +1863,7 @@ Respond with the answer directly in {response_lang}."""
                 provenance="document",
                 language_used=response_lang,
                 processing_time_ms=elapsed,
+                verification_status=verification.get("verification_status", "evidence_checks_passed"),
             )
         else:
             # Document not found or no evidence — fall through to general_ai
@@ -1799,6 +1913,7 @@ Respond with the answer directly.
         provenance="general_ai",
         language_used=response_lang,
         processing_time_ms=elapsed,
+        verification_status="not_applicable",
     )
 
 
@@ -2296,7 +2411,7 @@ Respond with the answer directly.
                             "detail": str(exc),
                             "verification_status": "rate_limited",
                             "retry_after": retry_after,
-                            "fallback_excerpts": [{"source_type": "okf", "excerpt": okf_context[:400]}],
+                            "fallback_excerpts": [],
                         },
                     )
                 except LLMUnavailableError:

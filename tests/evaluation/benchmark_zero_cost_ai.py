@@ -1,14 +1,11 @@
 """
-Synthetic Nepali & English Benchmark for Zero-Cost AI Architecture.
+Mocked Contract & Schema-Validation Test for Zero-Cost AI Architecture.
 
-Runs strictly on synthetic civic-document samples (no real citizen documents).
-Verifies:
-1. Per-request token budgets and prompt truncation
-2. Server-side evaluator JSON schema validation on synthetic Nepali & English pairs
-3. Verification state transitions (verified, unverified_flagged, unverified_evaluator_unavailable, rate_limited)
-4. Optional live comparison if GROQ_API_KEY + CLOUDFLARE_API_TOKEN + ZDR_VERIFIED=true are set.
+IMPORTANT: These are mocked contract tests using synthetic Nepali & English
+civic-document samples — NOT live model-quality benchmarks. Live Nepali quality
+and Neuron consumption on Groq (`openai/gpt-oss-120b`) and Cloudflare Workers AI
+(`@cf/qwen/qwen3.8-27b`) remain unmeasured until live credentials are tested.
 """
-import os
 import sys
 import time
 from pathlib import Path
@@ -19,10 +16,7 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 from llm_service import (
-    CloudflareWorkersAIService,
-    GroqService,
     GroundingValidator,
-    LLMRateLimitError,
     VerificationLayer,
     _estimate_tokens,
     validate_evaluator_payload,
@@ -41,7 +35,7 @@ SYNTHETIC_CASES = [
             "missing_evidence": [],
             "warning": "",
         },
-        "expected_status": "verified",
+        "expected_status": "evidence_checks_passed",
     },
     {
         "id": "syn-en-01",
@@ -55,7 +49,7 @@ SYNTHETIC_CASES = [
             "missing_evidence": [],
             "warning": "",
         },
-        "expected_status": "verified",
+        "expected_status": "evidence_checks_passed",
     },
     {
         "id": "syn-np-flagged",
@@ -74,7 +68,7 @@ SYNTHETIC_CASES = [
 ]
 
 
-def run_benchmark() -> list[dict]:
+def run_contract_tests() -> list[dict]:
     results = []
     for case in SYNTHETIC_CASES:
         t0 = time.perf_counter()
@@ -104,9 +98,9 @@ def run_benchmark() -> list[dict]:
 
 
 if __name__ == "__main__":
-    rows = run_benchmark()
+    rows = run_contract_tests()
     for r in rows:
         assert r["verification_status"] == r["expected_status"], f"Mismatch on {r['id']}: {r}"
-        print(f"[BENCH] {r['id']} ({r['lang']}): status={r['verification_status']} schema={r['schema_valid']} "
+        print(f"[MOCKED-CONTRACT] {r['id']} ({r['lang']}): status={r['verification_status']} schema={r['schema_valid']} "
               f"in_tok~={r['input_tokens_est']} out_tok~={r['output_tokens_est']} latency={r['latency_ms']}ms")
-    print(f"Benchmark completed: {len(rows)}/{len(rows)} synthetic cases passed.")
+    print(f"Mocked contract tests completed: {len(rows)}/{len(rows)} synthetic cases passed (not a live model-quality benchmark).")

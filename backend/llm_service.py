@@ -54,7 +54,12 @@ def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
 
 
 class QuotaTracker:
-    """Thread-safe RPM / RPD / TPM / TPD budget guard for free-tier APIs."""
+    """Thread-safe advisory RPM / RPD / TPM / TPD tracker for free-tier APIs.
+
+    By default (advisory_only=True), records usage and surfaces advisory warnings
+    without pre-emptively blocking requests; upstream HTTP 429 and provider
+    rate-limit headers remain authoritative.
+    """
 
     def __init__(
         self,
@@ -63,18 +68,22 @@ class QuotaTracker:
         rpd: int = 1000,
         tpm: int = 8000,
         tpd: int = 200000,
+        advisory_only: bool = True,
     ):
         self.name = name
         self.rpm = rpm
         self.rpd = rpd
         self.tpm = tpm
         self.tpd = tpd
+        self.advisory_only = advisory_only
         self._lock = threading.Lock()
         self._minute_reqs: deque[float] = deque()
         self._minute_toks: deque[tuple[float, int]] = deque()
         self._day_key: str = time.strftime("%Y-%m-%d", time.gmtime())
         self._day_reqs: int = 0
         self._day_toks: int = 0
+        self.last_provider_headers: dict[str, str] = {}
+        self.last_advisory_warning: Optional[str] = None
 
     def _roll_day_if_needed(self) -> None:
         today = time.strftime("%Y-%m-%d", time.gmtime())
@@ -83,8 +92,21 @@ class QuotaTracker:
             self._day_reqs = 0
             self._day_toks = 0
 
-    def check_and_reserve(self, estimated_tokens: int) -> None:
-        """Raise LLMRateLimitError if request would exceed minute or daily quotas."""
+    def update_from_headers(self, headers: Any) -> None:
+        """Record authoritative provider rate-limit headers when present."""
+        if not headers:
+            return
+        tracked = {}
+        for k, v in headers.items():
+            lk = str(k).lower()
+            if lk.startswith("x-ratelimit-") or lk == "retry-after":
+                tracked[lk] = str(v)
+        if tracked:
+            with self._lock:
+                self.last_provider_headers = tracked
+
+    def check_and_reserve(self, estimated_tokens: int) -> Optional[str]:
+        """Record usage; return advisory warning if near/over budget, or raise if strict."""
         now = time.monotonic()
         with self._lock:
             self._roll_day_if_needed()
@@ -94,34 +116,32 @@ class QuotaTracker:
             while self._minute_toks and self._minute_toks[0][0] < cutoff:
                 self._minute_toks.popleft()
 
+            warning: Optional[str] = None
+            wait_s = 60
             if self.rpd > 0 and self._day_reqs >= self.rpd:
-                raise LLMRateLimitError(
-                    f"{self.name} daily request budget ({self.rpd} RPD) exhausted.",
-                    retry_after=3600,
-                )
-            if self.tpd > 0 and (self._day_toks + estimated_tokens) > self.tpd:
-                raise LLMRateLimitError(
-                    f"{self.name} daily token budget ({self.tpd} TPD) exhausted.",
-                    retry_after=3600,
-                )
-            if self.rpm > 0 and len(self._minute_reqs) >= self.rpm:
+                warning = f"{self.name} daily request budget ({self.rpd} RPD) reached."
+                wait_s = 3600
+            elif self.tpd > 0 and (self._day_toks + estimated_tokens) > self.tpd:
+                warning = f"{self.name} daily token budget ({self.tpd} TPD) reached."
+                wait_s = 3600
+            elif self.rpm > 0 and len(self._minute_reqs) >= self.rpm:
                 wait_s = max(1, int(self._minute_reqs[0] + 60.0 - now) + 1)
-                raise LLMRateLimitError(
-                    f"{self.name} per-minute request budget ({self.rpm} RPM) reached.",
-                    retry_after=wait_s,
-                )
-            used_tpm = sum(t for _, t in self._minute_toks)
-            if self.tpm > 0 and (used_tpm + estimated_tokens) > self.tpm:
-                wait_s = max(1, int(self._minute_toks[0][0] + 60.0 - now) + 1) if self._minute_toks else 15
-                raise LLMRateLimitError(
-                    f"{self.name} per-minute token budget ({self.tpm} TPM) reached.",
-                    retry_after=wait_s,
-                )
+                warning = f"{self.name} per-minute request budget ({self.rpm} RPM) reached."
+            else:
+                used_tpm = sum(t for _, t in self._minute_toks)
+                if self.tpm > 0 and (used_tpm + estimated_tokens) > self.tpm:
+                    wait_s = max(1, int(self._minute_toks[0][0] + 60.0 - now) + 1) if self._minute_toks else 15
+                    warning = f"{self.name} per-minute token budget ({self.tpm} TPM) reached."
+
+            self.last_advisory_warning = warning
+            if warning and not self.advisory_only:
+                raise LLMRateLimitError(warning, retry_after=wait_s)
 
             self._minute_reqs.append(now)
             self._minute_toks.append((now, estimated_tokens))
             self._day_reqs += 1
             self._day_toks += estimated_tokens
+            return warning
 
 
 class OllamaService:
@@ -384,15 +404,40 @@ The JSON must parse with json.loads().
         return OllamaService._parse_json_response(text)
 
 
-def _parse_retry_after(resp: requests.Response) -> Optional[int]:
-    """Parse HTTP Retry-After header as integer seconds if present."""
-    raw = resp.headers.get("Retry-After")
+def _parse_duration_seconds(raw: str) -> Optional[int]:
+    """Parse provider reset durations like '12s', '1m30s', '500ms', or '42'."""
     if not raw:
         return None
+    s = raw.strip().lower()
     try:
-        return max(1, int(float(raw)))
+        return max(1, int(float(s)))
     except ValueError:
-        return None
+        pass
+    total = 0.0
+    matched = False
+    for val, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", s):
+        matched = True
+        num = float(val)
+        if unit == "ms":
+            total += num / 1000.0
+        elif unit == "s":
+            total += num
+        elif unit == "m":
+            total += num * 60.0
+        elif unit == "h":
+            total += num * 3600.0
+    return max(1, int(total)) if matched else None
+
+
+def _parse_retry_after(resp: requests.Response) -> Optional[int]:
+    """Parse HTTP Retry-After or provider x-ratelimit-reset-* headers."""
+    for key in ("Retry-After", "retry-after", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+        raw = resp.headers.get(key)
+        if raw:
+            parsed = _parse_duration_seconds(str(raw))
+            if parsed is not None:
+                return parsed
+    return None
 
 
 class GroqService:
@@ -459,6 +504,7 @@ class GroqService:
         }
         try:
             resp = self._http.post(self.DEFAULT_URL, json=payload, headers=headers, timeout=timeout)
+            self.quota.update_from_headers(getattr(resp, "headers", None))
             if resp.status_code == 429:
                 raise LLMRateLimitError(
                     "Groq upstream rate limit (HTTP 429) exceeded.",
@@ -550,6 +596,7 @@ class CloudflareWorkersAIService:
         }
         try:
             resp = self._http.post(self.endpoint, json=payload, headers=headers, timeout=timeout)
+            self.quota.update_from_headers(getattr(resp, "headers", None))
             if resp.status_code == 429:
                 raise LLMRateLimitError(
                     "Cloudflare Workers AI rate limit (HTTP 429) exceeded.",
@@ -747,21 +794,36 @@ class VerificationLayer:
         self.llm = llm
         self.validator = validator or GroundingValidator(llm)
 
+    @staticmethod
+    def _deterministic_evidence_check(answer: str, evidence_chunks: list[dict]) -> tuple[bool, list[str]]:
+        """Deterministic validation: non-empty answer, non-empty evidence, and valid page citations."""
+        issues: list[str] = []
+        if not answer or not answer.strip():
+            issues.append("Generated answer is empty.")
+        if not evidence_chunks:
+            issues.append("No evidence chunks were provided for document verification.")
+        valid_pages = {
+            int(c["page_num"])
+            for c in evidence_chunks
+            if isinstance(c.get("page_num"), int) or (isinstance(c.get("page_num"), str) and c.get("page_num").isdigit())
+        }
+        if valid_pages:
+            cited_pages = {int(p) for p in re.findall(r"(?:\[|\()\s*[Pp]age\s+(\d+)\s*(?:\]|\))", answer or "")}
+            invalid_pages = sorted(cited_pages - valid_pages)
+            if invalid_pages:
+                issues.append(f"Answer cites page(s) not in retrieved evidence: {invalid_pages}")
+        return len(issues) == 0, issues
+
     def verify(self, question: str, answer: str,
                evidence_chunks: list[dict]) -> dict:
         """
         Run full verification on an answer.
 
-        Returns a dict with:
-          - grounding_report: raw claim-level classification (from GroundingValidator)
-          - contradiction_found: bool — any claim marked CONTRADICTED
-          - contradiction_claims: list of contradicted claim texts
-          - confidence_score: 0–100 numeric score derived from claim weights
-          - confidence_band: "HIGH" / "MEDIUM" / "LOW" / "UNKNOWN"
-          - unsupported_facts: list of claim texts that are PARTIALLY_SUPPORTED
-                                 or INSUFFICIENT_EVIDENCE or CONTRADICTED
-          - recommendation: short guidance for the frontend / user
+        Document answers are marked `evidence_checks_passed` ONLY when both
+        the evaluator (valid JSON schema, no contradictions, confidence != LOW)
+        and deterministic evidence checks pass. Never implies a guarantee of correctness.
         """
+        det_ok, det_issues = self._deterministic_evidence_check(answer, evidence_chunks)
         try:
             raw_report = self.validator.validate(question, answer, evidence_chunks)
         except LLMUnavailableError as exc:
@@ -783,6 +845,8 @@ class VerificationLayer:
                 ),
                 "verification_status": "unverified_evaluator_unavailable",
                 "schema_valid": False,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
             }
 
         is_valid, report, schema_reason = validate_evaluator_payload(raw_report)
@@ -805,6 +869,8 @@ class VerificationLayer:
                 ),
                 "verification_status": "unverified_evaluator_unavailable",
                 "schema_valid": False,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
             }
 
         claims = report.get("claims", [])
@@ -814,9 +880,6 @@ class VerificationLayer:
             if c.get("classification") in ("PARTIALLY_SUPPORTED", "INSUFFICIENT_EVIDENCE", "CONTRADICTED")
         ]
 
-        # Numeric confidence: weighted average of claim weights, scaled to 0–100.
-        # If there are no claims (empty answer / no evidence), fall back to the
-        # qualitative band from the validator.
         if claims:
             total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
             confidence_score = round((total_weight / len(claims)) * 100)
@@ -832,13 +895,18 @@ class VerificationLayer:
             else:
                 band = "LOW"
 
-        # Contradiction handling: if any claim is directly contradicted by evidence,
-        # the answer should not be presented as fully reliable.
         contradiction_found = len(contradicted) > 0
         if contradiction_found:
             recommendation = (
                 "Some claims in this answer conflict with the document evidence. "
                 "Treat the answer with caution and check the original source."
+            )
+            verification_status = "unverified_flagged"
+        elif not det_ok:
+            recommendation = (
+                "Deterministic evidence validation flagged an issue: "
+                + "; ".join(det_issues)
+                + " Check the original source document."
             )
             verification_status = "unverified_flagged"
         elif band == "LOW":
@@ -849,15 +917,16 @@ class VerificationLayer:
             verification_status = "unverified_flagged"
         elif band == "MEDIUM":
             recommendation = (
-                "This answer is partially supported by the document. "
-                "Some details may need verification."
+                "Partially supported by automated evidence checks; "
+                "this is not a guarantee of legal or factual correctness — verify key details."
             )
-            verification_status = "verified"
+            verification_status = "evidence_checks_passed"
         else:
             recommendation = (
-                "This answer is supported by the document evidence."
+                "Supported by automated evidence checks; "
+                "this is not a guarantee of legal or factual correctness."
             )
-            verification_status = "verified"
+            verification_status = "evidence_checks_passed"
 
         return {
             "grounding_report": report,
@@ -869,6 +938,8 @@ class VerificationLayer:
             "recommendation": recommendation,
             "verification_status": verification_status,
             "schema_valid": True,
+            "deterministic_check_passed": det_ok,
+            "deterministic_issues": det_issues,
         }
 
     def re_prompt_on_contradiction(self, question: str, answer: str,
