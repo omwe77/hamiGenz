@@ -4,14 +4,124 @@ hamigenz — LLM Service via Ollama + Grounding Validator
 import os
 import re
 import json
+import time
+import threading
 import requests
+from collections import deque
 from typing import Optional, Any
 
 from document_processor import DocumentProcessor
 
 
 class LLMUnavailableError(RuntimeError):
-    """Raised when the local LLM backend cannot be reached or fails."""
+    """Raised when the LLM backend cannot be reached or fails."""
+
+
+class LLMRateLimitError(LLMUnavailableError):
+    """Raised when an LLM backend hits HTTP 429 or local quota budget."""
+
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _sanitize_error_msg(msg: str, secret: str = "") -> str:
+    """Redact API keys/tokens from exception strings."""
+    if secret and secret in msg:
+        msg = msg.replace(secret, "[REDACTED_API_KEY]")
+    return re.sub(
+        r'(?i)(authorization|bearer|api[-_]?key|x-goog-api-key)[:=\s]+[a-zA-Z0-9_\-\.]+',
+        r'\1: [REDACTED]',
+        msg,
+    )
+
+
+def _estimate_tokens(text: str) -> int:
+    """Conservative ~4 chars/token estimate (slightly higher for Devanagari)."""
+    if not text:
+        return 0
+    return max(1, (len(text) + 2) // 3)
+
+
+def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
+    """Truncate prompt text to stay within strict per-call input token budget."""
+    if max_tokens <= 0:
+        return ""
+    max_chars = max_tokens * 3
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[truncated to token budget]"
+
+
+class QuotaTracker:
+    """Thread-safe RPM / RPD / TPM / TPD budget guard for free-tier APIs."""
+
+    def __init__(
+        self,
+        name: str,
+        rpm: int = 30,
+        rpd: int = 1000,
+        tpm: int = 8000,
+        tpd: int = 200000,
+    ):
+        self.name = name
+        self.rpm = rpm
+        self.rpd = rpd
+        self.tpm = tpm
+        self.tpd = tpd
+        self._lock = threading.Lock()
+        self._minute_reqs: deque[float] = deque()
+        self._minute_toks: deque[tuple[float, int]] = deque()
+        self._day_key: str = time.strftime("%Y-%m-%d", time.gmtime())
+        self._day_reqs: int = 0
+        self._day_toks: int = 0
+
+    def _roll_day_if_needed(self) -> None:
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if today != self._day_key:
+            self._day_key = today
+            self._day_reqs = 0
+            self._day_toks = 0
+
+    def check_and_reserve(self, estimated_tokens: int) -> None:
+        """Raise LLMRateLimitError if request would exceed minute or daily quotas."""
+        now = time.monotonic()
+        with self._lock:
+            self._roll_day_if_needed()
+            cutoff = now - 60.0
+            while self._minute_reqs and self._minute_reqs[0] < cutoff:
+                self._minute_reqs.popleft()
+            while self._minute_toks and self._minute_toks[0][0] < cutoff:
+                self._minute_toks.popleft()
+
+            if self.rpd > 0 and self._day_reqs >= self.rpd:
+                raise LLMRateLimitError(
+                    f"{self.name} daily request budget ({self.rpd} RPD) exhausted.",
+                    retry_after=3600,
+                )
+            if self.tpd > 0 and (self._day_toks + estimated_tokens) > self.tpd:
+                raise LLMRateLimitError(
+                    f"{self.name} daily token budget ({self.tpd} TPD) exhausted.",
+                    retry_after=3600,
+                )
+            if self.rpm > 0 and len(self._minute_reqs) >= self.rpm:
+                wait_s = max(1, int(self._minute_reqs[0] + 60.0 - now) + 1)
+                raise LLMRateLimitError(
+                    f"{self.name} per-minute request budget ({self.rpm} RPM) reached.",
+                    retry_after=wait_s,
+                )
+            used_tpm = sum(t for _, t in self._minute_toks)
+            if self.tpm > 0 and (used_tpm + estimated_tokens) > self.tpm:
+                wait_s = max(1, int(self._minute_toks[0][0] + 60.0 - now) + 1) if self._minute_toks else 15
+                raise LLMRateLimitError(
+                    f"{self.name} per-minute token budget ({self.tpm} TPM) reached.",
+                    retry_after=wait_s,
+                )
+
+            self._minute_reqs.append(now)
+            self._minute_toks.append((now, estimated_tokens))
+            self._day_reqs += 1
+            self._day_toks += estimated_tokens
 
 
 class OllamaService:
@@ -274,6 +384,268 @@ The JSON must parse with json.loads().
         return OllamaService._parse_json_response(text)
 
 
+def _parse_retry_after(resp: requests.Response) -> Optional[int]:
+    """Parse HTTP Retry-After header as integer seconds if present."""
+    raw = resp.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(1, int(float(raw)))
+    except ValueError:
+        return None
+
+
+class GroqService:
+    """Interface to Groq Cloud OpenAI-compatible API (Free tier ZDR-gated)."""
+
+    DEFAULT_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "openai/gpt-oss-120b",
+        max_input_tokens: int = 2500,
+        max_output_tokens: int = 700,
+        quota: Optional[QuotaTracker] = None,
+        session: Optional[requests.Session] = None,
+    ):
+        self.api_key = (api_key or os.getenv("GROQ_API_KEY", "")).strip()
+        self.model = model
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
+        self.quota = quota or QuotaTracker(
+            name="Groq",
+            rpm=int(os.getenv("GROQ_RPM_LIMIT", "30")),
+            rpd=int(os.getenv("GROQ_RPD_LIMIT", "1000")),
+            tpm=int(os.getenv("GROQ_TPM_LIMIT", "8000")),
+            tpd=int(os.getenv("GROQ_TPD_LIMIT", "200000")),
+        )
+        self._http = session or requests.Session()
+        if not self.api_key and session is None:
+            raise ValueError("GROQ_API_KEY is required when LLM_PROVIDER is set to 'groq'.")
+
+    def generate(
+        self,
+        prompt: str,
+        stream: bool = False,
+        options: Optional[dict] = None,
+        timeout: int = 60,
+    ) -> str:
+        """Generate a response from Groq within strict token & quota budgets."""
+        bounded_prompt = _truncate_to_token_budget(prompt, self.max_input_tokens)
+        req_max_tokens = self.max_output_tokens
+        temperature = 0.2
+        if options:
+            for k in ("max_output_tokens", "max_tokens", "num_predict"):
+                if k in options:
+                    req_max_tokens = min(self.max_output_tokens, int(options[k]))
+                    break
+            if "temperature" in options:
+                temperature = float(options["temperature"])
+
+        est_total = _estimate_tokens(bounded_prompt) + req_max_tokens
+        self.quota.check_and_reserve(est_total)
+
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": bounded_prompt}],
+            "temperature": temperature,
+            "max_tokens": req_max_tokens,
+            "stream": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = self._http.post(self.DEFAULT_URL, json=payload, headers=headers, timeout=timeout)
+            if resp.status_code == 429:
+                raise LLMRateLimitError(
+                    "Groq upstream rate limit (HTTP 429) exceeded.",
+                    retry_after=_parse_retry_after(resp) or 60,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return ""
+            return str(choices[0].get("message", {}).get("content", "") or "")
+        except LLMRateLimitError:
+            raise
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            raise LLMUnavailableError(_sanitize_error_msg(f"Groq backend error: {exc}", self.api_key)) from exc
+
+    def generate_structured(self, prompt: str) -> dict:
+        """Generate structured JSON via Groq."""
+        wrapper = (
+            f"{prompt}\n\n"
+            "Respond ONLY with valid JSON. No markdown fences, no extra text."
+        )
+        raw = self.generate(wrapper)
+        return OllamaService._parse_json_response(raw)
+
+
+class CloudflareWorkersAIService:
+    """Interface to Cloudflare Workers AI REST API (ZDR by default, 10k Neurons/day)."""
+
+    def __init__(
+        self,
+        account_id: Optional[str] = None,
+        api_token: Optional[str] = None,
+        model: str = "@cf/qwen/qwen3.8-27b",
+        max_input_tokens: int = 2000,
+        max_output_tokens: int = 350,
+        quota: Optional[QuotaTracker] = None,
+        session: Optional[requests.Session] = None,
+    ):
+        self.account_id = (account_id or os.getenv("CLOUDFLARE_ACCOUNT_ID", "")).strip()
+        self.api_token = (api_token or os.getenv("CLOUDFLARE_API_TOKEN", "")).strip()
+        self.model = model
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
+        self.quota = quota or QuotaTracker(
+            name="CloudflareWorkersAI",
+            rpm=int(os.getenv("CF_RPM_LIMIT", "30")),
+            rpd=int(os.getenv("CF_MAX_DAILY_EVALS", "200")),
+            tpm=0,
+            tpd=0,
+        )
+        self._http = session or requests.Session()
+        if (not self.account_id or not self.api_token) and session is None:
+            raise ValueError(
+                "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for Cloudflare Workers AI."
+            )
+
+    @property
+    def endpoint(self) -> str:
+        return f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/{self.model}"
+
+    def generate(
+        self,
+        prompt: str,
+        stream: bool = False,
+        options: Optional[dict] = None,
+        timeout: int = 60,
+    ) -> str:
+        """Generate a response from Cloudflare Workers AI within strict token/quota budgets."""
+        bounded_prompt = _truncate_to_token_budget(prompt, self.max_input_tokens)
+        req_max_tokens = self.max_output_tokens
+        if options:
+            for k in ("max_output_tokens", "max_tokens", "num_predict"):
+                if k in options:
+                    req_max_tokens = min(self.max_output_tokens, int(options[k]))
+                    break
+
+        est_total = _estimate_tokens(bounded_prompt) + req_max_tokens
+        self.quota.check_and_reserve(est_total)
+
+        payload = {
+            "messages": [{"role": "user", "content": bounded_prompt}],
+            "max_tokens": req_max_tokens,
+            "temperature": 0.1,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = self._http.post(self.endpoint, json=payload, headers=headers, timeout=timeout)
+            if resp.status_code == 429:
+                raise LLMRateLimitError(
+                    "Cloudflare Workers AI rate limit (HTTP 429) exceeded.",
+                    retry_after=_parse_retry_after(resp) or 60,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict) and data.get("success") is False:
+                raise LLMUnavailableError(f"Cloudflare Workers AI error: {data.get('errors')}")
+            result = data.get("result", data) if isinstance(data, dict) else {}
+            if isinstance(result, dict):
+                if "response" in result and result["response"] is not None:
+                    return str(result["response"])
+                choices = result.get("choices") or []
+                if choices:
+                    return str(choices[0].get("message", {}).get("content", "") or "")
+            return ""
+        except LLMRateLimitError:
+            raise
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            raise LLMUnavailableError(
+                _sanitize_error_msg(f"Cloudflare Workers AI error: {exc}", self.api_token)
+            ) from exc
+
+    def generate_structured(self, prompt: str) -> dict:
+        """Request JSON output and parse locally; never assume strict JSON mode."""
+        wrapper = (
+            f"{prompt}\n\n"
+            "Respond ONLY with valid JSON matching the exact schema. "
+            "No markdown fences, no preamble, no trailing commentary."
+        )
+        raw = self.generate(wrapper)
+        return OllamaService._parse_json_response(raw)
+
+
+_VALID_CLAIM_CLASSES = {
+    "SUPPORTED",
+    "PARTIALLY_SUPPORTED",
+    "CONTRADICTED",
+    "INSUFFICIENT_EVIDENCE",
+}
+_VALID_CONFIDENCE = {"HIGH", "MEDIUM", "LOW"}
+
+
+def validate_evaluator_payload(data: Any) -> tuple[bool, Optional[dict], str]:
+    """
+    Strict server-side schema validation for evaluator JSON.
+    Never assumes provider-side strict JSON mode succeeded.
+    Returns (is_valid, normalized_dict_or_None, reason).
+    """
+    if not isinstance(data, dict) or "error" in data:
+        return False, None, "Evaluator output is not a valid JSON object"
+
+    claims = data.get("claims")
+    overall = data.get("overall_confidence")
+    if not isinstance(claims, list):
+        return False, None, "Evaluator JSON missing 'claims' list"
+    if overall not in _VALID_CONFIDENCE:
+        return False, None, f"Evaluator JSON invalid 'overall_confidence': {overall!r}"
+
+    normalized_claims: list[dict] = []
+    for idx, item in enumerate(claims):
+        if not isinstance(item, dict):
+            return False, None, f"Claim[{idx}] is not an object"
+        claim_text = item.get("claim")
+        cls = item.get("classification")
+        if not isinstance(claim_text, str) or not claim_text.strip():
+            return False, None, f"Claim[{idx}] missing non-empty 'claim' string"
+        if cls not in _VALID_CLAIM_CLASSES:
+            return False, None, f"Claim[{idx}] invalid 'classification': {cls!r}"
+        page_refs_raw = item.get("page_refs", [])
+        if not isinstance(page_refs_raw, list):
+            page_refs_raw = []
+        page_refs = [int(p) for p in page_refs_raw if isinstance(p, (int, float)) or (isinstance(p, str) and p.isdigit())]
+        normalized_claims.append({
+            "claim": claim_text.strip(),
+            "classification": cls,
+            "evidence": str(item.get("evidence", "") or ""),
+            "page_refs": page_refs,
+        })
+
+    missing = data.get("missing_evidence", [])
+    if not isinstance(missing, list):
+        missing = []
+    warning = data.get("warning", "")
+    if not isinstance(warning, str):
+        warning = str(warning or "")
+
+    return True, {
+        "claims": normalized_claims,
+        "overall_confidence": overall,
+        "missing_evidence": [str(m) for m in missing],
+        "warning": warning,
+    }, "ok"
+
+
 
 class GroundingValidator:
     """
@@ -390,7 +762,50 @@ class VerificationLayer:
                                  or INSUFFICIENT_EVIDENCE or CONTRADICTED
           - recommendation: short guidance for the frontend / user
         """
-        report = self.validator.validate(question, answer, evidence_chunks)
+        try:
+            raw_report = self.validator.validate(question, answer, evidence_chunks)
+        except LLMUnavailableError as exc:
+            return {
+                "grounding_report": {
+                    "claims": [],
+                    "overall_confidence": "UNKNOWN",
+                    "missing_evidence": [],
+                    "warning": f"Independent evaluator unavailable: {exc}",
+                },
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "Independent verification could not run. Treat this answer as "
+                    "unverified and check the original source document."
+                ),
+                "verification_status": "unverified_evaluator_unavailable",
+                "schema_valid": False,
+            }
+
+        is_valid, report, schema_reason = validate_evaluator_payload(raw_report)
+        if not is_valid or report is None:
+            return {
+                "grounding_report": {
+                    "claims": [],
+                    "overall_confidence": "UNKNOWN",
+                    "missing_evidence": [],
+                    "warning": f"Evaluator output failed schema validation: {schema_reason}",
+                },
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "Independent verification returned malformed output. Treat this answer as "
+                    "unverified and check the original source document."
+                ),
+                "verification_status": "unverified_evaluator_unavailable",
+                "schema_valid": False,
+            }
 
         claims = report.get("claims", [])
         contradicted = [c for c in claims if c.get("classification") == "CONTRADICTED"]
@@ -425,20 +840,24 @@ class VerificationLayer:
                 "Some claims in this answer conflict with the document evidence. "
                 "Treat the answer with caution and check the original source."
             )
+            verification_status = "unverified_flagged"
         elif band == "LOW":
             recommendation = (
                 "This answer could not be fully verified from the document. "
                 "Important details may be missing or imprecise — check the original source."
             )
+            verification_status = "unverified_flagged"
         elif band == "MEDIUM":
             recommendation = (
                 "This answer is partially supported by the document. "
                 "Some details may need verification."
             )
+            verification_status = "verified"
         else:
             recommendation = (
                 "This answer is supported by the document evidence."
             )
+            verification_status = "verified"
 
         return {
             "grounding_report": report,
@@ -448,6 +867,8 @@ class VerificationLayer:
             "confidence_band": band,
             "unsupported_facts": [c["claim"] for c in unsupported],
             "recommendation": recommendation,
+            "verification_status": verification_status,
+            "schema_valid": True,
         }
 
     def re_prompt_on_contradiction(self, question: str, answer: str,

@@ -510,6 +510,18 @@ class MetadataStore:
                 answer TEXT,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS llm_cache (
+                cache_key TEXT PRIMARY KEY,
+                doc_id TEXT,
+                session_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                response_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_llm_cache_doc ON llm_cache(doc_id);
+            CREATE INDEX IF NOT EXISTS idx_llm_cache_expires ON llm_cache(expires_at);
         """)
 
         # Migration: Ensure session_id, last_accessed_at, reindex_generation columns exist
@@ -702,12 +714,97 @@ class MetadataStore:
                 conn.close()
                 return False
 
+        conn.execute("DELETE FROM llm_cache WHERE doc_id=?", (doc_id,))
         conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
         cursor = conn.execute("DELETE FROM documents WHERE doc_id=?", (doc_id,))
         deleted = cursor.rowcount > 0
         conn.commit()
         conn.close()
         return deleted
+
+    def list_expired_documents(self, cutoff_iso: str) -> list[dict]:
+        """Return documents whose last_accessed_at (or upload_date) is older than cutoff_iso."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT doc_id, filepath, COALESCE(last_accessed_at, upload_date) AS active_ts
+            FROM documents
+            WHERE COALESCE(last_accessed_at, upload_date) < ?
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+        conn.close()
+        return [{"doc_id": r[0], "filepath": r[1], "last_active": r[2]} for r in rows]
+
+    def get_cached_answer(self, cache_key: str) -> Optional[dict]:
+        """Fetch non-expired cached LLM response JSON if present."""
+        import json as _json
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT response_json, expires_at FROM llm_cache WHERE cache_key=?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return None
+        response_json, expires_at = row
+        if expires_at <= now_iso:
+            conn.execute("DELETE FROM llm_cache WHERE cache_key=?", (cache_key,))
+            conn.commit()
+            conn.close()
+            return None
+        conn.close()
+        try:
+            return _json.loads(response_json)
+        except Exception:
+            return None
+
+    def set_cached_answer(
+        self,
+        cache_key: str,
+        doc_id: Optional[str],
+        session_id: str,
+        provider: str,
+        model: str,
+        payload: dict,
+        ttl_seconds: int = 86400,
+    ) -> None:
+        """Store a session/doc-scoped cached LLM response with TTL."""
+        import json as _json
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=ttl_seconds)
+        conn = self._get_connection()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO llm_cache
+            (cache_key, doc_id, session_id, provider, model, response_json, created_at, expires_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            """,
+            (
+                cache_key,
+                doc_id,
+                session_id,
+                provider,
+                model,
+                _json.dumps(payload, ensure_ascii=False),
+                now.isoformat(),
+                expires.isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def purge_expired_cache(self) -> int:
+        """Delete expired rows from llm_cache and return count removed."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._get_connection()
+        cur = conn.execute("DELETE FROM llm_cache WHERE expires_at <= ?", (now_iso,))
+        count = cur.rowcount
+        conn.commit()
+        conn.close()
+        return count
 
     def list_all_documents(self) -> list[dict]:
         """Return all documents across all sessions (used by startup scavenger)."""
