@@ -65,6 +65,21 @@ First milestone release of hamiGenZ, a Nepal-focused document understanding plat
 - **Vercel deployment disclosure**: The public deployment at `hami-genz.vercel.app` is a client-side frontend demo with illustrative fixtures and does not host live private document processing.
 
 
+## [0.2.0] - 2026-11-27
+### M3 — Validation, CI Hardening & Acceptance Test Suite
+- **Docker named-volume persistence test** (`scripts/test_docker_persistence.sh`): 7-step CI script verifying UID/GID `10001` write access, document upload → container restart → viewer verification (`200`) → document deletion → physical upload/vector removal and strict `404` post-delete viewer check on named volume `hamigenz-data-persist-test`. Integrated into `Docker Validation (Root Context)` CI job (timeout 30m).
+- **OCR evaluator correctness** (`tests/evaluation/eval_ocr.py`): Separated `IMPLEMENTED_ENGINES = ("tesseract",)` from `PLANNED_ENGINES = ("easyocr", "trocr")` (`NotImplementedError`), rejected unknown engines (`ValueError`), retained `dataset_type = "synthetic"`, and reported CER/WER separately.
+- **Devanagari font coverage hardening** (`tests/evaluation/generate_ocr_corpus.py`): Verified actual Unicode coverage via SFNT `cmap` lookup (format 4 & 12, TTC-aware) + non-`.notdef` Pillow mask checks; guarded `struct.error`; documented cross-OS font selection (`Nirmala.ttc` on Windows vs `NotoSansDevanagari-Regular.ttf` on Linux).
+- **E2E acceptance reliability** (`tests/test_acceptance_e2e.py`): Enforced strict `hints_only` status for forced-offline `/actions`, began `try...finally` cleanup protection before upload with `doc_id` guard and primary-failure preservation, accepted `200`/`404` on cleanup `DELETE`, and verified upload/FAISS artifact removal.
+- **Live inference evidence preservation**: `docs/evidence/live_llm_execution.json` preserves the tracked `qwen3:8b` baseline (`'काठमाडौं'`, `12.85s`) without silent overwrite; offline CI skips live Ollama unless `HAMIGENZ_LIVE_LLM_TESTS=1`.
+- **Backend CI expansion** (`.github/workflows/ci.yml`): Added `tests/test_ocr_evaluation.py` and `tests/test_acceptance_e2e.py` to CI and installed `fonts-deva` and `fonts-noto-core` on Ubuntu runners.
+
+### Limitations
+- OCR evaluation remains synthetic-only (`12.0%` avg CER, `45.0%` avg WER); `easyocr` and `trocr` remain `PLANNED_ENGINES`.
+- Cross-OS corpus regeneration uses different system fonts; CI evaluates committed PNGs.
+- Docker persistence verified in GitHub Actions `ubuntu-24.04` only (no local Docker binary on Windows host).
+
+
 ## Unreleased
 _Reserved for future changes._
 

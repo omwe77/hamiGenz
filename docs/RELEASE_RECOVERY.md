@@ -210,3 +210,32 @@ All M2 quality gates, OCR and document processor reliability improvements, test 
   - Nepali OCR verified on synthetic/reference fixtures; broad accuracy on real-world degraded scans remains unproven.
   - Railway persistent-volume permissions remain unverified; cloud deployment is deferred.
   - Public deployment at `hami-genz.vercel.app` is a client-side portfolio demonstration only.
+
+---
+
+## Milestone 3 (M3) — Validation, CI Hardening & Acceptance Suite
+
+- **Status:** COMPLETE (Merged into `main` at `160e661ad475e5186cd9564408185276a845e5e0`)
+- **Date:** 2026-11-27
+- **PR:** https://github.com/omwe77/hamiGenz/pull/7
+- **Branch:** `fix/m3-validation-ci-hardening`
+- **Key Commits:** `c7e78a9`, `8bed59e`, `82dbb2b`, `94b6aea`, `8d238b2`
+- **Final PR Branch Head:** `8d238b2ccc9f5b9400dd3ac2809ba53f7eaf537a`
+- **Main Merge Commit:** `160e661ad475e5186cd9564408185276a845e5e0`
+- **PR CI Runs (`8d238b2`):**
+  - Pull Request Run `45926664797`: Backend CI (Python 3.11) ✅ `2m11s`, Docker Validation ✅ `3m25s`, Frontend CI (Node 24) ✅ `1m12s`
+  - Branch Push Run `45926660022`: Backend CI (Python 3.11) ✅ `2m15s`, Docker Validation ✅ `3m51s`, Frontend CI (Node 24) ✅ `1m15s`
+  - Vercel Preview & Comments: ✅ `pass`
+- **Post-Merge CI Run on `main` (`160e661`):** Run [`45935306619`](https://github.com/omwe77/hamiGenz/actions/runs/45935306619) — Backend CI (Python 3.11) ✅ `2m0s` (`140297032951`), Docker Validation ✅ `3m38s` (`140297033114`), Frontend CI (Node 24) ✅ `1m8s` (`140297033130`)
+- **Local Verification (`8d238b2`, offline mode):**
+  - `pytest tests/test_acceptance_e2e.py -v`: **4 passed, 1 skipped** (`12.06s`)
+  - `pytest tests/ -q --tb=short`: **589 passed, 2 skipped** (`94.19s`)
+  - `git diff --check`: exit `0`
+- **Independent Reviews:**
+  - Research subagent (`a8756181-dffc-4b6a-930f-de8c78caa983`) audited PR #7 diff and identified 6 minor issues (all resolved in `94b6aea`).
+  - Codex CLI (`gpt-5.6-terra`) hit usage quota mid-run before completion.
+- **Deliverables:**
+  - `scripts/test_docker_persistence.sh`: 7-step Docker named-volume persistence test (UID `10001`, upload → restart → `200` verify → delete → `404` verify + artifact removal).
+  - `tests/evaluation/eval_ocr.py` & `tests/evaluation/generate_ocr_corpus.py`: `IMPLEMENTED_ENGINES` vs `PLANNED_ENGINES`, SFNT `cmap` + Pillow `.notdef` Devanagari coverage checks.
+  - `tests/test_acceptance_e2e.py`: Strict `hints_only`, pre-upload `try/finally` with `doc_id` guard and primary-failure preservation, artifact cleanup checks.
+  - `docs/evidence/live_llm_execution.json`: Preserved `qwen3:8b` baseline (`'काठमाडौं'`, `12.85s`).
