@@ -1,13 +1,14 @@
 "use client";
 
 import React from "react";
-import type { GroundingReport } from "@/lib/types";
+import type { GroundingReport, VerificationStatus } from "@/lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type Props = {
   provenance: "document" | "general_ai" | "mixed" | "official_source";
   grounding: GroundingReport | null;
   sourceUnavailable?: boolean;
+  verificationStatus?: VerificationStatus | null;
 };
 
 const BADGES = {
@@ -37,7 +38,7 @@ const BADGES = {
   },
 };
 
-export default function ProvenanceBadge({ provenance, grounding, sourceUnavailable }: Props) {
+export default function ProvenanceBadge({ provenance, grounding, sourceUnavailable, verificationStatus }: Props) {
   if (sourceUnavailable) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
@@ -84,13 +85,29 @@ export default function ProvenanceBadge({ provenance, grounding, sourceUnavailab
 
   const badge = BADGES[provenance] || BADGES.general_ai;
 
-  // Derive confidence sub-label from the full verification report
+  // Derive confidence sub-label from explicit verificationStatus first, then grounding band
   let confidenceLabel = "";
   const band = grounding?.confidence_band;
   const score = grounding?.confidence_score;
-  if (band === "HIGH") confidenceLabel = score != null ? `All claims supported (${score})` : "All claims supported";
-  else if (band === "MEDIUM") confidenceLabel = score != null ? `Partially supported (${score})` : "Partially supported";
-  else if (band === "LOW") confidenceLabel = score != null ? `Insufficient evidence (${score})` : "Insufficient evidence";
+  const nonVerifiedStatusLabels: Record<string, string> = {
+    partially_supported: score != null ? `Partially supported (${score})` : "Partially supported",
+    unverified_flagged: "Unverified — flagged",
+    unverified_evaluator_unavailable: "Unverified — evaluator unavailable",
+    not_independently_evaluated: "Not independently evaluated",
+    rate_limited: "Rate limited — unverified",
+    not_applicable: "Verification not applicable",
+  };
+  if (verificationStatus && verificationStatus !== "evidence_checks_passed") {
+    confidenceLabel = nonVerifiedStatusLabels[verificationStatus] || "Unverified";
+  } else if (band === "HIGH") {
+    confidenceLabel = score != null ? `Evidence checks passed (${score})` : "Evidence checks passed";
+  } else if (band === "MEDIUM") {
+    confidenceLabel = score != null ? `Partially supported (${score})` : "Partially supported";
+  } else if (band === "LOW") {
+    confidenceLabel = score != null ? `Insufficient evidence (${score})` : "Insufficient evidence";
+  } else if (band === "UNKNOWN") {
+    confidenceLabel = "Not verified";
+  }
 
   // Warning from grounding
   let warningHtml = "";
@@ -99,6 +116,8 @@ export default function ProvenanceBadge({ provenance, grounding, sourceUnavailab
     warningHtml = `Claims conflict with evidence: ${claims.join("; ")}`;
   } else if (grounding?.warning) {
     warningHtml = grounding.warning;
+  } else if (verificationStatus && verificationStatus !== "evidence_checks_passed" && verificationStatus !== "not_applicable") {
+    warningHtml = "This answer has not passed independent evidence verification — check the original source.";
   } else if (confidenceLabel === "Insufficient evidence") {
     warningHtml = "Some claims could not be verified from the available source.";
   }

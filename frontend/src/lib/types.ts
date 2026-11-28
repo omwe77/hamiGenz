@@ -1,6 +1,15 @@
 // Shared types for hamiGenZ backend API responses
 // Kept in sync with backend Pydantic models
 
+export type VerificationStatus =
+  | "evidence_checks_passed"
+  | "partially_supported"
+  | "unverified_flagged"
+  | "unverified_evaluator_unavailable"
+  | "not_independently_evaluated"
+  | "not_applicable"
+  | "rate_limited";
+
 export interface AskResponse {
   question: string;
   answer: string;
@@ -9,6 +18,10 @@ export interface AskResponse {
   evidence_pages: number[];
   language_used: string;
   processing_time_ms?: number;
+  grounding?: GroundingReport | null;
+  explanation_level?: string | null;
+  language?: string | null;
+  verification_status?: VerificationStatus | null;
 }
 
 export interface ExplainResponse {
@@ -18,6 +31,7 @@ export interface ExplainResponse {
   provenance: "document" | "general_ai" | "mixed" | "official_source";
   language_used: string;
   processing_time_ms?: number;
+  verification_status?: VerificationStatus | null;
 }
 
 // ── Official-source answering (PR-012) ────────────────────────────
@@ -59,7 +73,9 @@ export interface AskGeneralResponse {
     unsupported_facts?: string[];
     contradiction_found?: boolean;
     recommendation?: string;
+    verification_status?: VerificationStatus | null;
   } | null;
+  verification_status?: VerificationStatus | null;
   processing_time_ms?: number;
 }
 
@@ -72,6 +88,7 @@ export interface ExplanationData {
   language: string;
   explanation_level: string;
   evidence_pages: number[];
+  verification_status?: VerificationStatus | null;
   processing_time_ms?: number;
 }
 

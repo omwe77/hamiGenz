@@ -176,22 +176,50 @@ export default function ExplanationPanel({
           {grounding.recommendation && (
             <p style={styles.recommendation}>{grounding.recommendation}</p>
           )}
-          {grounding.confidence_band && (
-            <div style={styles.confidenceRow}>
-              <span style={styles.confidenceLabel}>Confidence:</span>
-              <span style={{
-                ...styles.confidenceValue,
-                ...(grounding.confidence_band === "HIGH" ? styles.confidenceHigh : {}),
-                ...(grounding.confidence_band === "MEDIUM" ? styles.confidenceMedium : {}),
-                ...(grounding.confidence_band === "LOW" ? styles.confidenceLow : {}),
-                ...(grounding.confidence_band === "UNKNOWN" ? styles.confidenceUnknown : {}),
-              }}>
-                {grounding.confidence_band === "UNKNOWN" && !grounding.confidence_score
-                  ? "Not verified"
-                  : `${grounding.confidence_band}${grounding.confidence_score != null ? ` (${grounding.confidence_score})` : ""}`}
-              </span>
-            </div>
-          )}
+          {grounding.confidence_band && (() => {
+            const vs = explanation.verification_status;
+            const isExplicitNonVerified =
+              vs === "unverified_flagged" ||
+              vs === "unverified_evaluator_unavailable" ||
+              vs === "not_independently_evaluated" ||
+              vs === "rate_limited" ||
+              vs === "not_applicable";
+            const isPartial = vs === "partially_supported";
+            const badgeStyle = isExplicitNonVerified
+              ? styles.confidenceUnknown
+              : isPartial
+                ? styles.confidenceMedium
+                : {
+                    ...(grounding.confidence_band === "HIGH" ? styles.confidenceHigh : {}),
+                    ...(grounding.confidence_band === "MEDIUM" ? styles.confidenceMedium : {}),
+                    ...(grounding.confidence_band === "LOW" ? styles.confidenceLow : {}),
+                    ...(grounding.confidence_band === "UNKNOWN" ? styles.confidenceUnknown : {}),
+                  };
+            const label =
+              vs === "partially_supported"
+                ? `Partially supported${grounding.confidence_score != null ? ` (${grounding.confidence_score})` : ""}`
+                : vs === "unverified_flagged"
+                  ? "Unverified (flagged)"
+                  : vs === "unverified_evaluator_unavailable"
+                    ? "Unverified (evaluator unavailable)"
+                    : vs === "not_independently_evaluated"
+                      ? "Not independently evaluated"
+                      : vs === "rate_limited"
+                        ? "Rate limited (unverified)"
+                        : vs === "not_applicable"
+                          ? "Not applicable"
+                          : grounding.confidence_band === "UNKNOWN" && !grounding.confidence_score
+                            ? "Not verified"
+                            : `${grounding.confidence_band}${grounding.confidence_score != null ? ` (${grounding.confidence_score})` : ""}`;
+            return (
+              <div style={styles.confidenceRow}>
+                <span style={styles.confidenceLabel}>Confidence:</span>
+                <span style={{ ...styles.confidenceValue, ...badgeStyle }}>
+                  {label}
+                </span>
+              </div>
+            );
+          })()}
           {grounding.warning && (
             <p style={styles.groundingWarningText}>{grounding.warning}</p>
           )}
@@ -211,7 +239,12 @@ export default function ExplanationPanel({
 
       {/* Provenance badge */}
       <div style={{ marginTop: "var(--space-3)" }}>
-        <ProvenanceBadge provenance={provenance} grounding={grounding} sourceUnavailable={sourceUnavailable} />
+        <ProvenanceBadge
+          provenance={provenance}
+          grounding={grounding}
+          sourceUnavailable={sourceUnavailable}
+          verificationStatus={explanation.verification_status}
+        />
       </div>
     </div>
   );

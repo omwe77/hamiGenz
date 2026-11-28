@@ -4,14 +4,156 @@ hamigenz — LLM Service via Ollama + Grounding Validator
 import os
 import re
 import json
+import time
+import threading
 import requests
+from collections import deque
 from typing import Optional, Any
 
 from document_processor import DocumentProcessor
 
 
 class LLMUnavailableError(RuntimeError):
-    """Raised when the local LLM backend cannot be reached or fails."""
+    """Raised when the LLM backend cannot be reached or fails."""
+
+
+class LLMRateLimitError(LLMUnavailableError):
+    """Raised when an LLM backend hits HTTP 429 or local quota budget."""
+
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _sanitize_error_msg(msg: str, secret: str = "") -> str:
+    """Redact API keys/tokens from exception strings."""
+    if secret and secret in msg:
+        msg = msg.replace(secret, "[REDACTED_API_KEY]")
+    return re.sub(
+        r'(?i)(authorization|bearer|api[-_]?key|x-goog-api-key)[:=\s]+[a-zA-Z0-9_\-\.]+',
+        r'\1: [REDACTED]',
+        msg,
+    )
+
+
+def _estimate_tokens(text: str) -> int:
+    """Conservative ~4 chars/token estimate (slightly higher for Devanagari)."""
+    if not text:
+        return 0
+    return max(1, (len(text) + 2) // 3)
+
+
+def _truncate_chars_heuristic(text: str, max_tokens: int) -> str:
+    """Trim text using a ~3 chars/token heuristic (estimate only — not actual token count).
+
+    This is a character-budget approximation, NOT strict token enforcement.
+    Actual token counts depend on the provider's tokeniser and are only known
+    after the API call via provider usage fields.  Callers should prefer
+    chunk-selection before prompt construction; this function is a last-resort
+    safety guard to avoid obviously oversized payloads.
+    """
+    if max_tokens <= 0:
+        return ""
+    max_chars = max_tokens * 3  # ~3 chars/token heuristic — labelled as estimate
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[truncated — char-budget estimate]"
+
+
+# Keep old name as alias so existing call-sites that weren't updated fail loudly
+# during development; remove once all callers have been updated.
+_truncate_to_token_budget = _truncate_chars_heuristic
+
+
+class QuotaTracker:
+    """Thread-safe advisory RPM / RPD / TPM / TPD tracker for free-tier APIs.
+
+    By default (advisory_only=True), records usage and surfaces advisory warnings
+    without pre-emptively blocking requests; upstream HTTP 429 and provider
+    rate-limit headers remain authoritative.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        rpm: int = 30,
+        rpd: int = 1000,
+        tpm: int = 8000,
+        tpd: int = 200000,
+        advisory_only: bool = True,
+    ):
+        self.name = name
+        self.rpm = rpm
+        self.rpd = rpd
+        self.tpm = tpm
+        self.tpd = tpd
+        self.advisory_only = advisory_only
+        self._lock = threading.Lock()
+        self._minute_reqs: deque[float] = deque()
+        self._minute_toks: deque[tuple[float, int]] = deque()
+        self._day_key: str = time.strftime("%Y-%m-%d", time.gmtime())
+        self._day_reqs: int = 0
+        self._day_toks: int = 0
+        self.last_provider_headers: dict[str, str] = {}
+        self.last_advisory_warning: Optional[str] = None
+
+    def _roll_day_if_needed(self) -> None:
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if today != self._day_key:
+            self._day_key = today
+            self._day_reqs = 0
+            self._day_toks = 0
+
+    def update_from_headers(self, headers: Any) -> None:
+        """Record authoritative provider rate-limit headers when present."""
+        if not headers:
+            return
+        tracked = {}
+        for k, v in headers.items():
+            lk = str(k).lower()
+            if lk.startswith("x-ratelimit-") or lk == "retry-after":
+                tracked[lk] = str(v)
+        if tracked:
+            with self._lock:
+                self.last_provider_headers = tracked
+
+    def check_and_reserve(self, estimated_tokens: int) -> Optional[str]:
+        """Record usage; return advisory warning if near/over budget, or raise if strict."""
+        now = time.monotonic()
+        with self._lock:
+            self._roll_day_if_needed()
+            cutoff = now - 60.0
+            while self._minute_reqs and self._minute_reqs[0] < cutoff:
+                self._minute_reqs.popleft()
+            while self._minute_toks and self._minute_toks[0][0] < cutoff:
+                self._minute_toks.popleft()
+
+            warning: Optional[str] = None
+            wait_s = 60
+            if self.rpd > 0 and self._day_reqs >= self.rpd:
+                warning = f"{self.name} daily request budget ({self.rpd} RPD) reached."
+                wait_s = 3600
+            elif self.tpd > 0 and (self._day_toks + estimated_tokens) > self.tpd:
+                warning = f"{self.name} daily token budget ({self.tpd} TPD) reached."
+                wait_s = 3600
+            elif self.rpm > 0 and len(self._minute_reqs) >= self.rpm:
+                wait_s = max(1, int(self._minute_reqs[0] + 60.0 - now) + 1)
+                warning = f"{self.name} per-minute request budget ({self.rpm} RPM) reached."
+            else:
+                used_tpm = sum(t for _, t in self._minute_toks)
+                if self.tpm > 0 and (used_tpm + estimated_tokens) > self.tpm:
+                    wait_s = max(1, int(self._minute_toks[0][0] + 60.0 - now) + 1) if self._minute_toks else 15
+                    warning = f"{self.name} per-minute token budget ({self.tpm} TPM) reached."
+
+            self.last_advisory_warning = warning
+            if warning and not self.advisory_only:
+                raise LLMRateLimitError(warning, retry_after=wait_s)
+
+            self._minute_reqs.append(now)
+            self._minute_toks.append((now, estimated_tokens))
+            self._day_reqs += 1
+            self._day_toks += estimated_tokens
+            return warning
 
 
 class OllamaService:
@@ -274,6 +416,314 @@ The JSON must parse with json.loads().
         return OllamaService._parse_json_response(text)
 
 
+def _parse_duration_seconds(raw: str) -> Optional[int]:
+    """Parse provider reset durations like '12s', '1m30s', '500ms', or '42'."""
+    if not raw:
+        return None
+    s = raw.strip().lower()
+    try:
+        return max(1, int(float(s)))
+    except ValueError:
+        pass
+    total = 0.0
+    matched = False
+    for val, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", s):
+        matched = True
+        num = float(val)
+        if unit == "ms":
+            total += num / 1000.0
+        elif unit == "s":
+            total += num
+        elif unit == "m":
+            total += num * 60.0
+        elif unit == "h":
+            total += num * 3600.0
+    return max(1, int(total)) if matched else None
+
+
+def _parse_retry_after(resp: requests.Response) -> Optional[int]:
+    """Parse HTTP Retry-After or provider x-ratelimit-reset-* headers."""
+    for key in ("Retry-After", "retry-after", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+        raw = resp.headers.get(key)
+        if raw:
+            parsed = _parse_duration_seconds(str(raw))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+class GroqService:
+    """Interface to Groq Cloud OpenAI-compatible API (Free tier ZDR-gated)."""
+
+    DEFAULT_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "openai/gpt-oss-120b",
+        max_input_tokens: int = 2500,
+        max_output_tokens: int = 700,
+        quota: Optional[QuotaTracker] = None,
+        session: Optional[requests.Session] = None,
+    ):
+        self.api_key = (api_key or os.getenv("GROQ_API_KEY", "")).strip()
+        self.model = model
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
+        self.quota = quota or QuotaTracker(
+            name="Groq",
+            rpm=int(os.getenv("GROQ_RPM_LIMIT", "30")),
+            rpd=int(os.getenv("GROQ_RPD_LIMIT", "1000")),
+            tpm=int(os.getenv("GROQ_TPM_LIMIT", "8000")),
+            tpd=int(os.getenv("GROQ_TPD_LIMIT", "200000")),
+        )
+        self._http = session or requests.Session()
+        self.last_usage: dict = {}  # populated from provider usage after each call
+        if not self.api_key and session is None:
+            raise ValueError("GROQ_API_KEY is required when LLM_PROVIDER is set to 'groq'.")
+
+    def generate(
+        self,
+        prompt: str,
+        stream: bool = False,
+        options: Optional[dict] = None,
+        timeout: int = 60,
+    ) -> str:
+        """Generate a response from Groq.
+
+        Input is trimmed using a character-budget heuristic (see _truncate_chars_heuristic).
+        Actual token usage is captured from provider response under self.last_usage
+        and is advisory — the provider's HTTP 429 response is authoritative on limits.
+        """
+        bounded_prompt = _truncate_chars_heuristic(prompt, self.max_input_tokens)
+        req_max_tokens = self.max_output_tokens
+        temperature = 0.2
+        if options:
+            for k in ("max_output_tokens", "max_tokens", "num_predict"):
+                if k in options:
+                    req_max_tokens = min(self.max_output_tokens, int(options[k]))
+                    break
+            if "temperature" in options:
+                temperature = float(options["temperature"])
+
+        # Advisory pre-flight estimate — not enforced; provider 429 is authoritative
+        est_total = _estimate_tokens(bounded_prompt) + req_max_tokens
+        self.quota.check_and_reserve(est_total)
+
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": bounded_prompt}],
+            "temperature": temperature,
+            "max_tokens": req_max_tokens,
+            "stream": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = self._http.post(self.DEFAULT_URL, json=payload, headers=headers, timeout=timeout)
+            self.quota.update_from_headers(getattr(resp, "headers", None))
+            if resp.status_code == 429:
+                raise LLMRateLimitError(
+                    "Groq upstream rate limit (HTTP 429) exceeded.",
+                    retry_after=_parse_retry_after(resp) or 60,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            # Capture authoritative provider token usage for advisory quota accounting
+            self.last_usage = data.get("usage") or {}
+            choices = data.get("choices") or []
+            if not choices:
+                return ""
+            return str(choices[0].get("message", {}).get("content", "") or "")
+        except LLMRateLimitError:
+            raise
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            raise LLMUnavailableError(_sanitize_error_msg(f"Groq backend error: {exc}", self.api_key)) from exc
+
+    def generate_structured(self, prompt: str) -> dict:
+        """Generate structured JSON via Groq."""
+        wrapper = (
+            f"{prompt}\n\n"
+            "Respond ONLY with valid JSON. No markdown fences, no extra text."
+        )
+        raw = self.generate(wrapper)
+        return OllamaService._parse_json_response(raw)
+
+
+class CloudflareWorkersAIService:
+    """Interface to Cloudflare Workers AI REST API (ZDR by default, 10k Neurons/day)."""
+
+    def __init__(
+        self,
+        account_id: Optional[str] = None,
+        api_token: Optional[str] = None,
+        model: str = "@cf/qwen/qwen3.8-27b",
+        max_input_tokens: int = 2000,
+        max_output_tokens: int = 350,
+        quota: Optional[QuotaTracker] = None,
+        session: Optional[requests.Session] = None,
+    ):
+        self.account_id = (account_id or os.getenv("CLOUDFLARE_ACCOUNT_ID", "")).strip()
+        self.api_token = (api_token or os.getenv("CLOUDFLARE_API_TOKEN", "")).strip()
+        self.model = model
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
+        self.quota = quota or QuotaTracker(
+            name="CloudflareWorkersAI",
+            rpm=int(os.getenv("CF_RPM_LIMIT", "30")),
+            rpd=int(os.getenv("CF_MAX_DAILY_EVALS", "200")),
+            tpm=0,
+            tpd=0,
+        )
+        self._http = session or requests.Session()
+        self.last_usage: dict = {}  # populated from provider usage after each call
+        if (not self.account_id or not self.api_token) and session is None:
+            raise ValueError(
+                "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for Cloudflare Workers AI."
+            )
+
+    @property
+    def endpoint(self) -> str:
+        return f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/{self.model}"
+
+    def generate(
+        self,
+        prompt: str,
+        stream: bool = False,
+        options: Optional[dict] = None,
+        timeout: int = 60,
+    ) -> str:
+        """Generate a response from Cloudflare Workers AI.
+
+        Input is trimmed using a character-budget heuristic (see _truncate_chars_heuristic).
+        Actual token usage is captured from provider response under self.last_usage
+        and is advisory — the provider's HTTP 429 response is authoritative on limits.
+        """
+        bounded_prompt = _truncate_chars_heuristic(prompt, self.max_input_tokens)
+        req_max_tokens = self.max_output_tokens
+        if options:
+            for k in ("max_output_tokens", "max_tokens", "num_predict"):
+                if k in options:
+                    req_max_tokens = min(self.max_output_tokens, int(options[k]))
+                    break
+
+        # Advisory pre-flight estimate — not enforced; provider 429 is authoritative
+        est_total = _estimate_tokens(bounded_prompt) + req_max_tokens
+        self.quota.check_and_reserve(est_total)
+
+        payload = {
+            "messages": [{"role": "user", "content": bounded_prompt}],
+            "max_tokens": req_max_tokens,
+            "temperature": 0.1,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = self._http.post(self.endpoint, json=payload, headers=headers, timeout=timeout)
+            self.quota.update_from_headers(getattr(resp, "headers", None))
+            if resp.status_code == 429:
+                raise LLMRateLimitError(
+                    "Cloudflare Workers AI rate limit (HTTP 429) exceeded.",
+                    retry_after=_parse_retry_after(resp) or 60,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict) and data.get("success") is False:
+                raise LLMUnavailableError(f"Cloudflare Workers AI error: {data.get('errors')}")
+            result = data.get("result", data) if isinstance(data, dict) else {}
+            # Capture authoritative provider token usage for advisory quota accounting
+            if isinstance(result, dict):
+                self.last_usage = result.get("usage") or {}
+            if isinstance(result, dict):
+                if "response" in result and result["response"] is not None:
+                    return str(result["response"])
+                choices = result.get("choices") or []
+                if choices:
+                    return str(choices[0].get("message", {}).get("content", "") or "")
+            return ""
+        except LLMRateLimitError:
+            raise
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            raise LLMUnavailableError(
+                _sanitize_error_msg(f"Cloudflare Workers AI error: {exc}", self.api_token)
+            ) from exc
+
+    def generate_structured(self, prompt: str) -> dict:
+        """Request JSON output and parse locally; never assume strict JSON mode."""
+        wrapper = (
+            f"{prompt}\n\n"
+            "Respond ONLY with valid JSON matching the exact schema. "
+            "No markdown fences, no preamble, no trailing commentary."
+        )
+        raw = self.generate(wrapper)
+        return OllamaService._parse_json_response(raw)
+
+
+_VALID_CLAIM_CLASSES = {
+    "SUPPORTED",
+    "PARTIALLY_SUPPORTED",
+    "CONTRADICTED",
+    "INSUFFICIENT_EVIDENCE",
+}
+_VALID_CONFIDENCE = {"HIGH", "MEDIUM", "LOW"}
+
+
+def validate_evaluator_payload(data: Any) -> tuple[bool, Optional[dict], str]:
+    """
+    Strict server-side schema validation for evaluator JSON.
+    Never assumes provider-side strict JSON mode succeeded.
+    Returns (is_valid, normalized_dict_or_None, reason).
+    """
+    if not isinstance(data, dict) or "error" in data:
+        return False, None, "Evaluator output is not a valid JSON object"
+
+    claims = data.get("claims")
+    overall = data.get("overall_confidence")
+    if not isinstance(claims, list):
+        return False, None, "Evaluator JSON missing 'claims' list"
+    if overall not in _VALID_CONFIDENCE:
+        return False, None, f"Evaluator JSON invalid 'overall_confidence': {overall!r}"
+
+    normalized_claims: list[dict] = []
+    for idx, item in enumerate(claims):
+        if not isinstance(item, dict):
+            return False, None, f"Claim[{idx}] is not an object"
+        claim_text = item.get("claim")
+        cls = item.get("classification")
+        if not isinstance(claim_text, str) or not claim_text.strip():
+            return False, None, f"Claim[{idx}] missing non-empty 'claim' string"
+        if cls not in _VALID_CLAIM_CLASSES:
+            return False, None, f"Claim[{idx}] invalid 'classification': {cls!r}"
+        page_refs_raw = item.get("page_refs", [])
+        if not isinstance(page_refs_raw, list):
+            page_refs_raw = []
+        page_refs = [int(p) for p in page_refs_raw if isinstance(p, (int, float)) or (isinstance(p, str) and p.isdigit())]
+        normalized_claims.append({
+            "claim": claim_text.strip(),
+            "classification": cls,
+            "evidence": str(item.get("evidence", "") or ""),
+            "page_refs": page_refs,
+        })
+
+    missing = data.get("missing_evidence", [])
+    if not isinstance(missing, list):
+        missing = []
+    warning = data.get("warning", "")
+    if not isinstance(warning, str):
+        warning = str(warning or "")
+
+    return True, {
+        "claims": normalized_claims,
+        "overall_confidence": overall,
+        "missing_evidence": [str(m) for m in missing],
+        "warning": warning,
+    }, "ok"
+
+
 
 class GroundingValidator:
     """
@@ -281,7 +731,9 @@ class GroundingValidator:
     Classifies claims as Supported / Partially Supported / Contradicted / Insufficient Evidence.
     """
 
-    def __init__(self, llm: OllamaService):
+    def __init__(self, llm):
+        # llm may be None when no independent evaluator is configured;
+        # validate() raises LLMUnavailableError in that case so callers degrade gracefully.
         self.llm = llm
 
     def validate(self, question: str, answer: str,
@@ -289,7 +741,14 @@ class GroundingValidator:
         """
         Validate an answer against evidence.
         Returns grounding report.
+
+        Raises LLMUnavailableError when llm is None (no independent evaluator configured).
         """
+        if self.llm is None:
+            raise LLMUnavailableError(
+                "No independent evaluator LLM is configured (ENABLE_INDEPENDENT_EVALUATOR=false). "
+                "Cannot validate without an independent evaluator."
+            )
         evidence_text = self._format_evidence(evidence_chunks)
 
         prompt = f"""You are a grounding validator. Your job is to check whether an AI-generated answer
@@ -349,6 +808,40 @@ and include a clear warning.
         return "\n\n".join(lines)
 
 
+_CONCRETE_PROVIDER_CLASSES = {
+    "OllamaService",
+    "GeminiService",
+    "GroqService",
+    "CloudflareWorkersAIService",
+}
+
+
+def is_independent_evaluator(primary_llm: Any, evaluator_llm: Any) -> bool:
+    """Return True only when evaluator_llm is present and genuinely distinct from primary_llm.
+
+    Checks both object identity AND (provider class, model identifier) so two
+    separate instances pointing at the same provider and model are NOT treated
+    as independent evaluation.
+    """
+    if evaluator_llm is None or evaluator_llm is primary_llm:
+        return False
+
+    p_cls = type(primary_llm).__name__
+    e_cls = type(evaluator_llm).__name__
+    p_model_raw = getattr(primary_llm, "model", None)
+    e_model_raw = getattr(evaluator_llm, "model", None)
+    p_model = p_model_raw.strip().lower() if isinstance(p_model_raw, str) else ""
+    e_model = e_model_raw.strip().lower() if isinstance(e_model_raw, str) else ""
+
+    if (p_cls in _CONCRETE_PROVIDER_CLASSES or p_model) and (
+        e_cls in _CONCRETE_PROVIDER_CLASSES or e_model
+    ):
+        if p_cls == e_cls and p_model == e_model:
+            return False
+
+    return True
+
+
 class VerificationLayer:
     """
     Standalone verification layer for hamiGenZ answers.
@@ -374,71 +867,268 @@ class VerificationLayer:
     def __init__(self, llm: OllamaService, validator: GroundingValidator | None = None):
         self.llm = llm
         self.validator = validator or GroundingValidator(llm)
+        # Detect self-evaluation by both object identity AND (provider, model) pair.
+        evaluator_llm = getattr(self.validator, "llm", None)
+        self._is_independent = is_independent_evaluator(llm, evaluator_llm)
+
+    @staticmethod
+    def _deterministic_evidence_check(answer: str, evidence_chunks: list[dict]) -> tuple[bool, list[str]]:
+        """Deterministic validation: non-empty answer/evidence, valid page citations, and cited-page support."""
+        issues: list[str] = []
+        if not answer or not answer.strip():
+            issues.append("Generated answer is empty.")
+        if not evidence_chunks:
+            issues.append("No evidence chunks were provided for document verification.")
+        valid_pages = {
+            int(c["page_num"])
+            for c in evidence_chunks
+            if isinstance(c.get("page_num"), int) or (isinstance(c.get("page_num"), str) and c.get("page_num").isdigit())
+        }
+        if valid_pages:
+            cited_pages = {int(p) for p in re.findall(r"(?:\[|\()\s*[Pp]age\s+(\d+)\s*(?:\]|\))", answer or "")}
+            invalid_pages = sorted(cited_pages - valid_pages)
+            if invalid_pages:
+                issues.append(f"Answer cites page(s) not in retrieved evidence: {invalid_pages}")
+            else:
+                for p in sorted(cited_pages):
+                    page_texts = [
+                        (c.get("text") or "").strip()
+                        for c in evidence_chunks
+                        if (isinstance(c.get("page_num"), int) and c.get("page_num") == p)
+                        or (isinstance(c.get("page_num"), str) and c.get("page_num").isdigit() and int(c.get("page_num")) == p)
+                    ]
+                    combined = " ".join(t for t in page_texts if t)
+                    if not combined:
+                        issues.append(f"Answer cites page {p}, which has no extracted text in evidence.")
+                        continue
+                    # Same-script substantive token overlap check (preserves cross-lingual translation)
+                    ans_has_deva = bool(re.search(r"[\u0900-\u097F]", answer))
+                    ev_has_deva = bool(re.search(r"[\u0900-\u097F]", combined))
+                    if ans_has_deva == ev_has_deva:
+                        ans_tokens = {w.lower() for w in re.findall(r"[A-Za-z0-9\u0900-\u097F]{3,}", answer) if w.lower() not in {"page", "the", "and", "for", "with", "that", "this", "from"}}
+                        ev_tokens = {w.lower() for w in re.findall(r"[A-Za-z0-9\u0900-\u097F]{3,}", combined)}
+                        if len(ans_tokens) >= 3 and ev_tokens and not (ans_tokens & ev_tokens):
+                            issues.append(f"Answer cites page {p}, but shares no substantive terms with page {p} evidence.")
+        return len(issues) == 0, issues
+
+    @staticmethod
+    def _validate_claim_citations(claims: list[dict], evidence_chunks: list[dict]) -> list[str]:
+        """Validate every evaluator claim's page_refs and evidence mapping against retrieved evidence.
+
+        - Rejects nonexistent page_refs (pages not present in retrieved evidence).
+        - Rejects empty evidence mappings on SUPPORTED / PARTIALLY_SUPPORTED claims.
+        - Preserves OKF and official-source evidence (where page_num is None and
+          source_type is 'okf' or 'official', so empty page_refs is valid when
+          claim['evidence'] is non-empty).
+        """
+        issues: list[str] = []
+        valid_pages = {
+            int(c["page_num"])
+            for c in evidence_chunks
+            if isinstance(c.get("page_num"), int)
+            or (isinstance(c.get("page_num"), str) and c.get("page_num").isdigit())
+        }
+        has_non_page_evidence = any(
+            c.get("source_type") in ("okf", "official") for c in evidence_chunks
+        )
+
+        for idx, claim in enumerate(claims):
+            page_refs = claim.get("page_refs") or []
+            claim_ev = (claim.get("evidence") or "").strip()
+            cls = claim.get("classification", "")
+
+            bad_refs = [p for p in page_refs if p not in valid_pages]
+            if bad_refs:
+                issues.append(
+                    f"Claim[{idx}] cites nonexistent page_refs {bad_refs} "
+                    f"(retrieved pages: {sorted(valid_pages)})."
+                )
+
+            if cls in ("SUPPORTED", "PARTIALLY_SUPPORTED"):
+                if not claim_ev:
+                    issues.append(f"Claim[{idx}] ({cls}) has an empty evidence mapping.")
+                if valid_pages and not has_non_page_evidence and not page_refs:
+                    issues.append(
+                        f"Claim[{idx}] ({cls}) has no page_refs for document-grounded evidence."
+                    )
+
+        return issues
 
     def verify(self, question: str, answer: str,
                evidence_chunks: list[dict]) -> dict:
         """
         Run full verification on an answer.
 
-        Returns a dict with:
-          - grounding_report: raw claim-level classification (from GroundingValidator)
-          - contradiction_found: bool — any claim marked CONTRADICTED
-          - contradiction_claims: list of contradicted claim texts
-          - confidence_score: 0–100 numeric score derived from claim weights
-          - confidence_band: "HIGH" / "MEDIUM" / "LOW" / "UNKNOWN"
-          - unsupported_facts: list of claim texts that are PARTIALLY_SUPPORTED
-                                 or INSUFFICIENT_EVIDENCE or CONTRADICTED
-          - recommendation: short guidance for the frontend / user
+        Document answers are marked ``evidence_checks_passed`` ONLY when ALL of:
+        - an independent evaluator (not the primary LLM) is available,
+        - the evaluator returns at least one claim,
+        - ALL claims are classified SUPPORTED (none PARTIALLY_SUPPORTED / CONTRADICTED /
+          INSUFFICIENT_EVIDENCE), and
+        - deterministic evidence checks pass.
+        Partially supported answers yield ``partially_supported`` (a distinct, transparently
+        unverified status).  Never implies a guarantee of correctness.
         """
-        report = self.validator.validate(question, answer, evidence_chunks)
+        det_ok, det_issues = self._deterministic_evidence_check(answer, evidence_chunks)
+
+        # Fix #1: guard against self-evaluation (primary model evaluating its own output)
+        if not self._is_independent:
+            return {
+                "grounding_report": {
+                    "claims": [],
+                    "overall_confidence": "UNKNOWN",
+                    "missing_evidence": [],
+                    "warning": (
+                        "No independent evaluator is configured. "
+                        "The primary model cannot evaluate its own output."
+                    ),
+                },
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "No independent evaluator is configured. "
+                    "Treat this answer as unverified and check the original source document."
+                ),
+                "verification_status": "not_independently_evaluated",
+                "schema_valid": False,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
+            }
+
+        try:
+            raw_report = self.validator.validate(question, answer, evidence_chunks)
+        except LLMUnavailableError as exc:
+            return {
+                "grounding_report": {
+                    "claims": [],
+                    "overall_confidence": "UNKNOWN",
+                    "missing_evidence": [],
+                    "warning": f"Independent evaluator unavailable: {exc}",
+                },
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "Independent verification could not run. Treat this answer as "
+                    "unverified and check the original source document."
+                ),
+                "verification_status": "unverified_evaluator_unavailable",
+                "schema_valid": False,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
+            }
+
+        is_valid, report, schema_reason = validate_evaluator_payload(raw_report)
+        if not is_valid or report is None:
+            return {
+                "grounding_report": {
+                    "claims": [],
+                    "overall_confidence": "UNKNOWN",
+                    "missing_evidence": [],
+                    "warning": f"Evaluator output failed schema validation: {schema_reason}",
+                },
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "Independent verification returned malformed output. Treat this answer as "
+                    "unverified and check the original source document."
+                ),
+                "verification_status": "unverified_evaluator_unavailable",
+                "schema_valid": False,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
+            }
 
         claims = report.get("claims", [])
+
+        # Fix #2: empty claims cannot constitute evidence coverage
+        if not claims:
+            return {
+                "grounding_report": report,
+                "contradiction_found": False,
+                "contradiction_claims": [],
+                "confidence_score": None,
+                "confidence_band": "UNKNOWN",
+                "unsupported_facts": [],
+                "recommendation": (
+                    "Evaluator returned no claims — cannot assess document evidence coverage. "
+                    "Treat this answer as unverified and check the original source document."
+                ),
+                "verification_status": "not_independently_evaluated",
+                "schema_valid": True,
+                "deterministic_check_passed": det_ok,
+                "deterministic_issues": det_issues,
+            }
+
+        # Claim-level citation & evidence mapping validation
+        claim_citation_issues = self._validate_claim_citations(claims, evidence_chunks)
+        if claim_citation_issues:
+            det_ok = False
+            det_issues.extend(claim_citation_issues)
+
         contradicted = [c for c in claims if c.get("classification") == "CONTRADICTED"]
+        partially_supported = [c for c in claims if c.get("classification") == "PARTIALLY_SUPPORTED"]
         unsupported = [
             c for c in claims
             if c.get("classification") in ("PARTIALLY_SUPPORTED", "INSUFFICIENT_EVIDENCE", "CONTRADICTED")
         ]
 
-        # Numeric confidence: weighted average of claim weights, scaled to 0–100.
-        # If there are no claims (empty answer / no evidence), fall back to the
-        # qualitative band from the validator.
-        if claims:
-            total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
-            confidence_score = round((total_weight / len(claims)) * 100)
-        else:
-            confidence_score = None
+        total_weight = sum(self._WEIGHTS.get(c.get("classification"), 0.0) for c in claims)
+        confidence_score = round((total_weight / len(claims)) * 100)
 
         band = report.get("overall_confidence", "UNKNOWN")
-        if confidence_score is not None:
-            if confidence_score >= 75:
-                band = "HIGH"
-            elif confidence_score >= 45:
-                band = "MEDIUM"
-            else:
-                band = "LOW"
+        if confidence_score >= 75:
+            band = "HIGH"
+        elif confidence_score >= 45:
+            band = "MEDIUM"
+        else:
+            band = "LOW"
 
-        # Contradiction handling: if any claim is directly contradicted by evidence,
-        # the answer should not be presented as fully reliable.
+        # Fix #2: all_fully_supported — only award strongest status when every claim is SUPPORTED
+        all_fully_supported = all(c.get("classification") == "SUPPORTED" for c in claims)
+
         contradiction_found = len(contradicted) > 0
         if contradiction_found:
             recommendation = (
                 "Some claims in this answer conflict with the document evidence. "
                 "Treat the answer with caution and check the original source."
             )
+            verification_status = "unverified_flagged"
+        elif not det_ok:
+            recommendation = (
+                "Deterministic evidence validation flagged an issue: "
+                + "; ".join(det_issues)
+                + " Check the original source document."
+            )
+            verification_status = "unverified_flagged"
         elif band == "LOW":
             recommendation = (
                 "This answer could not be fully verified from the document. "
                 "Important details may be missing or imprecise — check the original source."
             )
-        elif band == "MEDIUM":
+            verification_status = "unverified_flagged"
+        elif band == "MEDIUM" or not all_fully_supported:
+            # Fix #2: partially supported answers get a distinct, transparent status
             recommendation = (
-                "This answer is partially supported by the document. "
-                "Some details may need verification."
+                "Partially supported by automated evidence checks — some claims lack full "
+                "documentary support; this is not a guarantee of legal or factual correctness. "
+                "Verify key details against the original source."
             )
+            verification_status = "partially_supported"
         else:
+            # band == "HIGH" and all claims are SUPPORTED
             recommendation = (
-                "This answer is supported by the document evidence."
+                "Supported by automated evidence checks; "
+                "this is not a guarantee of legal or factual correctness."
             )
+            verification_status = "evidence_checks_passed"
 
         return {
             "grounding_report": report,
@@ -448,6 +1138,10 @@ class VerificationLayer:
             "confidence_band": band,
             "unsupported_facts": [c["claim"] for c in unsupported],
             "recommendation": recommendation,
+            "verification_status": verification_status,
+            "schema_valid": True,
+            "deterministic_check_passed": det_ok,
+            "deterministic_issues": det_issues,
         }
 
     def re_prompt_on_contradiction(self, question: str, answer: str,
