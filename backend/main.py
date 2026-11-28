@@ -74,6 +74,7 @@ from llm_service import (
     ExplanationEngine,
     LanguageDetector,
     VerificationLayer,
+    is_independent_evaluator,
 )
 
 
@@ -385,10 +386,21 @@ def build_llm_and_evaluator(
     elif eval_prov == "ollama":
         evaluator_llm = OllamaService(base_url=ollama_base or OLLAMA_BASE, model=ollama_model or OLLAMA_MODEL)
     elif eval_prov == "same":
+        if pub_prod:
+            raise ValueError(
+                "PUBLIC_PRODUCTION_MODE=true does not allow EVALUATOR_PROVIDER='same'. "
+                "Configure a distinct evaluator provider and model."
+            )
         evaluator_llm = primary_llm
     else:
         raise ValueError(
             f"Unsupported EVALUATOR_PROVIDER: '{eval_prov}'. Expected 'cloudflare', 'groq', 'ollama', or 'same'."
+        )
+
+    if pub_prod and not is_independent_evaluator(primary_llm, evaluator_llm):
+        raise ValueError(
+            "PUBLIC_PRODUCTION_MODE=true requires a truly independent evaluator with a distinct "
+            "provider/model combination; primary and evaluator cannot share the same provider and model."
         )
 
     return primary_llm, evaluator_llm

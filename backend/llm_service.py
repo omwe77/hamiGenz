@@ -808,6 +808,40 @@ and include a clear warning.
         return "\n\n".join(lines)
 
 
+_CONCRETE_PROVIDER_CLASSES = {
+    "OllamaService",
+    "GeminiService",
+    "GroqService",
+    "CloudflareWorkersAIService",
+}
+
+
+def is_independent_evaluator(primary_llm: Any, evaluator_llm: Any) -> bool:
+    """Return True only when evaluator_llm is present and genuinely distinct from primary_llm.
+
+    Checks both object identity AND (provider class, model identifier) so two
+    separate instances pointing at the same provider and model are NOT treated
+    as independent evaluation.
+    """
+    if evaluator_llm is None or evaluator_llm is primary_llm:
+        return False
+
+    p_cls = type(primary_llm).__name__
+    e_cls = type(evaluator_llm).__name__
+    p_model_raw = getattr(primary_llm, "model", None)
+    e_model_raw = getattr(evaluator_llm, "model", None)
+    p_model = p_model_raw.strip().lower() if isinstance(p_model_raw, str) else ""
+    e_model = e_model_raw.strip().lower() if isinstance(e_model_raw, str) else ""
+
+    if (p_cls in _CONCRETE_PROVIDER_CLASSES or p_model) and (
+        e_cls in _CONCRETE_PROVIDER_CLASSES or e_model
+    ):
+        if p_cls == e_cls and p_model == e_model:
+            return False
+
+    return True
+
+
 class VerificationLayer:
     """
     Standalone verification layer for hamiGenZ answers.
@@ -833,15 +867,9 @@ class VerificationLayer:
     def __init__(self, llm: OllamaService, validator: GroundingValidator | None = None):
         self.llm = llm
         self.validator = validator or GroundingValidator(llm)
-        # Detect self-evaluation: if the validator's LLM is the same instance as
-        # the primary LLM, the primary model would be evaluating its own output —
-        # which provides no independent signal.  Mark as not independently evaluated.
-        # A None validator.llm (disabled evaluator) is also not independent.
+        # Detect self-evaluation by both object identity AND (provider, model) pair.
         evaluator_llm = getattr(self.validator, "llm", None)
-        self._is_independent = (
-            evaluator_llm is not None
-            and evaluator_llm is not llm
-        )
+        self._is_independent = is_independent_evaluator(llm, evaluator_llm)
 
     @staticmethod
     def _deterministic_evidence_check(answer: str, evidence_chunks: list[dict]) -> tuple[bool, list[str]]:
@@ -882,6 +910,49 @@ class VerificationLayer:
                         if len(ans_tokens) >= 3 and ev_tokens and not (ans_tokens & ev_tokens):
                             issues.append(f"Answer cites page {p}, but shares no substantive terms with page {p} evidence.")
         return len(issues) == 0, issues
+
+    @staticmethod
+    def _validate_claim_citations(claims: list[dict], evidence_chunks: list[dict]) -> list[str]:
+        """Validate every evaluator claim's page_refs and evidence mapping against retrieved evidence.
+
+        - Rejects nonexistent page_refs (pages not present in retrieved evidence).
+        - Rejects empty evidence mappings on SUPPORTED / PARTIALLY_SUPPORTED claims.
+        - Preserves OKF and official-source evidence (where page_num is None and
+          source_type is 'okf' or 'official', so empty page_refs is valid when
+          claim['evidence'] is non-empty).
+        """
+        issues: list[str] = []
+        valid_pages = {
+            int(c["page_num"])
+            for c in evidence_chunks
+            if isinstance(c.get("page_num"), int)
+            or (isinstance(c.get("page_num"), str) and c.get("page_num").isdigit())
+        }
+        has_non_page_evidence = any(
+            c.get("source_type") in ("okf", "official") for c in evidence_chunks
+        )
+
+        for idx, claim in enumerate(claims):
+            page_refs = claim.get("page_refs") or []
+            claim_ev = (claim.get("evidence") or "").strip()
+            cls = claim.get("classification", "")
+
+            bad_refs = [p for p in page_refs if p not in valid_pages]
+            if bad_refs:
+                issues.append(
+                    f"Claim[{idx}] cites nonexistent page_refs {bad_refs} "
+                    f"(retrieved pages: {sorted(valid_pages)})."
+                )
+
+            if cls in ("SUPPORTED", "PARTIALLY_SUPPORTED"):
+                if not claim_ev:
+                    issues.append(f"Claim[{idx}] ({cls}) has an empty evidence mapping.")
+                if valid_pages and not has_non_page_evidence and not page_refs:
+                    issues.append(
+                        f"Claim[{idx}] ({cls}) has no page_refs for document-grounded evidence."
+                    )
+
+        return issues
 
     def verify(self, question: str, answer: str,
                evidence_chunks: list[dict]) -> dict:
@@ -995,6 +1066,12 @@ class VerificationLayer:
                 "deterministic_check_passed": det_ok,
                 "deterministic_issues": det_issues,
             }
+
+        # Claim-level citation & evidence mapping validation
+        claim_citation_issues = self._validate_claim_citations(claims, evidence_chunks)
+        if claim_citation_issues:
+            det_ok = False
+            det_issues.extend(claim_citation_issues)
 
         contradicted = [c for c in claims if c.get("classification") == "CONTRADICTED"]
         partially_supported = [c for c in claims if c.get("classification") == "PARTIALLY_SUPPORTED"]

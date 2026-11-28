@@ -621,17 +621,24 @@ class MetadataStore:
             conn.execute("BEGIN IMMEDIATE")
             # Verify document still exists and generation matches expected
             row = conn.execute(
-                "SELECT reindex_generation FROM documents WHERE doc_id=?", (doc_id,)
+                "SELECT reindex_generation, session_id FROM documents WHERE doc_id=?", (doc_id,)
             ).fetchone()
             if row is None:
                 raise ValueError(f"Cannot commit reindex: document '{doc_id}' not found.")
             actual_gen = row[0] if row[0] is not None else 0
+            doc_session_id = row[1]
             if actual_gen != expected_gen:
                 raise ValueError(
                     f"Cannot commit reindex: document '{doc_id}' generation mismatch "
                     f"(expected {expected_gen}, found {actual_gen})."
                 )
 
+            conn.execute("DELETE FROM llm_cache WHERE doc_id=?", (doc_id,))
+            if doc_session_id:
+                conn.execute(
+                    "DELETE FROM llm_cache WHERE doc_id IS NULL AND session_id=?",
+                    (doc_session_id,),
+                )
             conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
             conn.executemany(
                 "INSERT INTO chunks (chunk_id, doc_id, page_num, text, source_type)"
@@ -702,19 +709,33 @@ class MetadataStore:
     def delete_document(self, doc_id: str, session_id: Optional[str] = None) -> bool:
         """
         Delete document if it belongs to session_id (or unconditionally if session_id is None).
+        Purges both doc-specific cached answers and any session-wide (doc_id IS NULL)
+        cached answers for that document's session so deleted content cannot linger.
         Returns True if deleted, False if not found or unauthorized.
         """
         conn = self._get_connection()
         if session_id is not None:
             existing = conn.execute(
-                "SELECT doc_id FROM documents WHERE doc_id=? AND session_id=?",
+                "SELECT session_id FROM documents WHERE doc_id=? AND session_id=?",
                 (doc_id, session_id)
             ).fetchone()
             if not existing:
                 conn.close()
                 return False
+            doc_session_id = existing[0]
+        else:
+            existing = conn.execute(
+                "SELECT session_id FROM documents WHERE doc_id=?",
+                (doc_id,)
+            ).fetchone()
+            doc_session_id = existing[0] if existing else None
 
         conn.execute("DELETE FROM llm_cache WHERE doc_id=?", (doc_id,))
+        if doc_session_id:
+            conn.execute(
+                "DELETE FROM llm_cache WHERE doc_id IS NULL AND session_id=?",
+                (doc_session_id,),
+            )
         conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
         cursor = conn.execute("DELETE FROM documents WHERE doc_id=?", (doc_id,))
         deleted = cursor.rowcount > 0

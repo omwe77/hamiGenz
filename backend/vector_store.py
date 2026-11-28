@@ -419,27 +419,36 @@ class VectorStore:
                 print(f"[VectorStore] swap_document: could not remove {path}: {exc}")
 
     def remove_document(self, doc_id: str) -> None:
-        """Remove a document's index and metadata across all generations."""
-        if doc_id in self._doc_indices:
-            del self._doc_indices[doc_id]
-            self._save_registry()
+        """Remove a document's index and metadata across all generations.
 
-        # Remove unversioned flat files
+        Deletes physical `.faiss` and `_meta.json` artifacts BEFORE updating the
+        in-memory/on-disk registry. Raises OSError if any physical unlink fails
+        so callers (e.g., retention cleanup) preserve SQLite metadata for retry.
+        """
+        targets: list[Path] = []
         for suffix in (f"{doc_id}.faiss", f"{doc_id}_meta.json"):
             p = self.vectors_dir / suffix
             if p.exists():
-                try:
-                    p.unlink(missing_ok=True)
-                except OSError:
-                    pass
-
-        # Purge any generation-specific vector files ({doc_id}_g*.faiss, {doc_id}_g*_meta.json)
+                targets.append(p)
         for p in self.vectors_dir.glob(f"{doc_id}_g*"):
-            if p.name.endswith(".faiss") or p.name.endswith("_meta.json"):
-                try:
-                    p.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            if (p.name.endswith(".faiss") or p.name.endswith("_meta.json")) and p not in targets:
+                targets.append(p)
+
+        errors: list[str] = []
+        for p in targets:
+            try:
+                p.unlink(missing_ok=True)
+            except OSError as exc:
+                errors.append(f"{p.name}: {exc}")
+
+        if errors:
+            raise OSError(
+                f"Failed to remove vector artifact(s) for {doc_id}: {'; '.join(errors)}"
+            )
+
+        if doc_id in self._doc_indices:
+            del self._doc_indices[doc_id]
+            self._save_registry()
 
 
 class ProcessingTimeoutError(RuntimeError):

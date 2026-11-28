@@ -639,3 +639,278 @@ class TestTokenBudgetHonesty:
         assert selected[0]["text"] == "A" * 40
         assert selected[1]["text"] == "B" * 40
 
+
+# ─── Regression tests for final 4+1 independent review items ─────────────────
+
+class TestVectorDeletionSafety:
+    """Issue 1 — VectorStore.remove_document() must raise OSError on locked files and preserve metadata."""
+
+    def test_locked_faiss_file_raises_and_preserves_registry_and_sqlite(self, tmp_path):
+        from vector_store import VectorStore
+
+        vec_dir = tmp_path / "vectors"
+        vec_dir.mkdir()
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        pdf_file = upload_dir / "locked_doc.pdf"
+        pdf_file.write_bytes(b"%PDF locked")
+
+        vs = VectorStore(vectors_dir=str(vec_dir), dimension=4)
+        faiss_file = vec_dir / "locked_doc.faiss"
+        meta_file = vec_dir / "locked_doc_meta.json"
+        faiss_file.write_bytes(b"FAKEFAISS")
+        meta_file.write_text("[]", encoding="utf-8")
+        vs._doc_indices["locked_doc"] = str(faiss_file)
+        vs._save_registry()
+
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("locked_doc", "locked.pdf", str(pdf_file), 1, "english", session_id="s1")
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        conn = db._get_connection()
+        conn.execute("UPDATE documents SET last_accessed_at=? WHERE doc_id='locked_doc'", (old_ts,))
+        conn.commit()
+        conn.close()
+
+        orig_unlink = Path.unlink
+
+        def fail_on_faiss(self, missing_ok=False):
+            if self.name.endswith(".faiss"):
+                raise PermissionError("FAISS file locked")
+            return orig_unlink(self, missing_ok=missing_ok)
+
+        with patch.object(Path, "unlink", fail_on_faiss):
+            removed, failed = backend_main.cleanup_expired_documents(
+                db, vs, upload_dir, retention_seconds=3600
+            )
+
+        assert removed == 0
+        assert any(f["step"] == "vector_remove" for f in failed)
+        assert "locked_doc" in vs._doc_indices
+        assert db.get_document("locked_doc") is not None
+
+    def test_locked_meta_json_file_raises_and_preserves_metadata(self, tmp_path):
+        from vector_store import VectorStore
+
+        vec_dir = tmp_path / "vectors"
+        vec_dir.mkdir()
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+
+        vs = VectorStore(vectors_dir=str(vec_dir), dimension=4)
+        faiss_file = vec_dir / "locked_meta_doc.faiss"
+        meta_file = vec_dir / "locked_meta_doc_meta.json"
+        faiss_file.write_bytes(b"FAKEFAISS")
+        meta_file.write_text("[]", encoding="utf-8")
+        vs._doc_indices["locked_meta_doc"] = str(faiss_file)
+        vs._save_registry()
+
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("locked_meta_doc", "m.pdf", str(upload_dir / "m.pdf"), 1, "english", session_id="s1")
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        conn = db._get_connection()
+        conn.execute("UPDATE documents SET last_accessed_at=? WHERE doc_id='locked_meta_doc'", (old_ts,))
+        conn.commit()
+        conn.close()
+
+        orig_unlink = Path.unlink
+
+        def fail_on_meta_json(self, missing_ok=False):
+            if self.name.endswith("_meta.json"):
+                raise PermissionError("Metadata JSON file locked")
+            return orig_unlink(self, missing_ok=missing_ok)
+
+        with patch.object(Path, "unlink", fail_on_meta_json):
+            with pytest.raises(OSError, match="Failed to remove vector artifact"):
+                vs.remove_document("locked_meta_doc")
+
+        # Restore normal unlink and verify cleanup_expired_documents preserves SQLite on meta lock
+        with patch.object(Path, "unlink", fail_on_meta_json):
+            removed, failed = backend_main.cleanup_expired_documents(
+                db, vs, upload_dir, retention_seconds=3600
+            )
+        assert removed == 0
+        assert any(f["step"] == "vector_remove" for f in failed)
+        assert db.get_document("locked_meta_doc") is not None
+
+
+class TestCachePrivacyInvalidation:
+    """Issue 2 — Deleting/reindexing a document invalidates session-wide (doc_id=None) cached answers while preserving other sessions."""
+
+    def test_deleting_one_doc_invalidates_session_wide_cache_preserving_other_sessions(self, tmp_path):
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("doc_a", "a.pdf", str(tmp_path / "a.pdf"), 1, "english", session_id="sess-a")
+        db.add_document("doc_b", "b.pdf", str(tmp_path / "b.pdf"), 1, "english", session_id="sess-a")
+        db.add_document("doc_other", "other.pdf", str(tmp_path / "other.pdf"), 1, "english", session_id="sess-b")
+
+        # Store doc-specific cache for doc_a, session-wide cache (doc_id=None) for sess-a, and session-wide cache for sess-b
+        db.set_cached_answer("ck_doc_a", "doc_a", "sess-a", "GroqService", "m", {"answer": "from doc_a"}, ttl_seconds=3600)
+        db.set_cached_answer("ck_sess_a_wide", None, "sess-a", "GroqService", "m", {"answer": "derived from doc_a and doc_b"}, ttl_seconds=3600)
+        db.set_cached_answer("ck_sess_b_wide", None, "sess-b", "GroqService", "m", {"answer": "sess-b private"}, ttl_seconds=3600)
+
+        assert db.get_cached_answer("ck_sess_a_wide") == {"answer": "derived from doc_a and doc_b"}
+
+        # Delete doc_a in sess-a
+        assert db.delete_document("doc_a", session_id="sess-a") is True
+
+        # Both doc_a's cache AND sess-a's session-wide derived cache must be purged
+        assert db.get_cached_answer("ck_doc_a") is None
+        assert db.get_cached_answer("ck_sess_a_wide") is None
+        # sess-b's cache must remain isolated and intact
+        assert db.get_cached_answer("ck_sess_b_wide") == {"answer": "sess-b private"}
+
+    def test_reindexing_one_doc_invalidates_session_wide_cache(self, tmp_path):
+        db = MetadataStore(str(tmp_path / "test.db"))
+        db.add_document("doc_a", "a.pdf", str(tmp_path / "a.pdf"), 1, "english", session_id="sess-a")
+        db.set_cached_answer("ck_doc_a", "doc_a", "sess-a", "GroqService", "m", {"answer": "old"}, ttl_seconds=3600)
+        db.set_cached_answer("ck_sess_a_wide", None, "sess-a", "GroqService", "m", {"answer": "old wide"}, ttl_seconds=3600)
+        db.set_cached_answer("ck_sess_b_wide", None, "sess-b", "GroqService", "m", {"answer": "b wide"}, ttl_seconds=3600)
+
+        db.commit_reindex(
+            doc_id="doc_a",
+            new_gen=1,
+            chunks=[{"chunk_id": "c1", "doc_id": "doc_a", "page_num": 1, "text": "Updated text", "source_type": "pdf"}],
+            filename="a.pdf",
+            filepath=str(tmp_path / "a.pdf"),
+            page_count=1,
+            language_hint="english",
+            expected_gen=0,
+        )
+
+        assert db.get_cached_answer("ck_doc_a") is None
+        assert db.get_cached_answer("ck_sess_a_wide") is None
+        assert db.get_cached_answer("ck_sess_b_wide") == {"answer": "b wide"}
+
+
+class TestTrueModelIndependence:
+    """Issue 3 — Compare provider + model identifiers, reject EVALUATOR_PROVIDER=same and same provider/model in public prod."""
+
+    def test_distinct_instances_same_provider_and_model_rejected(self):
+        from llm_service import is_independent_evaluator
+
+        s1 = GroqService(api_key="gsk_1", model="openai/gpt-oss-120b", session=MagicMock())
+        s2 = GroqService(api_key="gsk_2", model="openai/gpt-oss-120b", session=MagicMock())
+        assert is_independent_evaluator(s1, s2) is False
+        layer = VerificationLayer(s1, GroundingValidator(s2))
+        assert layer._is_independent is False
+        res = layer.verify("Q?", "A.", [{"page_num": 1, "text": "Evidence"}])
+        assert res["verification_status"] == "not_independently_evaluated"
+
+    def test_same_provider_different_models_allowed(self):
+        from llm_service import is_independent_evaluator
+
+        s1 = GroqService(api_key="gsk_1", model="openai/gpt-oss-120b", session=MagicMock())
+        s2 = GroqService(api_key="gsk_2", model="llama-3.3-70b-versatile", session=MagicMock())
+        assert is_independent_evaluator(s1, s2) is True
+
+    def test_public_production_rejects_evaluator_provider_same(self):
+        with pytest.raises(ValueError, match="EVALUATOR_PROVIDER='same'"):
+            backend_main.build_llm_and_evaluator(
+                llm_provider="groq",
+                groq_api_key="gsk_test",
+                zdr_verified=True,
+                enable_independent_evaluator=True,
+                evaluator_provider="same",
+                public_production_mode=True,
+            )
+
+    def test_public_production_rejects_same_provider_and_model(self):
+        with pytest.raises(ValueError, match="distinct provider/model"):
+            backend_main.build_llm_and_evaluator(
+                llm_provider="groq",
+                groq_api_key="gsk_test",
+                groq_model="openai/gpt-oss-120b",
+                zdr_verified=True,
+                enable_independent_evaluator=True,
+                evaluator_provider="groq",
+                public_production_mode=True,
+            )
+
+
+class TestClaimLevelCitationValidation:
+    """Issue 4 — Validate every evaluator claim's page_refs & evidence mappings; preserve OKF & official-source handling."""
+
+    def test_fabricated_claim_page_refs_flagged(self):
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Fee is NPR 500", "classification": "SUPPORTED", "evidence": "Page 99 states 500", "page_refs": [99]}
+            ],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("Fee?", "Fee is NPR 500 (Page 1).", [{"page_num": 1, "text": "Fee NPR 500"}])
+        assert res["verification_status"] == "unverified_flagged"
+        assert res["deterministic_check_passed"] is False
+        assert any("page_refs" in issue for issue in res["deterministic_issues"])
+
+    def test_empty_claim_evidence_mapping_flagged(self):
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Fee is NPR 500", "classification": "SUPPORTED", "evidence": "", "page_refs": [1]}
+            ],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("Fee?", "Fee is NPR 500 (Page 1).", [{"page_num": 1, "text": "Fee NPR 500"}])
+        assert res["verification_status"] == "unverified_flagged"
+        assert res["deterministic_check_passed"] is False
+
+    def test_empty_claim_page_refs_on_document_evidence_flagged(self):
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Fee is NPR 500", "classification": "SUPPORTED", "evidence": "Fee NPR 500", "page_refs": []}
+            ],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify("Fee?", "Fee is NPR 500.", [{"page_num": 1, "text": "Fee NPR 500"}])
+        assert res["verification_status"] == "unverified_flagged"
+        assert res["deterministic_check_passed"] is False
+
+    def test_okf_and_official_source_evidence_preserved(self):
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Citizenship is issued by DAO", "classification": "SUPPORTED", "evidence": "OKF citizenship concept", "page_refs": []}
+            ],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify(
+            "Who issues citizenship?",
+            "The District Administration Office (DAO) issues citizenship.",
+            [{"page_num": None, "text": "DAO issues citizenship.", "source_type": "okf"}],
+        )
+        assert res["verification_status"] == "evidence_checks_passed"
+        assert res["deterministic_check_passed"] is True
+
+    def test_okf_evidence_with_fabricated_numeric_page_ref_flagged(self):
+        evaluator_llm = MagicMock()
+        evaluator_llm.generate_structured.return_value = {
+            "claims": [
+                {"claim": "Citizenship is issued by DAO", "classification": "SUPPORTED", "evidence": "Page 3", "page_refs": [3]}
+            ],
+            "overall_confidence": "HIGH",
+            "missing_evidence": [],
+            "warning": "",
+        }
+        layer = _make_independent_layer(evaluator_llm)
+        res = layer.verify(
+            "Who issues citizenship?",
+            "The DAO issues citizenship.",
+            [{"page_num": None, "text": "DAO issues citizenship.", "source_type": "official"}],
+        )
+        assert res["verification_status"] == "unverified_flagged"
+        assert res["deterministic_check_passed"] is False
+
+
